@@ -12,7 +12,11 @@ import {
   ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
+  VAULT_DIR,
+  UPLOAD_DIR,
+  TYPE_MAPPINGS_PATH,
 } from './config.js';
+import { IngestionPipeline } from './ingestion/index.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -532,9 +536,17 @@ async function main(): Promise<void> {
 
   restoreRemoteControl();
 
+  const pipeline = new IngestionPipeline({
+    uploadDir: UPLOAD_DIR,
+    vaultDir: VAULT_DIR,
+    typeMappingsPath: TYPE_MAPPINGS_PATH,
+  });
+  await pipeline.start();
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    await pipeline.stop();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
