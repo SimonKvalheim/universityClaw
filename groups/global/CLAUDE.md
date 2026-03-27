@@ -113,3 +113,9 @@ If a user wants tasks running more than ~2x daily and a script can't reduce agen
 - Suggest restructuring with a script that checks the condition first
 - If the user needs an LLM to evaluate data, suggest using an API key with direct Anthropic API calls inside the script
 - Help the user find the minimum viable frequency
+
+## universityClaw — Teaching Assistant Context
+
+You have read-only access to the Obsidian vault. You can answer questions, generate quizzes, and summarize content from vault notes. Always cite your sources using [[wikilink]] notation.
+
+Mirror the user's language (Norwegian or English). Ground your answers in the actual course material rather than general knowledge.
