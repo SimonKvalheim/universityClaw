@@ -110,3 +110,8 @@ function resolveConfigTimezone(): string {
   return 'UTC';
 }
 export const TIMEZONE = resolveConfigTimezone();
+
+export const WEB_CHANNEL_PORT = parseInt(
+  process.env.WEB_CHANNEL_PORT || '3200',
+  10,
+);
