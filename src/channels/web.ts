@@ -61,7 +61,7 @@ export function createWebChannel(opts: ChannelOpts): Channel {
           is_from_me: false,
         };
 
-        opts.onMessage(chatJid, msg);
+        // Ensure chat record exists before storing the message (FK constraint)
         opts.onChatMetadata(
           chatJid,
           msg.timestamp,
@@ -69,12 +69,16 @@ export function createWebChannel(opts: ChannelOpts): Channel {
           'web',
           false,
         );
+        opts.onMessage(chatJid, msg);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, messageId: msg.id }));
       } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        logger.error({ err }, 'Web channel message handling failed');
+        const status = (err as any)?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' ? 500 : 400;
+        const msg = status === 500 ? 'Internal error' : 'Invalid JSON';
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: msg }));
       }
     });
   }
@@ -131,6 +135,26 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     const streamMatch = url.pathname.match(/^\/stream\/([a-f0-9-]{36})$/);
     if (req.method === 'GET' && streamMatch) {
       handleSSE(req, res, streamMatch[1]);
+      return;
+    }
+
+    // POST /close/:draftId — signal the review agent container to shut down
+    const closeMatch = url.pathname.match(/^\/close\/([a-f0-9-]{36})$/);
+    if (req.method === 'POST' && closeMatch) {
+      const draftId = closeMatch[1];
+      opts.onDraftClosed?.(draftId);
+      // Clean up SSE clients and response buffers for this draft
+      const clients = sseClients.get(draftId);
+      if (clients) {
+        for (const client of clients) {
+          client.write(`data: ${JSON.stringify({ type: 'closed' })}\n\n`);
+          client.end();
+        }
+        sseClients.delete(draftId);
+      }
+      responseBuffers.delete(draftId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
 
