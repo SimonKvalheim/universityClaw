@@ -204,7 +204,10 @@ export function _setRegisteredGroups(
 
 function findGroupForJid(chatJid: string): RegisteredGroup | undefined {
   if (registeredGroups[chatJid]) return registeredGroups[chatJid];
-  if (chatJid.startsWith(WEB_REVIEW_PREFIX) && registeredGroups[REVIEW_AGENT_JID]) {
+  if (
+    chatJid.startsWith(WEB_REVIEW_PREFIX) &&
+    registeredGroups[REVIEW_AGENT_JID]
+  ) {
     return registeredGroups[REVIEW_AGENT_JID];
   }
   return undefined;
@@ -556,8 +559,16 @@ async function main(): Promise<void> {
       isMain: false,
       containerConfig: {
         additionalMounts: [
-          { hostPath: join(process.cwd(), 'vault'), containerPath: '/workspace/extra/vault', readonly: false },
-          { hostPath: join(process.cwd(), 'upload'), containerPath: '/workspace/extra/upload', readonly: true },
+          {
+            hostPath: join(process.cwd(), 'vault'),
+            containerPath: '/workspace/extra/vault',
+            readonly: false,
+          },
+          {
+            hostPath: join(process.cwd(), 'upload'),
+            containerPath: '/workspace/extra/upload',
+            readonly: true,
+          },
         ],
       },
     });
@@ -575,6 +586,7 @@ async function main(): Promise<void> {
     uploadDir: UPLOAD_DIR,
     vaultDir: VAULT_DIR,
     typeMappingsPath: TYPE_MAPPINGS_PATH,
+    getReviewAgentGroup: () => registeredGroups[REVIEW_AGENT_JID],
   });
   await pipeline.start();
 
