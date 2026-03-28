@@ -75,6 +75,9 @@ import { logger } from './logger.js';
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
+const REVIEW_AGENT_JID = 'web:review:__agent__';
+const WEB_REVIEW_PREFIX = 'web:review:';
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -199,12 +202,20 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+function findGroupForJid(chatJid: string): RegisteredGroup | undefined {
+  if (registeredGroups[chatJid]) return registeredGroups[chatJid];
+  if (chatJid.startsWith(WEB_REVIEW_PREFIX) && registeredGroups[REVIEW_AGENT_JID]) {
+    return registeredGroups[REVIEW_AGENT_JID];
+  }
+  return undefined;
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
+  const group = findGroupForJid(chatJid);
   if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
@@ -440,7 +451,7 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
+          const group = findGroupForJid(chatJid);
           if (!group) continue;
 
           const channel = findChannel(channels, chatJid);
@@ -533,6 +544,24 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Ensure review agent group exists
+  if (!registeredGroups[REVIEW_AGENT_JID]) {
+    registerGroup(REVIEW_AGENT_JID, {
+      name: 'Review Agent',
+      folder: 'review_agent',
+      trigger: '',
+      added_at: new Date().toISOString(),
+      requiresTrigger: false,
+      isMain: false,
+      containerConfig: {
+        additionalMounts: [
+          { hostPath: join(process.cwd(), 'vault'), containerPath: '/workspace/extra/vault', readonly: false },
+          { hostPath: join(process.cwd(), 'upload'), containerPath: '/workspace/extra/upload', readonly: true },
+        ],
+      },
+    });
+  }
 
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
