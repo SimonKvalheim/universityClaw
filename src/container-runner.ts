@@ -45,6 +45,7 @@ export interface ContainerInput {
   script?: string;
   allowedTools?: string[];
   singleTurn?: boolean;
+  ipcNamespace?: string;
 }
 
 export interface ContainerOutput {
@@ -63,6 +64,7 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  ipcNamespace?: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
@@ -168,8 +170,11 @@ function buildVolumeMounts(
   });
 
   // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = resolveGroupIpcPath(group.folder);
+  // This prevents cross-group privilege escalation via IPC.
+  // When ipcNamespace is provided (e.g. ingestion jobs), use a dedicated
+  // sub-directory keyed by that namespace to prevent cross-container interference.
+  const ipcFolder = ipcNamespace ? `ingestion/${ipcNamespace}` : group.folder;
+  const groupIpcDir = path.resolve(DATA_DIR, 'ipc', ipcFolder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
@@ -287,7 +292,7 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = buildVolumeMounts(group, input.isMain, input.ipcNamespace);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   // Main group uses the default OneCLI agent; others use their own agent.

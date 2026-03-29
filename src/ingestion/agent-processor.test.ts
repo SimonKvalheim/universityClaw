@@ -22,9 +22,9 @@ describe('AgentProcessor', () => {
     });
   });
 
-  it('builds a prompt with file path and metadata context', () => {
+  it('builds a prompt with extracted content and metadata context', () => {
     const prompt = processor.buildPrompt(
-      '/tmp/test-upload/03_TCP.pdf',
+      '# TCP\n\nTransmission Control Protocol content here.',
       '03_TCP.pdf',
       {
         courseCode: 'IS-1500',
@@ -35,18 +35,21 @@ describe('AgentProcessor', () => {
         fileName: '03_TCP.pdf',
       },
       'draft-id-123',
+      [],
     );
 
     expect(prompt).toContain('03_TCP.pdf');
     expect(prompt).toContain('IS-1500');
     expect(prompt).toContain('Digital Samhandling');
     expect(prompt).toContain('draft-id-123');
-    expect(prompt).toContain('/workspace/extra/upload/03_TCP.pdf');
+    expect(prompt).toContain('TCP\n\nTransmission Control Protocol content here.');
+    // Should NOT contain old file path reference
+    expect(prompt).not.toContain('/workspace/extra/upload/');
   });
 
   it('builds prompt with null metadata gracefully', () => {
     const prompt = processor.buildPrompt(
-      '/tmp/test-upload/random.pdf',
+      '# Random content',
       'random.pdf',
       {
         courseCode: null,
@@ -57,10 +60,51 @@ describe('AgentProcessor', () => {
         fileName: 'random.pdf',
       },
       'draft-id-456',
+      [],
     );
 
     expect(prompt).toContain('random.pdf');
     expect(prompt).toContain('draft-id-456');
     expect(prompt).not.toContain('IS-1500');
+  });
+
+  it('includes figures section when figures are provided', () => {
+    const prompt = processor.buildPrompt(
+      '# Network Diagram',
+      'lecture.pdf',
+      {
+        courseCode: 'IS-1500',
+        courseName: null,
+        semester: null,
+        year: null,
+        type: 'lecture',
+        fileName: 'lecture.pdf',
+      },
+      'draft-id-789',
+      ['figure-001.png', 'figure-002.png'],
+    );
+
+    expect(prompt).toContain('figure-001.png');
+    expect(prompt).toContain('figure-002.png');
+    expect(prompt).toContain('Figures');
+  });
+
+  it('omits figures section when no figures are provided', () => {
+    const prompt = processor.buildPrompt(
+      '# Content',
+      'lecture.pdf',
+      {
+        courseCode: null,
+        courseName: null,
+        semester: null,
+        year: null,
+        type: null,
+        fileName: 'lecture.pdf',
+      },
+      'draft-id-000',
+      [],
+    );
+
+    expect(prompt).not.toContain('Figures');
   });
 });
