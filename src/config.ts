@@ -74,6 +74,10 @@ export const EXTRACTION_TIMEOUT = parseInt(
   process.env.EXTRACTION_TIMEOUT || '600000',
   10,
 ); // 10min default
+export const PIPELINE_TIMEOUT = parseInt(
+  process.env.PIPELINE_TIMEOUT || '1200000',
+  10,
+); // 20min default — pipeline-level timeout, shorter than container hard timeout
 export const MAX_EXTRACTION_CONCURRENT = parseInt(
   process.env.MAX_EXTRACTION_CONCURRENT || '3',
   10,
