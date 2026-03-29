@@ -83,6 +83,32 @@ def extract(input_file: str, output_dir: str) -> dict:
         json.dumps(metadata, indent=2), encoding="utf-8"
     )
 
+    # Convert DOCX/PPTX to PDF for preview (non-fatal)
+    if suffix in ("docx", "pptx", "doc", "ppt"):
+        try:
+            import subprocess
+
+            result_pdf = subprocess.run(
+                [
+                    "soffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(output_path),
+                    str(input_path.resolve()),
+                ],
+                capture_output=True,
+                timeout=120,
+            )
+            if result_pdf.returncode == 0:
+                # soffice names the output after the input stem
+                generated = output_path / (input_path.stem + ".pdf")
+                if generated.exists():
+                    generated.rename(output_path / "preview.pdf")
+        except Exception:
+            pass
+
     return {"status": "ok", "outputDir": str(output_path.resolve())}
 
 

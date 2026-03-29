@@ -70,6 +70,16 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+export const EXTRACTION_TIMEOUT = parseInt(
+  process.env.EXTRACTION_TIMEOUT || '600000',
+  10,
+); // 10min default
+export const MAX_EXTRACTION_CONCURRENT = parseInt(
+  process.env.MAX_EXTRACTION_CONCURRENT || '3',
+  10,
+);
+export const EXTRACTIONS_DIR = path.resolve(DATA_DIR, 'extractions');
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
