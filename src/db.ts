@@ -93,14 +93,19 @@ function createSchema(database: Database.Database): void {
       year INTEGER,
       type TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
+      tier INTEGER DEFAULT 2,
+      extraction_path TEXT,
       error TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at TEXT
+      completed_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_status ON ingestion_jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_source_path ON ingestion_jobs(source_path);
 
     CREATE TABLE IF NOT EXISTS review_items (
       id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL REFERENCES ingestion_jobs(id),
+      job_id TEXT NOT NULL REFERENCES ingestion_jobs(id) ON DELETE CASCADE,
       draft_path TEXT NOT NULL,
       original_source TEXT,
       suggested_type TEXT,
@@ -110,6 +115,8 @@ function createSchema(database: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       reviewed_at TEXT
     );
+    CREATE INDEX IF NOT EXISTS idx_review_items_status ON review_items(status);
+    CREATE INDEX IF NOT EXISTS idx_review_items_job_id ON review_items(job_id);
 
     CREATE TABLE IF NOT EXISTS folder_type_overrides (
       folder_name TEXT PRIMARY KEY,
@@ -161,6 +168,25 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add tier, extraction_path, updated_at columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN tier INTEGER DEFAULT 2`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN extraction_path TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE ingestion_jobs ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -188,6 +214,8 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -197,12 +225,17 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
   createSchema(db);
 }
 
 /** @internal - for tests only. */
 export function _closeDatabase(): void {
   db.close();
+}
+
+export function getDb() {
+  return db;
 }
 
 /**
@@ -693,6 +726,20 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
 
 // --- Ingestion job accessors ---
 
+export function getIngestionJobByPath(
+  sourcePath: string,
+): { id: string; status: string } | undefined {
+  return db
+    .prepare(
+      `SELECT id, status FROM ingestion_jobs WHERE source_path = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(sourcePath) as { id: string; status: string } | undefined;
+}
+
+export function deleteIngestionJob(id: string): void {
+  db.prepare(`DELETE FROM ingestion_jobs WHERE id = ?`).run(id);
+}
+
 export function createIngestionJob(
   id: string,
   sourcePath: string,
@@ -780,6 +827,77 @@ export function getPendingReviewItems(): unknown[] {
       `SELECT * FROM review_items WHERE status = 'pending' ORDER BY created_at ASC`,
     )
     .all();
+}
+
+export function getJobsByStatus(status: string): unknown[] {
+  return db
+    .prepare(
+      `SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY created_at DESC`,
+    )
+    .all(status);
+}
+
+export function getStaleJobs(
+  status: string,
+  olderThanMinutes: number,
+): unknown[] {
+  return db
+    .prepare(
+      `SELECT * FROM ingestion_jobs WHERE status = ? AND updated_at < datetime('now', '-' || ? || ' minutes') ORDER BY updated_at ASC`,
+    )
+    .all(status, olderThanMinutes);
+}
+
+export function updateIngestionJob(
+  id: string,
+  updates: {
+    status?: string;
+    tier?: number;
+    extraction_path?: string | null;
+    error?: string | null;
+  },
+): void {
+  const fields: string[] = ['updated_at = datetime(\'now\')'];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+    if (updates.status === 'completed') {
+      fields.push('completed_at = datetime(\'now\')');
+    }
+  }
+  if (updates.tier !== undefined) {
+    fields.push('tier = ?');
+    values.push(updates.tier);
+  }
+  if ('extraction_path' in updates) {
+    fields.push('extraction_path = ?');
+    values.push(updates.extraction_path ?? null);
+  }
+  if ('error' in updates) {
+    fields.push('error = ?');
+    values.push(updates.error ?? null);
+  }
+
+  values.push(id);
+  db.prepare(
+    `UPDATE ingestion_jobs SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
+}
+
+export function getReviewItemByJobId(jobId: string): unknown | undefined {
+  return db
+    .prepare(`SELECT * FROM review_items WHERE job_id = ? LIMIT 1`)
+    .get(jobId);
+}
+
+export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
+  return db
+    .prepare(
+      `SELECT * FROM ingestion_jobs WHERE status = 'completed' ORDER BY completed_at DESC LIMIT ?`,
+    )
+    .all(limit);
 }
 
 // --- Folder type override accessors ---
