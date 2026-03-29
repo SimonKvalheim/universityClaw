@@ -61,7 +61,7 @@ export class IngestionPipeline {
       onGenerate: (job) => this.handleGeneration(job),
       onComplete: (job) => this.handleCleanup(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
-      maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 2,
+      maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 3,
       pollIntervalMs: 5000,
     });
   }
@@ -305,7 +305,10 @@ export class IngestionPipeline {
   /**
    * Clean up after a job completes (Tier 1 auto-complete or any other completion).
    */
-  private async handleCleanup(job: { id: string; source_path: string }): Promise<void> {
+  private async handleCleanup(job: {
+    id: string;
+    source_path: string;
+  }): Promise<void> {
     await this.extractor.cleanup(job.id);
     await this.pruneEmptyDirs(dirname(job.source_path));
   }

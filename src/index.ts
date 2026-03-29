@@ -54,6 +54,8 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  updateIngestionJob,
+  getDb,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -779,6 +781,11 @@ async function main(): Promise<void> {
       const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
       queue.closeStdin(chatJid);
       activeWebReviewJids.delete(chatJid);
+      // Mark the ingestion job as completed
+      const ri = getDb()
+        .prepare('SELECT job_id FROM review_items WHERE id = ?')
+        .get(draftId) as { job_id: string } | undefined;
+      if (ri) updateIngestionJob(ri.job_id, { status: 'completed' });
       return result;
     },
     onReject: async (draftId: string) => {
@@ -786,6 +793,11 @@ async function main(): Promise<void> {
       const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
       queue.closeStdin(chatJid);
       activeWebReviewJids.delete(chatJid);
+      // Mark the ingestion job as completed (rejected is still "done")
+      const ri = getDb()
+        .prepare('SELECT job_id FROM review_items WHERE id = ?')
+        .get(draftId) as { job_id: string } | undefined;
+      if (ri) updateIngestionJob(ri.job_id, { status: 'completed' });
     },
   };
 
