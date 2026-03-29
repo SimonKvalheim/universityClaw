@@ -10,6 +10,8 @@ export interface ChannelOpts {
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
   onDraftClosed?: (draftId: string) => void;
+  onApprove?: (draftId: string) => Promise<{ targetPath: string }>;
+  onReject?: (draftId: string) => Promise<void>;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

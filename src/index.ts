@@ -23,6 +23,8 @@ import { initBotPool } from './channels/telegram.js';
 import { RagClient } from './rag/rag-client.js';
 import { RagIndexer } from './rag/indexer.js';
 import { IngestionPipeline } from './ingestion/index.js';
+import { ReviewQueue } from './ingestion/review-queue.js';
+import { VaultUtility } from './vault/vault-utility.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -109,7 +111,7 @@ function buildReviewContext(chatJid: string): string {
       draftContent,
       '```',
       '',
-      'You are reviewing this specific draft. Focus on answering the user\'s questions about it, and edit the draft file directly when asked to make changes.',
+      "You are reviewing this specific draft. Focus on answering the user's questions about it, and edit the draft file directly when asked to make changes.",
       '</review-context>',
       '',
     ]
@@ -626,8 +628,14 @@ async function main(): Promise<void> {
           },
         ],
         allowedTools: [
-          'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
-          'TodoWrite', 'mcp__nanoclaw__*',
+          'Bash',
+          'Read',
+          'Write',
+          'Edit',
+          'Glob',
+          'Grep',
+          'TodoWrite',
+          'mcp__nanoclaw__*',
         ],
       },
     });
@@ -710,6 +718,10 @@ async function main(): Promise<void> {
     }
   }
 
+  // ReviewQueue for unified approval/rejection codepath
+  const vaultUtility = new VaultUtility(VAULT_DIR);
+  const reviewQueue = new ReviewQueue(vaultUtility);
+
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
@@ -747,7 +759,10 @@ async function main(): Promise<void> {
     },
     onDraftClosed: (draftId: string) => {
       const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
-      logger.info({ draftId, chatJid }, 'Draft closed, shutting down review agent');
+      logger.info(
+        { draftId, chatJid },
+        'Draft closed, shutting down review agent',
+      );
       queue.closeStdin(chatJid);
       activeWebReviewJids.delete(chatJid);
     },
@@ -759,6 +774,19 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    onApprove: async (draftId: string) => {
+      const result = await reviewQueue.approveDraft(draftId);
+      const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
+      queue.closeStdin(chatJid);
+      activeWebReviewJids.delete(chatJid);
+      return result;
+    },
+    onReject: async (draftId: string) => {
+      await reviewQueue.rejectDraft(draftId);
+      const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
+      queue.closeStdin(chatJid);
+      activeWebReviewJids.delete(chatJid);
+    },
   };
 
   // Create and connect all registered channels.

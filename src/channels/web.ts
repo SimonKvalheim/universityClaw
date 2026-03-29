@@ -4,6 +4,7 @@ import { Channel } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
 import { WEB_CHANNEL_PORT } from '../config.js';
 import { logger } from '../logger.js';
+import { getRecentlyCompletedJobs } from '../db.js';
 
 const JID_PREFIX = 'web:review:';
 
@@ -75,7 +76,8 @@ export function createWebChannel(opts: ChannelOpts): Channel {
         res.end(JSON.stringify({ ok: true, messageId: msg.id }));
       } catch (err) {
         logger.error({ err }, 'Web channel message handling failed');
-        const status = (err as any)?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' ? 500 : 400;
+        const status =
+          (err as any)?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' ? 500 : 400;
         const msg = status === 500 ? 'Internal error' : 'Invalid JSON';
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: msg }));
@@ -110,7 +112,10 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     });
   }
 
-  function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+  async function handleRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) {
     // CORS preflight
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -155,6 +160,46 @@ export function createWebChannel(opts: ChannelOpts): Channel {
       responseBuffers.delete(draftId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    // POST /approve/:draftId
+    const approveMatch = url.pathname.match(/^\/approve\/([a-f0-9-]{36})$/);
+    if (req.method === 'POST' && approveMatch) {
+      const draftId = approveMatch[1];
+      try {
+        const result = await opts.onApprove?.(draftId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, targetPath: result?.targetPath }));
+      } catch (err) {
+        logger.error({ err, draftId }, 'Approve draft failed');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // POST /reject/:draftId
+    const rejectMatch = url.pathname.match(/^\/reject\/([a-f0-9-]{36})$/);
+    if (req.method === 'POST' && rejectMatch) {
+      const draftId = rejectMatch[1];
+      try {
+        await opts.onReject?.(draftId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        logger.error({ err, draftId }, 'Reject draft failed');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /recent — recently completed ingestion jobs
+    if (req.method === 'GET' && url.pathname === '/recent') {
+      const jobs = getRecentlyCompletedJobs(50);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(jobs));
       return;
     }
 
