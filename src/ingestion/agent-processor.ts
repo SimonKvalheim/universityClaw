@@ -81,6 +81,7 @@ Follow the instructions in your CLAUDE.md for note format and metadata schema.`;
           groupFolder: reviewAgentGroup.folder,
           chatJid: `web:review:${draftId}`,
           isMain: false,
+          singleTurn: true,
         },
         (_proc, _containerName) => {
           // No queue registration needed for ingestion containers

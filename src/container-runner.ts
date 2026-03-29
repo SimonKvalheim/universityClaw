@@ -44,6 +44,7 @@ export interface ContainerInput {
   assistantName?: string;
   script?: string;
   allowedTools?: string[];
+  singleTurn?: boolean;
 }
 
 export interface ContainerOutput {
