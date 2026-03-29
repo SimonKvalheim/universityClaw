@@ -20,6 +20,8 @@ import {
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
 import { MAX_EXTRACTION_CONCURRENT, EXTRACTIONS_DIR } from '../config.js';
+import { ReviewQueue } from './review-queue.js';
+import { VaultUtility } from '../vault/vault-utility.js';
 
 export interface IngestionPipelineOpts {
   uploadDir: string;
@@ -37,6 +39,7 @@ export class IngestionPipeline {
   private uploadDir: string;
   private vaultDir: string;
   private getReviewAgentGroup: () => RegisteredGroup | undefined;
+  private reviewQueue: ReviewQueue;
   private drainer: PipelineDrainer;
 
   constructor(opts: IngestionPipelineOpts) {
@@ -48,6 +51,7 @@ export class IngestionPipeline {
       uploadDir: opts.uploadDir,
     });
     this.extractor = new Extractor({ extractionsDir: EXTRACTIONS_DIR });
+    this.reviewQueue = new ReviewQueue(new VaultUtility(opts.vaultDir));
     this.typeMappings = new TypeMappings(opts.typeMappingsPath);
     this.watcher = new FileWatcher(opts.uploadDir, (filePath) => {
       this.enqueue(filePath);
@@ -78,8 +82,18 @@ export class IngestionPipeline {
         );
         return;
       }
-      // Remove failed/pending job so it can be retried
-      deleteIngestionJob(existing.id);
+      // Reset failed/pending job for retry instead of deleting
+      // (deleting would violate FK constraint with review_items)
+      if (existing.status === 'failed') {
+        updateIngestionJob(existing.id, { status: 'pending', error: null });
+        logger.info(`ingestion: Retrying failed job: ${relativePath}`);
+        return;
+      }
+      // Already pending — skip
+      if (existing.status === 'pending' || existing.status === 'extracted' || existing.status === 'reviewing') {
+        logger.info(`ingestion: Skipping (already ${existing.status}): ${relativePath}`);
+        return;
+      }
     }
 
     const jobId = randomUUID();
@@ -220,19 +234,34 @@ export class IngestionPipeline {
       [],
     );
 
-    // Tier 2: queue for review (default — leave status as completed after review is created)
-    // Tier 3: also queue for review (manual review required)
-    // Both tiers get a review item; tier distinction is surfaced in the review UI
-
     // Move original out of upload folder
     const processedDir = join(this.uploadDir, '.processed');
     await mkdir(processedDir, { recursive: true });
-    await rename(
-      job.source_path,
-      join(processedDir, `${job.id}-${fileName}`),
-    );
+    await rename(job.source_path, join(processedDir, `${job.id}-${fileName}`));
 
-    updateIngestionJob(job.id, { status: 'completed' });
+    if (job.tier === 2) {
+      // Tier 2: auto-approve — move draft from vault/drafts/ to final vault path
+      try {
+        const result = await this.reviewQueue.approveDraft(draftId);
+        logger.info(
+          { jobId: job.id, draftId, targetPath: result.targetPath, tier: 2 },
+          `ingestion: Tier 2 auto-approved → ${result.targetPath}`,
+        );
+      } catch (err) {
+        logger.warn(
+          { jobId: job.id, draftId, err },
+          'ingestion: Tier 2 auto-approve failed, leaving as draft for manual review',
+        );
+      }
+      updateIngestionJob(job.id, { status: 'completed' });
+    } else {
+      // Tier 3: queue for manual review
+      updateIngestionJob(job.id, { status: 'reviewing' });
+      logger.info(
+        { jobId: job.id, draftId, tier: 3 },
+        `ingestion: Tier 3 queued for review`,
+      );
+    }
 
     logger.info(
       { jobId: job.id, draftId, relativePath, tier: job.tier },

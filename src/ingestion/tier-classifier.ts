@@ -11,7 +11,7 @@ export function classifyTier(input: TierInput): number {
     return input.tierOverride;
   }
   if (input.type === null) {
-    return 3; // Unknown type → full review
+    return 2; // Unknown type → auto-approve (most uploads are course materials)
   }
   if (TIER_1_TYPES.has(input.type)) {
     return 1;

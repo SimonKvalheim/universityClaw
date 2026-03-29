@@ -170,7 +170,9 @@ function createSchema(database: Database.Database): void {
 
   // Add tier, extraction_path, updated_at columns if they don't exist (migration for existing DBs)
   try {
-    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN tier INTEGER DEFAULT 2`);
+    database.exec(
+      `ALTER TABLE ingestion_jobs ADD COLUMN tier INTEGER DEFAULT 2`,
+    );
   } catch {
     /* column already exists */
   }
@@ -180,8 +182,11 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
   try {
+    // SQLite doesn't allow non-constant defaults in ALTER TABLE,
+    // so add the column with no default, then backfill from created_at.
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN updated_at TEXT`);
     database.exec(
-      `ALTER TABLE ingestion_jobs ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+      `UPDATE ingestion_jobs SET updated_at = COALESCE(created_at, datetime('now')) WHERE updated_at IS NULL`,
     );
   } catch {
     /* column already exists */
@@ -857,14 +862,14 @@ export function updateIngestionJob(
     error?: string | null;
   },
 ): void {
-  const fields: string[] = ['updated_at = datetime(\'now\')'];
+  const fields: string[] = ["updated_at = datetime('now')"];
   const values: unknown[] = [];
 
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
     if (updates.status === 'completed') {
-      fields.push('completed_at = datetime(\'now\')');
+      fields.push("completed_at = datetime('now')");
     }
   }
   if (updates.tier !== undefined) {
@@ -881,9 +886,9 @@ export function updateIngestionJob(
   }
 
   values.push(id);
-  db.prepare(
-    `UPDATE ingestion_jobs SET ${fields.join(', ')} WHERE id = ?`,
-  ).run(...values);
+  db.prepare(`UPDATE ingestion_jobs SET ${fields.join(', ')} WHERE id = ?`).run(
+    ...values,
+  );
 }
 
 export function getReviewItemByJobId(jobId: string): unknown | undefined {
