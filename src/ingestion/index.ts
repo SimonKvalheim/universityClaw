@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { copyFile, mkdir, rename } from 'node:fs/promises';
-import { join, relative, basename } from 'node:path';
+import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
+import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
 import { parseUploadPath } from './path-parser.js';
 import { TypeMappings } from './type-mappings.js';
@@ -59,6 +59,7 @@ export class IngestionPipeline {
     this.drainer = new PipelineDrainer({
       onExtract: (job) => this.handleExtraction(job),
       onGenerate: (job) => this.handleGeneration(job),
+      onComplete: (job) => this.handleCleanup(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
       maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 2,
       pollIntervalMs: 5000,
@@ -90,8 +91,14 @@ export class IngestionPipeline {
         return;
       }
       // Already pending — skip
-      if (existing.status === 'pending' || existing.status === 'extracted' || existing.status === 'reviewing') {
-        logger.info(`ingestion: Skipping (already ${existing.status}): ${relativePath}`);
+      if (
+        existing.status === 'pending' ||
+        existing.status === 'extracted' ||
+        existing.status === 'reviewing'
+      ) {
+        logger.info(
+          `ingestion: Skipping (already ${existing.status}): ${relativePath}`,
+        );
         return;
       }
     }
@@ -263,10 +270,44 @@ export class IngestionPipeline {
       );
     }
 
+    // Clean up extraction artifacts (checkpoint no longer needed)
+    await this.extractor.cleanup(job.id);
+
+    // Prune empty directories left behind in upload/
+    await this.pruneEmptyDirs(dirname(job.source_path));
+
     logger.info(
       { jobId: job.id, draftId, relativePath, tier: job.tier },
       `ingestion: Completed: ${relativePath} → draft ${draftId}`,
     );
+  }
+
+  /**
+   * Walk up from dir, removing empty directories until we hit uploadDir.
+   */
+  private async pruneEmptyDirs(dir: string): Promise<void> {
+    let current = dir;
+    while (current !== this.uploadDir && current.startsWith(this.uploadDir)) {
+      try {
+        const entries = await readdir(current);
+        const meaningful = entries.filter(
+          (e) => e !== '.DS_Store' && e !== 'Thumbs.db',
+        );
+        if (meaningful.length > 0) break;
+        await rmdir(current);
+        current = dirname(current);
+      } catch {
+        break;
+      }
+    }
+  }
+
+  /**
+   * Clean up after a job completes (Tier 1 auto-complete or any other completion).
+   */
+  private async handleCleanup(job: { id: string; source_path: string }): Promise<void> {
+    await this.extractor.cleanup(job.id);
+    await this.pruneEmptyDirs(dirname(job.source_path));
   }
 
   async start(): Promise<void> {

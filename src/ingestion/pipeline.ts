@@ -14,6 +14,7 @@ export interface JobRow {
 export interface PipelineDrainerOpts {
   onExtract: (job: JobRow) => Promise<void>;
   onGenerate: (job: JobRow) => Promise<void>;
+  onComplete?: (job: JobRow) => Promise<void>;
   maxExtractionConcurrent: number;
   maxGenerationConcurrent: number;
   pollIntervalMs: number;
@@ -80,6 +81,7 @@ export class PipelineDrainer {
       if (job.tier === 1) {
         // Tier 1: no AI needed, auto-complete
         updateIngestionJob(job.id, { status: 'completed' });
+        this.opts.onComplete?.(job).catch(() => {});
         continue;
       }
 
