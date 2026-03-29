@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { VaultUtility } from '../vault/vault-utility.js';
 import { ReviewQueue, DraftInput } from './review-queue.js';
+import { _initTestDatabase, createIngestionJob, createReviewItem } from '../db.js';
 
 let tmpDir: string;
 let vault: VaultUtility;
 let queue: ReviewQueue;
 
 beforeEach(() => {
+  _initTestDatabase();
   tmpDir = mkdtempSync(join(tmpdir(), 'review-queue-test-'));
   vault = new VaultUtility(tmpDir);
   queue = new ReviewQueue(vault);
