@@ -43,7 +43,7 @@ Manages all reading state and timing logic.
 **Responsibilities:**
 - Tokenize input text into word array, preserving paragraph boundaries
 - Track current position (word index)
-- Handle play/pause/seek/restart via `setInterval`
+- Handle play/pause/seek/restart via chained `setTimeout` (rescheduled per word to support variable durations from smart timing)
 - Calculate per-word display duration: base duration from WPM + smart timing multipliers
 - Chunk words into groups of 1-3 based on chunk size setting
 
@@ -82,7 +82,7 @@ Managed with `useReducer`:
 
 ## Smart Timing
 
-Per-word display duration is calculated as `(60000 / WPM) * multiplier`. Multipliers stack when multiple conditions apply (capped at 3.0x to prevent jarring pauses).
+Per-word display duration is calculated as `(60000 / WPM) * multiplier`. Multipliers stack **multiplicatively** when multiple conditions apply (e.g., a long word ending a sentence: 2.0 * 1.3 = 2.6x), capped at 3.0x to prevent jarring pauses. All word durations are precomputed up front during tokenization for accurate ETA calculation and progress display.
 
 | Condition | Multiplier | Rationale |
 |-----------|-----------|-----------|
@@ -108,7 +108,7 @@ The word is positioned so a pivot letter sits at a fixed point on screen. The pi
 | 7-9 chars | 2 |
 | 10+ chars | 3 |
 
-For multi-word chunks: ORP applies to the longest word in the chunk; other words are positioned around it.
+For multi-word chunks: the chunk is displayed as a space-separated phrase on one line, centered as a unit. ORP pivot highlighting applies to the longest word in the chunk. The phrase is positioned so the pivot character of the longest word sits at the fixed screen point.
 
 ### Mode B — Simple Centered
 
@@ -123,7 +123,8 @@ Same ORP alignment as Mode A, plus faded lines of surrounding text above and bel
 - Font: monospace or semi-monospace (system monospace / `JetBrains Mono` if available) for consistent character widths
 - Focus word size: ~40-48px
 - Background: `gray-950` matching dashboard theme
-- Accent color for ORP pivot: `red-500` or dashboard blue
+- Accent color for ORP pivot: `red-500` (high contrast against white text on dark background)
+- Controls accent: `blue-500`
 
 ## Input Phase
 
@@ -159,6 +160,13 @@ Below the text entry area:
 
 - "Start Reading" — transitions to reader phase
 - Disabled when no text is entered/uploaded
+
+### Validation & Error States
+
+- **Empty/whitespace-only input:** Start button remains disabled; no error message needed
+- **PDF parse failure:** Show inline error in the upload tab: "Could not extract text from this PDF. Try a different file."
+- **Very large text (>50,000 words):** Accept it, but the source panel should virtualize its rendering (or limit displayed context to ~500 words around the current position) to avoid DOM performance issues
+- **Long words (URLs, identifiers >30 chars):** Scale font down proportionally for that word to fit the display area, then restore normal size on the next word
 
 ## Reader Phase
 
@@ -213,13 +221,21 @@ When all words have been displayed:
 
 ## Keyboard Shortcut Scoping
 
-All keyboard shortcuts are scoped to the reader phase only. During the input phase, keys behave normally (typing in textarea). Shortcuts are disabled when focus is on an input element.
+All keyboard shortcuts are scoped to the reader phase only. During the input phase, keys behave normally (typing in textarea). Shortcuts are disabled when any interactive element has focus (inputs, sliders, buttons) — not just text inputs. This prevents Space from toggling play/pause while adjusting the WPM slider, for example.
 
 ## Dependencies
 
-- `pdfjs-dist` — client-side PDF text extraction (new dependency)
+- `pdfjs-dist` — client-side PDF text extraction (new dependency); requires worker setup for Next.js (copy worker to `public/` or configure webpack/turbopack to serve it)
 - No new API routes needed
 - No backend changes
+
+## Browser Tab Handling
+
+The engine listens for `visibilitychange` events. When the browser tab is backgrounded, playback pauses automatically (browser-throttled timers would cause drift otherwise). Playback does not auto-resume when the tab is foregrounded — the user must press play.
+
+## Seek Behavior Note
+
+Seek forward/back 10s uses **nominal** WPM for the word count calculation (`(WPM / 60) * 10`), not effective time adjusted for smart timing multipliers. This is intentional — it keeps seek distance predictable and avoids the complexity of summing precomputed durations. The trade-off is that seeking 10s back after a paragraph with many pauses may undershoot the actual elapsed time.
 
 ## Styling
 
@@ -227,7 +243,7 @@ Follows existing dashboard patterns:
 - Inline Tailwind CSS (no component library)
 - Dark theme: `bg-gray-950`, `text-gray-100`, `border-gray-800`
 - Cards/containers: `bg-gray-900 border border-gray-800 rounded-lg`
-- Accent: blue (`blue-500`) for controls, red (`red-500`) for ORP pivot
+- Accent: `red-500` for ORP pivot, `blue-500` for controls and interactive elements
 
 ## Future Integration Points
 
