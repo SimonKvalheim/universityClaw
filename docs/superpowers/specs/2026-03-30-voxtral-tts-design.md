@@ -273,7 +273,7 @@ bot.on("message:voice", async (ctx) => {
 | NB-Whisper Large Q5_0 | STT model | Download from HuggingFace (`NbAiLab/nb-whisper-large`) |
 | `mlx-audio` or `mlx-voxtral` | TTS inference + HTTP server | `pip install mlx-audio` or `pip install mlx-voxtral` |
 | Voxtral-4B Q4 | TTS model | Auto-downloaded on first run by MLX |
-| `ffmpeg` | OGG→WAV conversion for STT only (not needed for TTS) | `brew install ffmpeg` (required on host) |
+| `ffmpeg` | OGG→WAV for STT + WAV→OGG Opus for TTS delivery (both on host) | `brew install ffmpeg` (required) |
 | `@grammyjs/files` | Telegram file download plugin | `npm install @grammyjs/files` |
 
 ### Configuration Constants
