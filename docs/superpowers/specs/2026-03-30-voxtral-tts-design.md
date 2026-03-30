@@ -81,10 +81,13 @@ Runs as a CLI tool via whisper.cpp, invoked from the host-side Telegram handler.
 
 **Binary:** `whisper.cpp` compiled for Apple Silicon, using the `ggml-model-q5_0.bin` quantized model.
 
-**Invocation:** Called as a subprocess from `telegram.ts` when a voice message arrives:
+**Invocation:** Called as a subprocess from `telegram.ts` when a voice message arrives. Since the default `brew install whisper-cpp` does not include ffmpeg support (required for OGG Opus input), voice messages must be pre-converted to WAV before transcription:
 ```
-whisper-cpp -m /path/to/nb-whisper-large-q5_0.bin -l no -f /tmp/voice.oga --output-txt
+ffmpeg -i /tmp/voice.oga -ar 16000 -ac 1 -f wav /tmp/voice.wav
+whisper-cpp -m /path/to/nb-whisper-large-q5_0.bin -l no -f /tmp/voice.wav
 ```
+
+Transcription text is captured from stdout (do NOT use `--output-txt` which writes to a file instead of stdout).
 
 **Resource usage:** ~1.5GB RAM during inference, unloaded after. Since it's a subprocess, memory is reclaimed when transcription completes.
 
@@ -104,10 +107,15 @@ whisper-cpp -m /path/to/nb-whisper-large-q5_0.bin -l no -f /tmp/voice.oga --outp
 
 ### Implementation
 
-The MCP tool makes an HTTP POST to the host TTS service:
+The MCP tool makes an HTTP POST to the host TTS service. The URL is injected as an environment variable `VOXTRAL_TTS_URL` (following the same pattern as `LIGHTRAG_URL` in `container-runner.ts` lines 243-248):
 
 ```typescript
-const response = await fetch('http://host.docker.internal:8771/v1/audio/speech', {
+const ttsUrl = process.env.VOXTRAL_TTS_URL;
+if (!ttsUrl) {
+  return { content: [{ type: 'text', text: 'TTS service not configured' }], isError: true };
+}
+
+const response = await fetch(`${ttsUrl}/v1/audio/speech`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -120,7 +128,7 @@ const response = await fetch('http://host.docker.internal:8771/v1/audio/speech',
 const audioBuffer = Buffer.from(await response.arrayBuffer());
 ```
 
-No API keys needed — the service runs on localhost with no authentication.
+No API keys needed — the service runs on localhost with no authentication. The env var is set in `container-runner.ts` to `http://host.docker.internal:8771` (rewritten from `localhost` using the existing host gateway pattern).
 
 ### Output
 
@@ -168,10 +176,17 @@ A new MCP tool for sending audio files as Telegram voice messages.
 
 ### Changes Required
 
-**`src/ipc.ts`** — Add an `else if (data.type === 'voice')` dispatch branch in the message handler. Currently only `type: "message"` is handled; without this branch, voice IPC files will be silently consumed and unlinked. The new branch must:
+**`src/ipc.ts`** — Two changes needed:
+
+1. Add `sendVoice` to the `IpcDeps` interface (alongside the existing `sendMessage`):
+```typescript
+sendVoice?(jid: string, filePath: string, caption?: string): Promise<void>;
+```
+
+2. Add an `else if (data.type === 'voice')` dispatch branch in the message handler. Currently only `type: "message"` is handled; without this branch, voice IPC files will be silently consumed and unlinked. The new branch must:
 - Apply the same authorization check (`isMain || folder === sourceGroup`)
-- Resolve the container file path to the host-absolute path
-- Call `sendVoice()` on the target channel
+- Resolve the container file path to the host-absolute path (strip `/workspace/group/` prefix, prepend `resolveGroupFolderPath(sourceGroup)`)
+- Call `deps.sendVoice()` on the target channel (check it exists first — gracefully skip if the channel doesn't support voice)
 - Handle missing file gracefully (log error, skip)
 
 **`src/types.ts`** — Add optional `sendVoice` to the Channel interface:
@@ -222,17 +237,24 @@ bot.on("message:voice", async (ctx) => {
   const localPath = await file.download(
     path.join(os.tmpdir(), `voice-${Date.now()}.oga`)
   );
+  const wavPath = localPath.replace(/\.oga$/, '.wav');
   try {
-    const { stdout } = await execFileAsync('whisper-cpp', [
-      '-m', WHISPER_MODEL_PATH,
-      '-f', localPath,
-      '--output-txt', '--no-timestamps',
+    // Pre-convert OGG Opus to WAV (whisper.cpp default build lacks OGG support)
+    await execFileAsync('ffmpeg', [
+      '-i', localPath, '-ar', '16000', '-ac', '1', '-f', 'wav', wavPath,
     ]);
+    // Transcribe — stdout contains the text (no --output-txt flag)
+    const { stdout } = await execFileAsync(WHISPER_BIN_PATH, [
+      '-m', WHISPER_MODEL_PATH,
+      '-f', wavPath,
+      '--no-timestamps',
+    ], { timeout: 60_000 });
     const text = stdout.trim();
     // Route text as a normal inbound message
     // prefixed with [Voice]: so the agent knows it was audio
   } finally {
     fs.unlink(localPath, () => {});
+    fs.unlink(wavPath, () => {});
   }
 });
 ```
@@ -240,7 +262,8 @@ bot.on("message:voice", async (ctx) => {
 ### Format Notes
 
 - Telegram voice messages are always OGG Opus (`.oga`)
-- whisper.cpp accepts OGG/OGA natively when compiled with ffmpeg support, otherwise convert to WAV first
+- whisper.cpp default build does NOT support OGG input — always pre-convert to 16kHz mono WAV via ffmpeg before transcription
+- ffmpeg is required on the host (already listed as a host dependency)
 - Telegram file download limit: 20MB — more than enough for voice messages
 
 ## Host Dependencies
@@ -251,19 +274,41 @@ bot.on("message:voice", async (ctx) => {
 | NB-Whisper Large Q5_0 | STT model | Download from HuggingFace (`NbAiLab/nb-whisper-large`) |
 | `mlx-audio` or `mlx-voxtral` | TTS inference + HTTP server | `pip install mlx-audio` or `pip install mlx-voxtral` |
 | Voxtral-4B Q4 | TTS model | Auto-downloaded on first run by MLX |
-| `ffmpeg` | Audio transcoding (if needed) | `brew install ffmpeg` |
+| `ffmpeg` | OGG→WAV conversion for STT + optional TTS transcoding | `brew install ffmpeg` (required) |
+| `@grammyjs/files` | Telegram file download plugin | `npm install @grammyjs/files` |
+
+### Configuration Constants
+
+Add to `src/config.ts`:
+
+| Constant | Purpose | Example |
+|----------|---------|---------|
+| `WHISPER_BIN_PATH` | Path to whisper.cpp binary | `/opt/homebrew/bin/whisper-cpp` |
+| `WHISPER_MODEL_PATH` | Path to NB-Whisper Q5_0 model | `~/.cache/whisper/nb-whisper-large-q5_0.bin` |
+| `VOXTRAL_TTS_PORT` | Port for the local TTS service | `8771` |
+
+Add to `container-runner.ts` (env var injection, following `LIGHTRAG_URL` pattern):
+
+| Env Var | Purpose | Value |
+|---------|---------|-------|
+| `VOXTRAL_TTS_URL` | TTS service URL for container | `http://host.docker.internal:8771` |
 
 ### Resource Budget (MacBook Pro M1 16GB)
 
 | Component | RAM | When |
 |-----------|-----|------|
+| macOS system (kernel, WindowServer, etc.) | ~2-3GB | Always |
+| Docker Desktop | ~1-2GB | Always |
 | NanoClaw host process | ~200MB | Always |
+| Agent container (Node.js + Chromium) | ~500MB-1GB | During agent runs |
+| LightRAG server | ~200-500MB | Always (if running) |
 | Voxtral TTS (MLX, Q4) | ~3GB | Resident while TTS service runs |
 | NB-Whisper (whisper.cpp) | ~1.5GB | During transcription only (subprocess) |
-| **Peak (TTS idle + STT active)** | **~4.7GB** | |
-| **Peak (TTS active + STT idle)** | **~3.2GB** | |
+| **Baseline (no audio)** | **~5-7GB** | |
+| **Peak with TTS** | **~8-10GB** | |
+| **Peak with TTS + STT** | **~10-12GB** | |
 
-Since TTS and STT never run simultaneously, peak usage is ~4.7GB (worst case: STT running while TTS model is resident but idle). Leaves ~11GB for macOS and other processes.
+Realistic headroom is **4-6GB** with all services running, not 11GB. This is workable but tight. Consider adding an idle timeout to the Voxtral TTS launchd service to unload the model after periods of inactivity, reclaiming ~3GB when TTS isn't needed.
 
 ## Credentials
 

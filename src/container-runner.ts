@@ -240,6 +240,13 @@ async function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // LightRAG server URL — containers reach the host via host.docker.internal
+  const lightragUrl = process.env.LIGHTRAG_URL || 'http://localhost:9621';
+  const containerLightragUrl = lightragUrl
+    .replace('localhost', 'host.docker.internal')
+    .replace('127.0.0.1', 'host.docker.internal');
+  args.push('-e', `LIGHTRAG_URL=${containerLightragUrl}`);
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
   const onecliApplied = await onecli.applyContainerConfig(args, {

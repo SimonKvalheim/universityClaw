@@ -25,12 +25,7 @@ describe('AgentProcessor prompt', () => {
   });
 
   it('includes job-specific parameters', () => {
-    const prompt = processor.buildPrompt(
-      'Content',
-      'paper.pdf',
-      'job-123',
-      [],
-    );
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', []);
 
     expect(prompt).toContain('job-123');
     expect(prompt).toContain('job-123-manifest.json');
@@ -41,12 +36,7 @@ describe('AgentProcessor prompt', () => {
   });
 
   it('does not contain workflow instructions (those live in CLAUDE.md)', () => {
-    const prompt = processor.buildPrompt(
-      'Content',
-      'paper.pdf',
-      'job-123',
-      [],
-    );
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', []);
 
     // These should be in CLAUDE.md, not the prompt
     expect(prompt).not.toContain('cite-then-generate');
@@ -57,12 +47,10 @@ describe('AgentProcessor prompt', () => {
   });
 
   it('includes figures when present', () => {
-    const prompt = processor.buildPrompt(
-      'Content',
-      'paper.pdf',
-      'job-123',
-      ['figure_0_0.png', 'figure_1_0.png'],
-    );
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', [
+      'figure_0_0.png',
+      'figure_1_0.png',
+    ]);
 
     expect(prompt).toContain('<figures>');
     expect(prompt).toContain('figure_0_0.png');

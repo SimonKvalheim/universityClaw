@@ -129,14 +129,24 @@ export function validateDrafts(
   }
 
   // --- Source note frontmatter ---
-  if (sourceNotePath && existsSync(sourceNotePath) && statSync(sourceNotePath).size > 0) {
+  if (
+    sourceNotePath &&
+    existsSync(sourceNotePath) &&
+    statSync(sourceNotePath).size > 0
+  ) {
     const content = readFileSync(sourceNotePath, 'utf-8');
     const { data: fm } = parseFrontmatter(content);
 
     const required: [string, string][] = [
-      ['source_type', 'source_type (paper|lecture|textbook-chapter|article|news)'],
+      [
+        'source_type',
+        'source_type (paper|lecture|textbook-chapter|article|news)',
+      ],
       ['source_file', 'source_file'],
-      ['concepts_generated', 'concepts_generated (array of slugified concept titles)'],
+      [
+        'concepts_generated',
+        'concepts_generated (array of slugified concept titles)',
+      ],
       ['verification_status', 'verification_status'],
     ];
 
@@ -171,7 +181,10 @@ export function validateDrafts(
     }
 
     // --- Consistency: concepts_generated vs actual concept notes ---
-    if (Array.isArray(fm.concepts_generated) && manifest.concept_notes.length > 0) {
+    if (
+      Array.isArray(fm.concepts_generated) &&
+      manifest.concept_notes.length > 0
+    ) {
       const generatedSlugs = new Set(fm.concepts_generated as string[]);
 
       for (const conceptFile of manifest.concept_notes) {
@@ -223,7 +236,11 @@ export function validateDrafts(
           message: `Concept note "${conceptFile}" is missing required frontmatter field: ${desc}`,
           file: conceptFile,
         });
-      } else if (Array.isArray(val) && val.length === 0 && (field === 'topics' || field === 'source_pages')) {
+      } else if (
+        Array.isArray(val) &&
+        val.length === 0 &&
+        (field === 'topics' || field === 'source_pages')
+      ) {
         errors.push({
           severity: 'must-fix',
           check: 'concept-frontmatter',
@@ -296,7 +313,9 @@ export function formatValidationMessage(result: ValidationResult): string {
 
   if (result.errors.length > 0) {
     parts.push('## Validation Errors\n');
-    parts.push('The following issues MUST be fixed before your work can be accepted:\n');
+    parts.push(
+      'The following issues MUST be fixed before your work can be accepted:\n',
+    );
     for (const err of result.errors) {
       const fileRef = err.file ? ` (in ${err.file})` : '';
       parts.push(`- **[${err.severity}]** ${err.message}${fileRef}`);
@@ -312,7 +331,9 @@ export function formatValidationMessage(result: ValidationResult): string {
     }
   }
 
-  parts.push('\nFix the issues above, update the manifest if needed, then write a new empty sentinel file to signal completion.');
+  parts.push(
+    '\nFix the issues above, update the manifest if needed, then write a new empty sentinel file to signal completion.',
+  );
 
   return parts.join('\n');
 }

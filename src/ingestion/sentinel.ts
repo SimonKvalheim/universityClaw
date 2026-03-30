@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
 
 /**
@@ -21,9 +22,9 @@ export async function waitForSentinel(
 /**
  * Writes the IPC _close sentinel to signal the container to exit.
  */
-export function sendIpcClose(ipcNamespace: string, dataDir: string): void {
+export function sendIpcClose(ipcNamespace: string, _dataDir?: string): void {
   const closePath = join(
-    dataDir,
+    DATA_DIR,
     'ipc',
     'ingestion',
     ipcNamespace,
@@ -43,10 +44,10 @@ export function sendIpcClose(ipcNamespace: string, dataDir: string): void {
  */
 export function sendIpcMessage(
   ipcNamespace: string,
-  dataDir: string,
+  _dataDir: string,
   text: string,
 ): void {
-  const inputDir = join(dataDir, 'ipc', 'ingestion', ipcNamespace, 'input');
+  const inputDir = join(DATA_DIR, 'ipc', 'ingestion', ipcNamespace, 'input');
   try {
     mkdirSync(inputDir, { recursive: true });
     writeFileSync(

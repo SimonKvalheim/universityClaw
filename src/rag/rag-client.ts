@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process';
-
 export interface RagConfig {
-  workingDir: string;
-  vaultDir: string;
-  pythonBin?: string;
+  serverUrl: string;
+  /** @deprecated kept for indexer compatibility, not used by HTTP client */
+  workingDir?: string;
+  /** @deprecated kept for indexer compatibility, not used by HTTP client */
+  vaultDir?: string;
 }
 
 export interface RagResult {
@@ -12,12 +12,10 @@ export interface RagResult {
 }
 
 export class RagClient {
-  private pythonBin: string;
-  private workingDir: string;
+  private serverUrl: string;
 
   constructor(private config: RagConfig) {
-    this.pythonBin = config.pythonBin || 'python3';
-    this.workingDir = config.workingDir;
+    this.serverUrl = config.serverUrl.replace(/\/$/, '');
   }
 
   buildQuery(query: string, filters?: Record<string, string>): string {
@@ -33,67 +31,58 @@ export class RagClient {
 
   async query(
     question: string,
-    mode: 'naive' | 'local' | 'global' | 'hybrid' = 'hybrid',
+    mode: 'naive' | 'local' | 'global' | 'hybrid' | 'mix' = 'hybrid',
     filters?: Record<string, string>,
   ): Promise<RagResult> {
     const enriched = this.buildQuery(question, filters);
-    const script = `
-import sys, asyncio, os
-from lightrag import LightRAG
-rag = LightRAG(working_dir=os.environ["LIGHTRAG_WORKING_DIR"])
-question = sys.stdin.read()
-mode = os.environ["LIGHTRAG_QUERY_MODE"]
-result = asyncio.run(rag.aquery(question, param={"mode": mode}))
-print(result)
-`;
     try {
-      const result = await this.execPythonWithStdin(script, enriched, {
-        LIGHTRAG_QUERY_MODE: mode,
+      const res = await fetch(`${this.serverUrl}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: enriched,
+          mode,
+          only_need_context: true,
+        }),
+        signal: AbortSignal.timeout(120_000),
       });
-      return { answer: result.trim(), sources: [] };
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`LightRAG query failed (${res.status}): ${text}`);
+      }
+      const data: unknown = await res.json();
+      // Server returns { response: "..." } when only_need_context is true
+      const answer =
+        typeof data === 'string'
+          ? data
+          : ((data as Record<string, unknown>).response ?? '');
+      return { answer: String(answer).trim(), sources: [] };
     } catch {
       return { answer: '', sources: [] };
     }
   }
 
   async index(text: string): Promise<void> {
-    const script = `
-import sys, asyncio, os
-from lightrag import LightRAG
-rag = LightRAG(working_dir=os.environ["LIGHTRAG_WORKING_DIR"])
-content = sys.stdin.read()
-asyncio.run(rag.ainsert(content))
-print("ok")
-`;
-    await this.execPythonWithStdin(script, text);
+    const res = await fetch(`${this.serverUrl}/documents/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`LightRAG index failed (${res.status}): ${body}`);
+    }
   }
 
-  private execPythonWithStdin(
-    script: string,
-    input: string,
-    extraEnv?: Record<string, string>,
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const child = execFile(
-        this.pythonBin,
-        ['-c', script],
-        {
-          timeout: 120_000,
-          maxBuffer: 10 * 1024 * 1024,
-          env: {
-            ...process.env,
-            LIGHTRAG_WORKING_DIR: this.workingDir,
-            ...extraEnv,
-          },
-        },
-        (err, stdout, stderr) => {
-          if (err)
-            return reject(new Error(`Python error: ${stderr || err.message}`));
-          resolve(stdout);
-        },
-      );
-      child.stdin?.write(input);
-      child.stdin?.end();
-    });
+  async healthy(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.serverUrl}/health`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 }

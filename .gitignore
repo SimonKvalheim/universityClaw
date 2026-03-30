@@ -75,6 +75,7 @@ upload/
 *.db-shm
 
 # ------ Temp & cache files ------
+.test-tmp/
 .tmp-*
 *.tmp
 *.bak

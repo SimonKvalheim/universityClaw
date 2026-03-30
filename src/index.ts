@@ -654,8 +654,7 @@ async function main(): Promise<void> {
   await pipeline.start();
 
   const ragClient = new RagClient({
-    workingDir: join(STORE_DIR, 'rag'),
-    vaultDir: VAULT_DIR,
+    serverUrl: process.env.LIGHTRAG_URL || 'http://localhost:9621',
   });
   const ragIndexer = new RagIndexer(VAULT_DIR, ragClient);
   await ragIndexer.start();

@@ -1,16 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { execFile } from 'node:child_process';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RagClient, type RagConfig } from './rag-client.js';
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
-}));
-
-const mockExecFile = vi.mocked(execFile);
-
 const baseConfig: RagConfig = {
-  workingDir: '/tmp/rag-test',
-  vaultDir: '/tmp/vault-test',
+  serverUrl: 'http://localhost:9621',
 };
 
 describe('RagClient', () => {
@@ -42,94 +34,82 @@ describe('RagClient', () => {
     const result = client.buildQuery('Some question', {});
     expect(result).toBe('[Context: ] Some question');
   });
+});
 
-  it('query returns fallback result when python call fails', async () => {
-    const client = new RagClient({
-      ...baseConfig,
-      pythonBin: 'nonexistent-python-bin-xyz',
-    });
+describe('RagClient HTTP', () => {
+  let client: RagClient;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
 
-    mockExecFile.mockImplementation(
-      (_cmd: any, _args: any, _opts: any, cb?: any) => {
-        const callback = typeof _opts === 'function' ? _opts : cb;
-        if (callback) callback(new Error('spawn failed'), '', '');
-        return { stdin: { write: vi.fn(), end: vi.fn() } } as any;
-      },
+  beforeEach(() => {
+    client = new RagClient(baseConfig);
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('query posts to /query with correct body', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ response: 'The answer is 42.' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
     );
 
-    const result = await client.query('What is integration?');
+    const result = await client.query('What is the answer?');
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, opts] = fetchSpy.mock.calls[0];
+    expect(url).toBe('http://localhost:9621/query');
+    expect(opts?.method).toBe('POST');
+    const body = JSON.parse(opts?.body as string);
+    expect(body.query).toBe('What is the answer?');
+    expect(body.mode).toBe('hybrid');
+    expect(body.only_need_context).toBe(true);
+    expect(result.answer).toBe('The answer is 42.');
+  });
+
+  it('query returns empty result on fetch failure', async () => {
+    fetchSpy.mockRejectedValue(new Error('Network error'));
+
+    const result = await client.query('Something');
     expect(result.answer).toBe('');
     expect(result.sources).toEqual([]);
   });
-});
 
-describe('RagClient stdin safety', () => {
-  let client: RagClient;
+  it('query returns empty result on non-ok response', async () => {
+    fetchSpy.mockResolvedValue(new Response('Server Error', { status: 500 }));
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    client = new RagClient({
-      workingDir: '/tmp/rag',
-      vaultDir: '/tmp/vault',
-    });
+    const result = await client.query('Something');
+    expect(result.answer).toBe('');
   });
 
-  it('passes content via stdin, not string interpolation', async () => {
-    const stdinWrite = vi.fn();
-    const stdinEnd = vi.fn();
+  it('index posts to /documents/text', async () => {
+    fetchSpy.mockResolvedValue(new Response('OK', { status: 200 }));
 
-    mockExecFile.mockImplementation(
-      (_cmd: any, _args: any, _opts: any, cb?: any) => {
-        const callback = typeof _opts === 'function' ? _opts : cb;
-        if (callback) callback(null, 'ok', '');
-        return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
-      },
-    );
+    await client.index('Hello world');
 
-    const dangerousContent =
-      'Text with """triple quotes""" and $VARS and `backticks`';
-    await client.index(dangerousContent);
-
-    const pythonArg = mockExecFile.mock.calls[0]?.[1]?.[1] as string;
-    expect(pythonArg).not.toContain('triple quotes');
-    expect(pythonArg).toContain('sys.stdin.read()');
+    const [url, opts] = fetchSpy.mock.calls[0];
+    expect(url).toBe('http://localhost:9621/documents/text');
+    expect(opts?.method).toBe('POST');
+    const body = JSON.parse(opts?.body as string);
+    expect(body.text).toBe('Hello world');
   });
 
-  it('passes query via stdin, not string interpolation', async () => {
-    const stdinWrite = vi.fn();
-    const stdinEnd = vi.fn();
+  it('index throws on non-ok response', async () => {
+    fetchSpy.mockResolvedValue(new Response('Bad', { status: 400 }));
 
-    mockExecFile.mockImplementation(
-      (_cmd: any, _args: any, _opts: any, cb?: any) => {
-        const callback = typeof _opts === 'function' ? _opts : cb;
-        if (callback) callback(null, 'some answer', '');
-        return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
-      },
-    );
-
-    const dangerousQuery = 'What about "injection" and ${code}?';
-    await client.query(dangerousQuery);
-
-    const pythonArg = mockExecFile.mock.calls[0]?.[1]?.[1] as string;
-    expect(pythonArg).not.toContain('injection');
-    expect(pythonArg).toContain('sys.stdin.read()');
+    await expect(client.index('test')).rejects.toThrow('LightRAG index failed');
   });
 
-  it('writes content to child process stdin', async () => {
-    const stdinWrite = vi.fn();
-    const stdinEnd = vi.fn();
+  it('healthy returns true when server responds ok', async () => {
+    fetchSpy.mockResolvedValue(new Response('OK', { status: 200 }));
+    expect(await client.healthy()).toBe(true);
+  });
 
-    mockExecFile.mockImplementation(
-      (_cmd: any, _args: any, _opts: any, cb?: any) => {
-        const callback = typeof _opts === 'function' ? _opts : cb;
-        if (callback) callback(null, 'ok', '');
-        return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
-      },
-    );
-
-    await client.index('hello world');
-
-    expect(stdinWrite).toHaveBeenCalledWith('hello world');
-    expect(stdinEnd).toHaveBeenCalled();
+  it('healthy returns false when server is down', async () => {
+    fetchSpy.mockRejectedValue(new Error('ECONNREFUSED'));
+    expect(await client.healthy()).toBe(false);
   });
 });
