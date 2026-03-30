@@ -14,10 +14,7 @@ import {
   sendIpcMessage,
   cleanupSentinel,
 } from './sentinel.js';
-import {
-  validateDrafts,
-  formatValidationMessage,
-} from './draft-validator.js';
+import { validateDrafts, formatValidationMessage } from './draft-validator.js';
 import {
   createIngestionJob,
   getIngestionJobByPath,
@@ -65,7 +62,7 @@ export class IngestionPipeline {
       onGenerate: (job) => this.handleGeneration(job),
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
-      maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 3,
+      maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 1,
       pollIntervalMs: 5000,
     });
   }
@@ -188,7 +185,10 @@ export class IngestionPipeline {
         );
 
         if (!sentinelFound) {
-          logger.warn({ jobId: job.id }, 'Sentinel timeout — sending IPC close');
+          logger.warn(
+            { jobId: job.id },
+            'Sentinel timeout — sending IPC close',
+          );
           sendIpcClose(job.id, dataDir);
           throw new Error('Agent did not complete within sentinel timeout');
         }
