@@ -81,7 +81,7 @@ In `src/ingestion/db-ingestion.test.ts`, add:
 
 ```typescript
 import { describe, it, expect, beforeEach } from 'vitest';
-import { _initTestDatabase, createIngestionJob, getIngestionJobs } from '../db.js';
+import { _initTestDatabase, createIngestionJob, getIngestionJobs, getDb } from '../db.js';
 
 describe('simplified ingestion schema', () => {
   beforeEach(() => {
@@ -104,8 +104,8 @@ describe('simplified ingestion schema', () => {
   });
 
   it('does not have a review_items table', () => {
+    const db = getDb();
     expect(() => {
-      const db = (globalThis as any).__nanoclaw_db;
       db.prepare('SELECT * FROM review_items').all();
     }).toThrow();
   });
@@ -161,6 +161,10 @@ Remove these functions entirely:
 - `updateReviewItemStatus` (~822-827)
 - `getPendingReviewItems` (~829-835)
 - `getReviewItemByJobId` (~894-898)
+- `setFolderTypeOverride` (~910)
+- `getFolderTypeOverride` (~920)
+
+Also remove the `folder_type_overrides` CREATE TABLE statement (~line 121) and the `TYPE_MAPPINGS_PATH` export from `src/config.ts`.
 
 Update `updateIngestionJob` to remove `tier` from the allowed updates:
 
@@ -281,7 +285,11 @@ git commit -m "chore: clean vault, create new thematic folder structure"
 - Delete: `src/ingestion/review-queue.ts`, `src/ingestion/review-queue.test.ts`
 - Delete: `src/ingestion/type-mappings.ts`, `src/ingestion/type-mappings.test.ts`
 - Delete: `src/ingestion/approval.test.ts`
-- Modify: `src/ingestion/index.ts` (remove imports — full rewrite comes in Task 8)
+- Modify: `src/ingestion/index.ts` (remove all references to deleted modules)
+- Modify: `src/index.ts` (remove ReviewQueue import, update IngestionPipeline constructor)
+- Modify: `src/channels/web.ts` (remove approve/reject endpoints and callbacks)
+
+**Important:** All deletions and their dependent updates must happen in the same commit to keep the build green.
 
 - [ ] **Step 1: Delete files**
 
@@ -293,19 +301,61 @@ rm src/ingestion/type-mappings.ts src/ingestion/type-mappings.test.ts
 rm src/ingestion/approval.test.ts
 ```
 
-- [ ] **Step 2: Verify build still compiles (will fail — that's expected)**
+- [ ] **Step 2: Update `src/index.ts`**
 
-```bash
-npm run build 2>&1 | head -30
+Remove the `ReviewQueue` import and any `onApprove`/`onReject` callback wiring. Update the `IngestionPipeline` constructor call to remove `typeMappingsPath` and change `getReviewAgentGroup` to `reviewAgentGroup`:
+
+```typescript
+// Old:
+const pipeline = new IngestionPipeline({
+  uploadDir: UPLOAD_DIR,
+  vaultDir: VAULT_DIR,
+  typeMappingsPath: TYPE_MAPPINGS_PATH,
+  getReviewAgentGroup: () => registeredGroups[REVIEW_AGENT_JID],
+});
+// New:
+const pipeline = new IngestionPipeline({
+  uploadDir: UPLOAD_DIR,
+  vaultDir: VAULT_DIR,
+  reviewAgentGroup: registeredGroups[REVIEW_AGENT_JID],
+});
 ```
 
-Expected: Compilation errors from `src/ingestion/index.ts` referencing deleted modules. This is expected — Task 8 rewrites index.ts. For now, just note the errors.
+Remove all `ReviewQueue` usage (instantiation, `onApprove`, `onReject` handlers).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Update `src/channels/web.ts`**
+
+Remove the `POST /approve/:draftId` and `POST /reject/:draftId` routes. Remove `onApprove` and `onReject` from the web channel options interface.
+
+- [ ] **Step 4: Comment out broken imports in `src/ingestion/index.ts`**
+
+Since the full rewrite of `src/ingestion/index.ts` happens in Task 10, temporarily comment out or remove imports of deleted modules (`PathContext`, `parseUploadPath`, `classifyTier`, `TypeMappings`, `ReviewQueue`) and any code that references them. This is a stopgap — Task 10 replaces the entire file.
+
+- [ ] **Step 5: Stub dashboard review pages**
+
+In `dashboard/src/app/review/page.tsx` and `dashboard/src/app/review/[id]/page.tsx`, replace with a placeholder:
+
+```tsx
+export default function ReviewPage() {
+  return <div>Review system replaced by verification. See verification status in notes.</div>;
+}
+```
+
+Similarly stub `dashboard/src/app/api/review/route.ts` to return a 410 Gone response.
+
+- [ ] **Step 6: Verify build compiles**
 
 ```bash
-git add -A src/ingestion/
-git commit -m "refactor: remove path-parser, tier-classifier, review-queue, type-mappings"
+npm run build
+```
+
+Expected: Clean compilation.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add -A src/ingestion/ src/index.ts src/channels/web.ts dashboard/
+git commit -m "refactor: remove path-parser, tier-classifier, review-queue, type-mappings, approval endpoints"
 ```
 
 ---
@@ -375,9 +425,9 @@ Replace the `index()` method in `src/rag/rag-client.ts`:
 ```typescript
 async index(text: string): Promise<void> {
   const script = `
-import sys, asyncio
+import sys, asyncio, os
 from lightrag import LightRAG
-rag = LightRAG(working_dir="${this.workingDir}")
+rag = LightRAG(working_dir=os.environ["LIGHTRAG_WORKING_DIR"])
 content = sys.stdin.read()
 asyncio.run(rag.ainsert(content))
 print("ok")
@@ -396,15 +446,18 @@ async query(
 ): Promise<RagResult> {
   const enriched = this.buildQuery(question, filters);
   const script = `
-import sys, asyncio
+import sys, asyncio, os
 from lightrag import LightRAG
-rag = LightRAG(working_dir="${this.workingDir}")
+rag = LightRAG(working_dir=os.environ["LIGHTRAG_WORKING_DIR"])
 question = sys.stdin.read()
-result = asyncio.run(rag.aquery(question, param={"mode": "${mode}"}))
+mode = os.environ["LIGHTRAG_QUERY_MODE"]
+result = asyncio.run(rag.aquery(question, param={"mode": mode}))
 print(result)
 `;
   try {
-    const result = await this.execPythonWithStdin(script, enriched);
+    const result = await this.execPythonWithStdin(script, enriched, {
+      LIGHTRAG_QUERY_MODE: mode,
+    });
     return { answer: result.trim(), sources: [] };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -417,12 +470,24 @@ print(result)
 Add the shared stdin helper:
 
 ```typescript
-private execPythonWithStdin(script: string, input: string): Promise<string> {
+private execPythonWithStdin(
+  script: string,
+  input: string,
+  extraEnv?: Record<string, string>,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       this.pythonBin,
       ['-c', script],
-      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+      {
+        timeout: 120_000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: {
+          ...process.env,
+          LIGHTRAG_WORKING_DIR: this.workingDir,
+          ...extraEnv,
+        },
+      },
       (err, stdout, stderr) => {
         if (err) return reject(new Error(`Python error: ${stderr || err.message}`));
         resolve(stdout);
@@ -1041,11 +1106,19 @@ export function promoteNote(
   let filename = `${slug}.md`;
   let destPath = join(vaultDir, destFolder, filename);
 
-  // Handle collision
+  // Handle collision — try hash suffix, then increment
   if (existsSync(destPath)) {
     const hash = jobId.slice(0, 4);
     filename = `${slug}-${hash}.md`;
     destPath = join(vaultDir, destFolder, filename);
+  }
+  if (existsSync(destPath)) {
+    let i = 2;
+    do {
+      filename = `${slug}-${jobId.slice(0, 4)}-${i}.md`;
+      destPath = join(vaultDir, destFolder, filename);
+      i++;
+    } while (existsSync(destPath));
   }
 
   renameSync(draftPath, destPath);
@@ -1510,8 +1583,8 @@ export class PipelineDrainer {
   }
 
   drain(): void {
+    void this.tick(); // Run immediately on start
     this.interval = setInterval(() => this.tick(), this.opts.pollIntervalMs);
-    this.tick();
   }
 
   stop(): void {
@@ -1572,7 +1645,8 @@ Rewrite `src/ingestion/index.ts`:
 
 ```typescript
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, renameSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, rmSync, readdirSync, rmdirSync } from 'fs';
+import path from 'path';
 import { join, relative, basename } from 'path';
 
 import {
@@ -1653,7 +1727,15 @@ export class IngestionPipeline {
   private async enqueue(filePath: string): Promise<void> {
     const relPath = relative(this.uploadDir, filePath);
     const existing = getIngestionJobByPath(filePath);
-    if (existing && existing.status !== 'failed') return;
+    if (existing) {
+      if (existing.status === 'failed') {
+        // Reset failed job instead of creating duplicate
+        updateIngestionJob(existing.id, { status: 'pending', error: undefined });
+        logger.info({ jobId: existing.id, relPath }, 'Reset failed ingestion job');
+        return;
+      }
+      return; // Job already in progress or completed
+    }
 
     const jobId = randomUUID();
     const fileName = basename(filePath);
@@ -1665,9 +1747,11 @@ export class IngestionPipeline {
     updateIngestionJob(job.id, { status: 'extracting' });
 
     const result = await this.extractor.extract(job.id, job.source_path);
+    // Store extraction directory path (not content file path) for consistency
+    const extractionDir = this.extractor.getExtractionDir(job.id);
     updateIngestionJob(job.id, {
       status: 'extracted',
-      extraction_path: result.contentPath,
+      extraction_path: extractionDir,
     });
     logger.info({ jobId: job.id }, 'Extraction complete');
   }
@@ -1749,17 +1833,16 @@ export class IngestionPipeline {
   }
 
   private pruneEmptyDirs(filePath: string): void {
-    const { readdirSync, rmdirSync } = require('fs');
-    const { dirname } = require('path');
-    let dir = dirname(filePath);
+    const dir_path = path.dirname(filePath);
+    let dir = dir_path;
     while (dir !== this.uploadDir && dir.startsWith(this.uploadDir)) {
       try {
         const entries = readdirSync(dir).filter(
-          (e: string) => e !== '.DS_Store',
+          (e) => e !== '.DS_Store',
         );
         if (entries.length > 0) break;
         rmdirSync(dir);
-        dir = dirname(dir);
+        dir = path.dirname(dir);
       } catch {
         break;
       }
