@@ -28,85 +28,35 @@ export class AgentProcessor {
 
     const figuresSection =
       figures.length > 0
-        ? `\n## Figures\n\nThe following figures were extracted from the document:\n${figures.map((f) => `- ${f}`).join('\n')}\n\nReference these figures in your notes with descriptive captions.`
+        ? `\n<figures>\n${figures.map((f) => `- ${f}`).join('\n')}\n</figures>\n\nReference these figures in your notes with descriptive captions.`
         : '';
 
-    return `Process this pre-extracted document and generate structured atomic notes.
-
-## Source Document
-
-Original filename: ${fileName}
-Docling has already extracted the content — do NOT attempt to read the original file.
-The content includes location markers like <!-- page:N label:TYPE --> before paragraphs.
-Use these markers to produce precise citations in your notes.
-
-## Extracted Content
-
+    // Document content first (top of prompt) for better attention quality,
+    // then slim task parameters. Workflow instructions live in CLAUDE.md.
+    // See docs/research/2026-03-30-agent-prompt-architecture.md
+    return `<document>
+<source>${fileName}</source>
+<document_content>
 ${extractedContent}
+</document_content>
+</document>
 ${figuresSection}
 
-## Your Task
+## Job Parameters
 
-Generate TWO types of notes from this document:
+- **Job ID:** ${jobId}
+- **Source filename:** ${fileName}
+- **Drafts path:** ${draftsPath}
+- **source_file value for frontmatter:** upload/processed/${jobId}-${fileName}
+- **Source note filename:** ${draftsPath}/${jobId}-source.md
+- **Concept note pattern:** ${draftsPath}/${jobId}-concept-NNN.md
+- **Manifest path:** ${draftsPath}/${jobId}-manifest.json
+- **Completion sentinel:** ${draftsPath}/${jobId}-complete
 
-### 1. Source Overview Note
-One source overview note summarizing the document's argument, key contributions, and limitations.
-- Filename: ${draftsPath}/${jobId}-source.md
-- Frontmatter must include: title, type: source, source_type (paper|lecture|textbook-chapter|article|news), source_file, authors (if available), published (year if available), concepts_generated (slugified titles of concept notes), verification_status: unverified, created (today's date)
+The content above has been pre-extracted by Docling. Do NOT read the original file.
+Location markers like \`<!-- page:N label:TYPE -->\` indicate source positions — use them for citations.
 
-### 2. Atomic Concept Notes
-Multiple atomic concept notes, one per distinct concept, ~200-500 words each.
-- Filename pattern: ${draftsPath}/${jobId}-concept-NNN.md (e.g., ${jobId}-concept-001.md)
-- Frontmatter must include: title, type: concept, topics (array), source_doc, source_file, source_pages (array of page numbers), source_sections (array), generated_by: claude, verification_status: unverified, created (today's date)
-
-### source_file Value
-Use this path for all notes: upload/processed/${jobId}-${fileName}
-
-## Citation Rules (cite-then-generate)
-
-For each claim you write, you MUST:
-1. First identify the specific passage in the source that supports it
-   (quote the relevant text internally in <internal> tags)
-2. Note the exact location (page number from <!-- page:N --> markers, section, paragraph)
-3. Only then write the claim with its footnote citation
-
-Do NOT write a claim first and then search for a citation to attach.
-Do NOT make any factual statement without a supporting source passage.
-If you cannot ground a claim in a specific passage, flag it as inference:
-  "The scaling factor likely prevents gradient issues [inference, not stated in source]"
-
-Use markdown footnotes: [^1], [^2], etc. with references at the bottom:
-[^1]: Author, §Section, p.Page ¶Paragraph
-
-## Cross-References
-
-Mention related concepts in prose with [[wikilinks]]:
-"Self-attention is the core building block of [[multi-head-attention]]..."
-
-The concepts_generated field in the source note should list slugified titles
-matching the concept note titles (e.g., "Self-Attention Mechanism" → self-attention-mechanism).
-
-## Manifest
-
-After writing ALL notes, create a manifest file at:
-${draftsPath}/${jobId}-manifest.json
-
-Format:
-{
-  "source_note": "${jobId}-source.md",
-  "concept_notes": ["${jobId}-concept-001.md", "${jobId}-concept-002.md", ...]
-}
-
-## Self-Review
-
-After generating all notes, review your own work:
-1. Re-read each note you wrote
-2. Check: does every claim have a grounded citation? Flag any that don't.
-3. Check: are there important concepts from the source that you missed? Add them.
-4. Check: are any notes too long (>500 words) or too short (<100 words)? Split or merge.
-5. Check: do [[wikilinks]] point to notes you actually created? Fix broken links.
-6. Update the manifest if you added or removed notes.
-7. Write an empty file to ${draftsPath}/${jobId}-complete to signal you are finished.`;
+Process this document following your ingestion workflow.`;
   }
 
   async process(
