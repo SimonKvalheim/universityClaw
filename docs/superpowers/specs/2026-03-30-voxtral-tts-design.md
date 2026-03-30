@@ -69,7 +69,7 @@ A local HTTP server running Voxtral-4B via MLX on Apple Silicon.
 }
 ```
 
-**Response:** Raw WAV audio bytes. No transcoding needed — Telegram accepts WAV via `sendVoice` and converts server-side.
+**Response:** Raw WAV audio bytes. Converted to OGG Opus on the host side before sending to Telegram (see `send_voice` IPC flow).
 
 **Resource usage:** ~3GB RAM (Q4 quantized). Model loads on first request, stays resident. Since STT and TTS never run in parallel, peak memory is ~3GB (not additive).
 
@@ -185,8 +185,9 @@ sendVoice?(jid: string, filePath: string, caption?: string): Promise<void>;
   ffmpeg -i input.wav -c:a libopus -b:a 48k -vbr on -application voip output.ogg
   ```
 - Call `deps.sendVoice()` with the converted OGG file path (check it exists first — gracefully skip if the channel doesn't support voice)
+- Write OGG to same directory with `.ogg` extension (e.g. `${wavPath.replace(/\.wav$/, '.ogg')}`)
 - Clean up both the original WAV and converted OGG after sending
-- Handle missing file gracefully (log error, skip)
+- Handle missing file or ffmpeg conversion failure gracefully (log error, skip sending)
 
 **`src/types.ts`** — Add optional `sendVoice` to the Channel interface:
 ```typescript
@@ -245,6 +246,7 @@ bot.on("message:voice", async (ctx) => {
     // Transcribe — stdout contains the text (no --output-txt flag)
     const { stdout } = await execFileAsync(WHISPER_BIN_PATH, [
       '-m', WHISPER_MODEL_PATH,
+      '-l', 'no',
       '-f', wavPath,
       '--no-timestamps',
     ], { timeout: 60_000 });
@@ -322,6 +324,7 @@ None required. Both models run locally with no API keys or authentication.
 - **Invalid language**: Fall back to English with a note
 - **STT failure** (whisper.cpp exits non-zero): Log error, deliver `[Voice message (transcription failed)]` placeholder so the agent can ask the user to resend or type
 - **STT timeout**: Set a 60s timeout on the whisper.cpp subprocess; voice messages are typically short
+- **ffmpeg conversion failure** (WAV→OGG or OGG→WAV): Log error, skip the operation. For TTS delivery, the agent gets no error (fire-and-forget IPC) but the voice message silently fails to send. For STT, fall back to the `[Voice message (transcription failed)]` placeholder
 
 ## Testing
 
