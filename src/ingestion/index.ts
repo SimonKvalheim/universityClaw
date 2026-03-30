@@ -3,31 +3,23 @@ import { readFileSync } from 'node:fs';
 import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
-import { parseUploadPath } from './path-parser.js';
-import { TypeMappings } from './type-mappings.js';
 import { AgentProcessor } from './agent-processor.js';
 import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
-import { classifyTier } from './tier-classifier.js';
 import { recoverStaleJobs } from './job-recovery.js';
 import {
   createIngestionJob,
-  deleteIngestionJob,
   getIngestionJobByPath,
   updateIngestionJob,
-  createReviewItem,
 } from '../db.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
 import { MAX_EXTRACTION_CONCURRENT, EXTRACTIONS_DIR } from '../config.js';
-import { ReviewQueue } from './review-queue.js';
-import { VaultUtility } from '../vault/vault-utility.js';
 
 export interface IngestionPipelineOpts {
   uploadDir: string;
   vaultDir: string;
-  typeMappingsPath: string;
-  getReviewAgentGroup: () => RegisteredGroup | undefined;
+  reviewAgentGroup: RegisteredGroup;
   maxGenerationConcurrent?: number;
 }
 
@@ -35,24 +27,20 @@ export class IngestionPipeline {
   private watcher: FileWatcher;
   private agentProcessor: AgentProcessor;
   private extractor: Extractor;
-  private typeMappings: TypeMappings;
   private uploadDir: string;
   private vaultDir: string;
-  private getReviewAgentGroup: () => RegisteredGroup | undefined;
-  private reviewQueue: ReviewQueue;
+  private reviewAgentGroup: RegisteredGroup;
   private drainer: PipelineDrainer;
 
   constructor(opts: IngestionPipelineOpts) {
     this.uploadDir = opts.uploadDir;
     this.vaultDir = opts.vaultDir;
-    this.getReviewAgentGroup = opts.getReviewAgentGroup;
+    this.reviewAgentGroup = opts.reviewAgentGroup;
     this.agentProcessor = new AgentProcessor({
       vaultDir: opts.vaultDir,
       uploadDir: opts.uploadDir,
     });
     this.extractor = new Extractor({ extractionsDir: EXTRACTIONS_DIR });
-    this.reviewQueue = new ReviewQueue(new VaultUtility(opts.vaultDir));
-    this.typeMappings = new TypeMappings(opts.typeMappingsPath);
     this.watcher = new FileWatcher(opts.uploadDir, (filePath) => {
       this.enqueue(filePath);
     });
@@ -83,19 +71,14 @@ export class IngestionPipeline {
         );
         return;
       }
-      // Reset failed/pending job for retry instead of deleting
-      // (deleting would violate FK constraint with review_items)
+      // Reset failed job for retry
       if (existing.status === 'failed') {
         updateIngestionJob(existing.id, { status: 'pending', error: null });
         logger.info(`ingestion: Retrying failed job: ${relativePath}`);
         return;
       }
-      // Already pending — skip
-      if (
-        existing.status === 'pending' ||
-        existing.status === 'extracted' ||
-        existing.status === 'reviewing'
-      ) {
+      // Already pending or extracted — skip
+      if (existing.status === 'pending' || existing.status === 'extracted') {
         logger.info(
           `ingestion: Skipping (already ${existing.status}): ${relativePath}`,
         );
@@ -104,26 +87,13 @@ export class IngestionPipeline {
     }
 
     const jobId = randomUUID();
-    const context = parseUploadPath(relativePath, this.typeMappings);
-    const tier = classifyTier({ type: context.type });
 
     logger.info(
-      { jobId, relativePath, tier },
+      { jobId, relativePath },
       `ingestion: Enqueuing: ${relativePath}`,
     );
 
-    createIngestionJob(
-      jobId,
-      filePath,
-      fileName,
-      context.courseCode,
-      context.courseName,
-      context.semester,
-      context.year,
-      context.type,
-    );
-
-    updateIngestionJob(jobId, { tier });
+    createIngestionJob(jobId, filePath, fileName);
   }
 
   async handleExtraction(job: JobRow): Promise<void> {
@@ -138,9 +108,7 @@ export class IngestionPipeline {
     const result = await this.extractor.extract(job.id, job.source_path);
 
     // Copy original file to vault attachments
-    const context = parseUploadPath(relativePath, this.typeMappings);
-    const courseDir = context.courseCode || '_unsorted';
-    const attachmentDir = join('attachments', courseDir);
+    const attachmentDir = join('attachments', '_unsorted');
     await mkdir(join(this.vaultDir, attachmentDir), { recursive: true });
     await copyFile(
       job.source_path,
@@ -180,15 +148,9 @@ export class IngestionPipeline {
     const draftId = randomUUID();
 
     logger.info(
-      { jobId: job.id, relativePath, tier: job.tier },
+      { jobId: job.id, relativePath },
       `ingestion: Generating: ${relativePath}`,
     );
-
-    // Get the review agent group
-    const reviewAgentGroup = this.getReviewAgentGroup();
-    if (!reviewAgentGroup) {
-      throw new Error('Review agent group not registered');
-    }
 
     // Ensure drafts directory exists
     await mkdir(join(this.vaultDir, 'drafts'), { recursive: true });
@@ -198,15 +160,23 @@ export class IngestionPipeline {
       throw new Error(`No extraction path for job ${job.id}`);
     }
 
-    const context = parseUploadPath(relativePath, this.typeMappings);
+    // Minimal context — no path parsing, agent determines metadata from content
+    const context = {
+      semester: null,
+      year: null,
+      courseCode: null,
+      courseName: null,
+      type: null,
+      fileName,
+    };
 
-    // Process with agent (extractionPath is the dir, agent-processor reads content.md from it)
+    // Process with agent
     const result = await this.agentProcessor.process(
       extractionPath,
       fileName,
       context,
       draftId,
-      reviewAgentGroup,
+      this.reviewAgentGroup,
     );
 
     if (result.status === 'error') {
@@ -230,54 +200,21 @@ export class IngestionPipeline {
       );
     }
 
-    // Create review item in DB
-    createReviewItem(
-      draftId,
-      job.id,
-      `drafts/${draftId}.md`,
-      fileName,
-      context.type,
-      context.courseCode,
-      [],
-    );
-
     // Move original out of upload folder
     const processedDir = join(this.uploadDir, '.processed');
     await mkdir(processedDir, { recursive: true });
     await rename(job.source_path, join(processedDir, `${job.id}-${fileName}`));
 
-    if (job.tier === 2) {
-      // Tier 2: auto-approve — move draft from vault/drafts/ to final vault path
-      try {
-        const result = await this.reviewQueue.approveDraft(draftId);
-        logger.info(
-          { jobId: job.id, draftId, targetPath: result.targetPath, tier: 2 },
-          `ingestion: Tier 2 auto-approved → ${result.targetPath}`,
-        );
-      } catch (err) {
-        logger.warn(
-          { jobId: job.id, draftId, err },
-          'ingestion: Tier 2 auto-approve failed, leaving as draft for manual review',
-        );
-      }
-      updateIngestionJob(job.id, { status: 'completed' });
-    } else {
-      // Tier 3: queue for manual review
-      updateIngestionJob(job.id, { status: 'reviewing' });
-      logger.info(
-        { jobId: job.id, draftId, tier: 3 },
-        `ingestion: Tier 3 queued for review`,
-      );
-    }
+    updateIngestionJob(job.id, { status: 'completed' });
 
-    // Clean up extraction artifacts (checkpoint no longer needed)
+    // Clean up extraction artifacts
     await this.extractor.cleanup(job.id);
 
     // Prune empty directories left behind in upload/
     await this.pruneEmptyDirs(dirname(job.source_path));
 
     logger.info(
-      { jobId: job.id, draftId, relativePath, tier: job.tier },
+      { jobId: job.id, draftId, relativePath },
       `ingestion: Completed: ${relativePath} → draft ${draftId}`,
     );
   }
@@ -303,7 +240,7 @@ export class IngestionPipeline {
   }
 
   /**
-   * Clean up after a job completes (Tier 1 auto-complete or any other completion).
+   * Clean up after a job completes.
    */
   private async handleCleanup(job: {
     id: string;

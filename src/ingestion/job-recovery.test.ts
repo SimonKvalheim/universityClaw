@@ -15,14 +15,19 @@ beforeEach(() => {
 describe('recoverStaleJobs', () => {
   it('resets stale extracting jobs to pending', () => {
     const id = 'stale-extracting-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf', null, null, null, null, null);
+    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
     updateIngestionJob(id, { status: 'extracting' });
     // Manually backdate updated_at for test
     getDb()
-      .prepare("UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?")
+      .prepare(
+        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
+      )
       .run(id);
 
-    const recovered = recoverStaleJobs({ extractingThresholdMin: 10, generatingThresholdMin: 45 });
+    const recovered = recoverStaleJobs({
+      extractingThresholdMin: 10,
+      generatingThresholdMin: 45,
+    });
     expect(recovered.extracting).toBeGreaterThan(0);
 
     const jobs = getJobsByStatus('pending');
@@ -31,13 +36,21 @@ describe('recoverStaleJobs', () => {
 
   it('resets stale generating jobs to extracted (with extraction path)', () => {
     const id = 'stale-generating-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf', null, null, null, null, null);
-    updateIngestionJob(id, { status: 'generating', extraction_path: '/tmp/extractions/' + id });
+    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
+    updateIngestionJob(id, {
+      status: 'generating',
+      extraction_path: '/tmp/extractions/' + id,
+    });
     getDb()
-      .prepare("UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?")
+      .prepare(
+        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
+      )
       .run(id);
 
-    const recovered = recoverStaleJobs({ extractingThresholdMin: 10, generatingThresholdMin: 45 });
+    const recovered = recoverStaleJobs({
+      extractingThresholdMin: 10,
+      generatingThresholdMin: 45,
+    });
     expect(recovered.generating).toBeGreaterThan(0);
 
     const jobs = getJobsByStatus('extracted');
@@ -46,13 +59,18 @@ describe('recoverStaleJobs', () => {
 
   it('resets stale generating jobs to pending (without extraction path)', () => {
     const id = 'stale-gen-noext-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf', null, null, null, null, null);
+    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
     updateIngestionJob(id, { status: 'generating' });
     getDb()
-      .prepare("UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?")
+      .prepare(
+        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
+      )
       .run(id);
 
-    const recovered = recoverStaleJobs({ extractingThresholdMin: 10, generatingThresholdMin: 45 });
+    const recovered = recoverStaleJobs({
+      extractingThresholdMin: 10,
+      generatingThresholdMin: 45,
+    });
     expect(recovered.generating).toBeGreaterThan(0);
 
     const jobs = getJobsByStatus('pending');
@@ -61,12 +79,15 @@ describe('recoverStaleJobs', () => {
 
   it('does not reset recent jobs', () => {
     const id = 'recent-generating-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf', null, null, null, null, null);
+    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
     updateIngestionJob(id, { status: 'generating' });
     // Don't backdate — this job is fresh
 
     const before = getJobsByStatus('generating').length;
-    recoverStaleJobs({ extractingThresholdMin: 10, generatingThresholdMin: 45 });
+    recoverStaleJobs({
+      extractingThresholdMin: 10,
+      generatingThresholdMin: 45,
+    });
     const after = getJobsByStatus('generating').length;
 
     // Fresh job should still be in generating

@@ -163,38 +163,6 @@ export function createWebChannel(opts: ChannelOpts): Channel {
       return;
     }
 
-    // POST /approve/:draftId
-    const approveMatch = url.pathname.match(/^\/approve\/([a-f0-9-]{36})$/);
-    if (req.method === 'POST' && approveMatch) {
-      const draftId = approveMatch[1];
-      try {
-        const result = await opts.onApprove?.(draftId);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, targetPath: result?.targetPath }));
-      } catch (err) {
-        logger.error({ err, draftId }, 'Approve draft failed');
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: String(err) }));
-      }
-      return;
-    }
-
-    // POST /reject/:draftId
-    const rejectMatch = url.pathname.match(/^\/reject\/([a-f0-9-]{36})$/);
-    if (req.method === 'POST' && rejectMatch) {
-      const draftId = rejectMatch[1];
-      try {
-        await opts.onReject?.(draftId);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (err) {
-        logger.error({ err, draftId }, 'Reject draft failed');
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: String(err) }));
-      }
-      return;
-    }
-
     // GET /recent — recently completed ingestion jobs
     if (req.method === 'GET' && url.pathname === '/recent') {
       const jobs = getRecentlyCompletedJobs(50);

@@ -49,8 +49,6 @@ export const DASHBOARD_PORT = parseInt(
   process.env.DASHBOARD_PORT || '3100',
   10,
 );
-export const TYPE_MAPPINGS_PATH = join(STORE_DIR, 'type-mappings.json');
-
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(

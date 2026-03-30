@@ -3,7 +3,14 @@ import { join } from 'path';
 import { runContainerAgent } from '../container-runner.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
-import { PathContext } from './path-parser.js';
+export interface PathContext {
+  semester: number | null;
+  year: number | null;
+  courseCode: string | null;
+  courseName: string | null;
+  type: string | null;
+  fileName: string;
+}
 
 export interface AgentProcessorOpts {
   vaultDir: string;
@@ -92,7 +99,10 @@ The _targetPath in frontmatter should be: courses/${context.courseCode || '_unso
       extractedContent = readFileSync(contentFile, 'utf-8');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return { status: 'error', error: `Failed to read extraction content: ${message}` };
+      return {
+        status: 'error',
+        error: `Failed to read extraction content: ${message}`,
+      };
     }
 
     // List figures from extraction output
@@ -108,9 +118,18 @@ The _targetPath in frontmatter should be: courses/${context.courseCode || '_unso
       }
     }
 
-    const prompt = this.buildPrompt(extractedContent, fileName, context, draftId, figures);
+    const prompt = this.buildPrompt(
+      extractedContent,
+      fileName,
+      context,
+      draftId,
+      figures,
+    );
 
-    logger.info({ fileName, draftId, figures: figures.length }, 'Starting agent processing');
+    logger.info(
+      { fileName, draftId, figures: figures.length },
+      'Starting agent processing',
+    );
 
     try {
       const output = await runContainerAgent(

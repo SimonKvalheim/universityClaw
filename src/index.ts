@@ -17,14 +17,11 @@ import {
   TIMEZONE,
   VAULT_DIR,
   UPLOAD_DIR,
-  TYPE_MAPPINGS_PATH,
 } from './config.js';
 import { initBotPool } from './channels/telegram.js';
 import { RagClient } from './rag/rag-client.js';
 import { RagIndexer } from './rag/indexer.js';
 import { IngestionPipeline } from './ingestion/index.js';
-import { ReviewQueue } from './ingestion/review-queue.js';
-import { VaultUtility } from './vault/vault-utility.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -54,8 +51,6 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
-  updateIngestionJob,
-  getDb,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -654,8 +649,7 @@ async function main(): Promise<void> {
   const pipeline = new IngestionPipeline({
     uploadDir: UPLOAD_DIR,
     vaultDir: VAULT_DIR,
-    typeMappingsPath: TYPE_MAPPINGS_PATH,
-    getReviewAgentGroup: () => registeredGroups[REVIEW_AGENT_JID],
+    reviewAgentGroup: registeredGroups[REVIEW_AGENT_JID],
   });
   await pipeline.start();
 
@@ -720,10 +714,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // ReviewQueue for unified approval/rejection codepath
-  const vaultUtility = new VaultUtility(VAULT_DIR);
-  const reviewQueue = new ReviewQueue(vaultUtility);
-
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
@@ -776,29 +766,6 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
-    onApprove: async (draftId: string) => {
-      const result = await reviewQueue.approveDraft(draftId);
-      const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
-      queue.closeStdin(chatJid);
-      activeWebReviewJids.delete(chatJid);
-      // Mark the ingestion job as completed
-      const ri = getDb()
-        .prepare('SELECT job_id FROM review_items WHERE id = ?')
-        .get(draftId) as { job_id: string } | undefined;
-      if (ri) updateIngestionJob(ri.job_id, { status: 'completed' });
-      return result;
-    },
-    onReject: async (draftId: string) => {
-      await reviewQueue.rejectDraft(draftId);
-      const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
-      queue.closeStdin(chatJid);
-      activeWebReviewJids.delete(chatJid);
-      // Mark the ingestion job as completed (rejected is still "done")
-      const ri = getDb()
-        .prepare('SELECT job_id FROM review_items WHERE id = ?')
-        .get(draftId) as { job_id: string } | undefined;
-      if (ri) updateIngestionJob(ri.job_id, { status: 'completed' });
-    },
   };
 
   // Create and connect all registered channels.

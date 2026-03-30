@@ -5,7 +5,6 @@ export interface JobRow {
   source_path: string;
   source_filename: string;
   status: string;
-  tier: number;
   extraction_path: string | null;
   created_at: string;
   updated_at: string;
@@ -78,13 +77,6 @@ export class PipelineDrainer {
     const extracted = getJobsByStatus('extracted') as JobRow[];
 
     for (const job of extracted) {
-      if (job.tier === 1) {
-        // Tier 1: no AI needed, auto-complete
-        updateIngestionJob(job.id, { status: 'completed' });
-        this.opts.onComplete?.(job).catch(() => {});
-        continue;
-      }
-
       if (this.activeGenerations >= this.opts.maxGenerationConcurrent) break;
 
       updateIngestionJob(job.id, { status: 'generating' });
