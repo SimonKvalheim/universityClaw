@@ -1,12 +1,11 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { logger } from '../logger.js';
 
 export interface RagConfig {
-  workingDir: string;
-  vaultDir: string;
-  pythonBin?: string;
+  serverUrl: string;
+  /** @deprecated kept for indexer compatibility, not used by HTTP client */
+  workingDir?: string;
+  /** @deprecated kept for indexer compatibility, not used by HTTP client */
+  vaultDir?: string;
 }
 
 export interface RagResult {
@@ -15,7 +14,11 @@ export interface RagResult {
 }
 
 export class RagClient {
-  constructor(private config: RagConfig) {}
+  private serverUrl: string;
+
+  constructor(private config: RagConfig) {
+    this.serverUrl = config.serverUrl.replace(/\/$/, '');
+  }
 
   buildQuery(query: string, filters?: Record<string, string>): string {
     let enriched = query;
@@ -30,47 +33,59 @@ export class RagClient {
 
   async query(
     question: string,
-    mode: 'naive' | 'local' | 'global' | 'hybrid' = 'hybrid',
+    mode: 'naive' | 'local' | 'global' | 'hybrid' | 'mix' = 'hybrid',
     filters?: Record<string, string>,
   ): Promise<RagResult> {
-    const enrichedQuery = this.buildQuery(question, filters);
+    const enriched = this.buildQuery(question, filters);
     try {
-      const { stdout } = await execFileAsync(
-        this.config.pythonBin || 'python3',
-        [
-          '-c',
-          `
-import json
-from lightrag import LightRAG, QueryParam
-rag = LightRAG(working_dir="${this.config.workingDir}")
-result = rag.query("${enrichedQuery.replace(/"/g, '\\"')}", param=QueryParam(mode="${mode}"))
-print(json.dumps({"answer": result, "sources": []}))
-`,
-        ],
-        { timeout: 60_000 },
-      );
-      return JSON.parse(stdout.trim()) as RagResult;
-    } catch {
-      return {
-        answer: `RAG query failed. Falling back to general knowledge. Original question: ${question}`,
-        sources: [],
-      };
+      const res = await fetch(`${this.serverUrl}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: enriched,
+          mode,
+          only_need_context: true,
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`LightRAG query failed (${res.status}): ${text}`);
+      }
+      const data: unknown = await res.json();
+      // Server returns { response: "..." } when only_need_context is true
+      const answer =
+        typeof data === 'string'
+          ? data
+          : ((data as Record<string, unknown>).response ?? '');
+      return { answer: String(answer).trim(), sources: [] };
+    } catch (err) {
+      logger.warn({ err }, 'RAG query failed');
+      return { answer: '', sources: [] };
     }
   }
 
   async index(text: string): Promise<void> {
-    await execFileAsync(
-      this.config.pythonBin || 'python3',
-      [
-        '-c',
-        `
-from lightrag import LightRAG
-rag = LightRAG(working_dir="${this.config.workingDir}")
-rag.insert("""${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}""")
-print("indexed")
-`,
-      ],
-      { timeout: 120_000 },
-    );
+    const res = await fetch(`${this.serverUrl}/documents/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`LightRAG index failed (${res.status}): ${body}`);
+    }
+  }
+
+  async healthy(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.serverUrl}/health`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 }

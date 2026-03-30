@@ -22,14 +22,33 @@ def extract(input_file: str, output_dir: str) -> dict:
     result = converter.convert(str(input_path))
     doc = result.document
 
-    # Export markdown
-    markdown = doc.export_to_markdown()
-    (output_path / "content.md").write_text(markdown, encoding="utf-8")
-
-    # Save figures
+    # Export markdown with location markers via iterate_items()
+    markdown_parts = []
     figure_filenames = []
+
     for idx, (element, _level) in enumerate(doc.iterate_items()):
         element_type = type(element).__name__
+
+        # Extract page number if available
+        page_num = None
+        if hasattr(element, 'prov') and element.prov:
+            for prov in element.prov:
+                if hasattr(prov, 'page_no'):
+                    page_num = prov.page_no
+                    break
+
+        # Build location marker
+        marker_parts = []
+        if page_num is not None:
+            marker_parts.append(f"page:{page_num}")
+        if hasattr(element, 'label'):
+            marker_parts.append(f"label:{element.label}")
+
+        marker = ""
+        if marker_parts:
+            marker = f"<!-- {' '.join(marker_parts)} -->\n"
+
+        # Handle figures separately
         if element_type in ("PictureItem", "FigureItem"):
             for img_idx, image in enumerate(getattr(element, "images", []) or []):
                 try:
@@ -45,6 +64,36 @@ def extract(input_file: str, output_dir: str) -> dict:
                     figure_filenames.append(fname)
                 except Exception:
                     pass
+            continue
+
+        # Get text content
+        text = ""
+        if hasattr(element, 'text') and element.text:
+            text = element.text
+        elif hasattr(element, 'export_to_markdown'):
+            try:
+                text = element.export_to_markdown()
+            except Exception:
+                pass
+
+        if not text:
+            continue
+
+        # Format based on element type
+        if element_type in ("SectionHeaderItem",):
+            level = getattr(element, 'level', 1)
+            prefix = "#" * min(level + 1, 6)
+            markdown_parts.append(f"{marker}{prefix} {text}\n")
+        else:
+            markdown_parts.append(f"{marker}{text}\n")
+
+    markdown = "\n".join(markdown_parts)
+
+    # Fallback: if iterate_items produced nothing, use export_to_markdown
+    if not markdown.strip():
+        markdown = doc.export_to_markdown()
+
+    (output_path / "content.md").write_text(markdown, encoding="utf-8")
 
     # Count pages
     pages = None
@@ -82,6 +131,32 @@ def extract(input_file: str, output_dir: str) -> dict:
     (output_path / "metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
     )
+
+    # Convert DOCX/PPTX to PDF for preview (non-fatal)
+    if suffix in ("docx", "pptx", "doc", "ppt"):
+        try:
+            import subprocess
+
+            result_pdf = subprocess.run(
+                [
+                    "soffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(output_path),
+                    str(input_path.resolve()),
+                ],
+                capture_output=True,
+                timeout=120,
+            )
+            if result_pdf.returncode == 0:
+                # soffice names the output after the input stem
+                generated = output_path / (input_path.stem + ".pdf")
+                if generated.exists():
+                    generated.rename(output_path / "preview.pdf")
+        except Exception:
+            pass
 
     return {"status": "ok", "outputDir": str(output_path.resolve())}
 

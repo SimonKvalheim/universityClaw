@@ -87,36 +87,15 @@ function createSchema(database: Database.Database): void {
       id TEXT PRIMARY KEY,
       source_path TEXT NOT NULL,
       source_filename TEXT NOT NULL,
-      course_code TEXT,
-      course_name TEXT,
-      semester INTEGER,
-      year INTEGER,
-      type TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
+      status TEXT DEFAULT 'pending',
+      extraction_path TEXT,
       error TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at TEXT
+      created_at TEXT DEFAULT (datetime('now')),
+      completed_at TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
     );
-
-    CREATE TABLE IF NOT EXISTS review_items (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL REFERENCES ingestion_jobs(id),
-      draft_path TEXT NOT NULL,
-      original_source TEXT,
-      suggested_type TEXT,
-      suggested_course TEXT,
-      figures TEXT DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      reviewed_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS folder_type_overrides (
-      folder_name TEXT PRIMARY KEY,
-      note_type TEXT NOT NULL,
-      course_code TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_status ON ingestion_jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_source_path ON ingestion_jobs(source_path);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -161,6 +140,23 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add extraction_path, updated_at columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN extraction_path TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    // SQLite doesn't allow non-constant defaults in ALTER TABLE,
+    // so add the column with no default, then backfill from created_at.
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN updated_at TEXT`);
+    database.exec(
+      `UPDATE ingestion_jobs SET updated_at = COALESCE(created_at, datetime('now')) WHERE updated_at IS NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -188,6 +184,8 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -197,12 +195,17 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
   createSchema(db);
 }
 
 /** @internal - for tests only. */
 export function _closeDatabase(): void {
   db.close();
+}
+
+export function getDb() {
+  return db;
 }
 
 /**
@@ -693,29 +696,31 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
 
 // --- Ingestion job accessors ---
 
+export function getIngestionJobByPath(
+  sourcePath: string,
+): { id: string; status: string } | undefined {
+  return db
+    .prepare(
+      `SELECT id, status FROM ingestion_jobs WHERE source_path = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(sourcePath) as { id: string; status: string } | undefined;
+}
+
+export function deleteIngestionJob(id: string): void {
+  db.prepare(`DELETE FROM ingestion_jobs WHERE id = ?`).run(id);
+}
+
 export function createIngestionJob(
   id: string,
   sourcePath: string,
   sourceFilename: string,
-  courseCode: string | null,
-  courseName: string | null,
-  semester: number | null,
-  year: number | null,
-  type: string | null,
 ): void {
-  db.prepare(
-    `INSERT INTO ingestion_jobs (id, source_path, source_filename, course_code, course_name, semester, year, type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    sourcePath,
-    sourceFilename,
-    courseCode,
-    courseName,
-    semester,
-    year,
-    type,
-  );
+  getDb()
+    .prepare(
+      `INSERT INTO ingestion_jobs (id, source_path, source_filename)
+       VALUES (?, ?, ?)`,
+    )
+    .run(id, sourcePath, sourceFilename);
 }
 
 export function updateIngestionJobStatus(
@@ -742,68 +747,64 @@ export function getIngestionJobs(status?: string): unknown[] {
     .all();
 }
 
-// --- Review item accessors ---
-
-export function createReviewItem(
-  id: string,
-  jobId: string,
-  draftPath: string,
-  originalSource: string | null,
-  suggestedType: string | null,
-  suggestedCourse: string | null,
-  figures: string[],
-): void {
-  db.prepare(
-    `INSERT INTO review_items (id, job_id, draft_path, original_source, suggested_type, suggested_course, figures)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    jobId,
-    draftPath,
-    originalSource,
-    suggestedType,
-    suggestedCourse,
-    JSON.stringify(figures),
-  );
-}
-
-export function updateReviewItemStatus(id: string, status: string): void {
-  const reviewedAt = new Date().toISOString();
-  db.prepare(
-    `UPDATE review_items SET status = ?, reviewed_at = ? WHERE id = ?`,
-  ).run(status, reviewedAt, id);
-}
-
-export function getPendingReviewItems(): unknown[] {
+export function getJobsByStatus(status: string): unknown[] {
   return db
     .prepare(
-      `SELECT * FROM review_items WHERE status = 'pending' ORDER BY created_at ASC`,
+      `SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY created_at DESC`,
     )
-    .all();
+    .all(status);
 }
 
-// --- Folder type override accessors ---
-
-export function setFolderTypeOverride(
-  folderName: string,
-  noteType: string,
-  courseCode?: string,
-): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO folder_type_overrides (folder_name, note_type, course_code) VALUES (?, ?, ?)`,
-  ).run(folderName, noteType, courseCode ?? null);
-}
-
-export function getFolderTypeOverride(
-  folderName: string,
-):
-  | { folder_name: string; note_type: string; course_code: string | null }
-  | undefined {
+export function getStaleJobs(
+  status: string,
+  olderThanMinutes: number,
+): unknown[] {
   return db
-    .prepare('SELECT * FROM folder_type_overrides WHERE folder_name = ?')
-    .get(folderName) as
-    | { folder_name: string; note_type: string; course_code: string | null }
-    | undefined;
+    .prepare(
+      `SELECT * FROM ingestion_jobs WHERE status = ? AND updated_at < datetime('now', '-' || ? || ' minutes') ORDER BY updated_at ASC`,
+    )
+    .all(status, olderThanMinutes);
+}
+
+export function updateIngestionJob(
+  id: string,
+  updates: {
+    status?: string;
+    extraction_path?: string | null;
+    error?: string | null;
+  },
+): void {
+  const setClauses: string[] = ["updated_at = datetime('now')"];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) {
+    setClauses.push('status = ?');
+    values.push(updates.status);
+    if (updates.status === 'completed') {
+      setClauses.push("completed_at = datetime('now')");
+    }
+  }
+  if (updates.extraction_path !== undefined) {
+    setClauses.push('extraction_path = ?');
+    values.push(updates.extraction_path);
+  }
+  if (updates.error !== undefined) {
+    setClauses.push('error = ?');
+    values.push(updates.error);
+  }
+
+  values.push(id);
+  getDb()
+    .prepare(`UPDATE ingestion_jobs SET ${setClauses.join(', ')} WHERE id = ?`)
+    .run(...values);
+}
+
+export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
+  return db
+    .prepare(
+      `SELECT * FROM ingestion_jobs WHERE status = 'completed' ORDER BY completed_at DESC LIMIT ?`,
+    )
+    .all(limit);
 }
 
 // --- JSON migration ---

@@ -1,14 +1,14 @@
 ---
 title: Student Profile
 type: profile
-program: Digital Transformation
+program: Your Program Name
 status: active
 language_preference: auto
-created: 2026-03-27
+created: 2026-01-01
 ---
 
 ## Program
-Digital Transformation (Digital Forretningsutvikling)
+Your Degree Program
 
 ## Active Courses
 <!-- Updated automatically as courses are ingested -->

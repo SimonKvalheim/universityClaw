@@ -49,8 +49,6 @@ export const DASHBOARD_PORT = parseInt(
   process.env.DASHBOARD_PORT || '3100',
   10,
 );
-export const TYPE_MAPPINGS_PATH = join(STORE_DIR, 'type-mappings.json');
-
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
@@ -69,6 +67,20 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
+
+export const EXTRACTION_TIMEOUT = parseInt(
+  process.env.EXTRACTION_TIMEOUT || '600000',
+  10,
+); // 10min default
+export const PIPELINE_TIMEOUT = parseInt(
+  process.env.PIPELINE_TIMEOUT || '1200000',
+  10,
+); // 20min default — pipeline-level timeout, shorter than container hard timeout
+export const MAX_EXTRACTION_CONCURRENT = parseInt(
+  process.env.MAX_EXTRACTION_CONCURRENT || '3',
+  10,
+);
+export const EXTRACTIONS_DIR = path.resolve(DATA_DIR, 'extractions');
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -115,3 +127,8 @@ export const WEB_CHANNEL_PORT = parseInt(
   process.env.WEB_CHANNEL_PORT || '3200',
   10,
 );
+
+export const SENTINEL_TIMEOUT = Number(
+  process.env.SENTINEL_TIMEOUT ?? 10 * 60 * 1000, // 10 minutes
+);
+export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');

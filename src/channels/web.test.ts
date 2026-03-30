@@ -1,17 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 
-function postJSON(port: number, path: string, body: object): Promise<{ status: number; body: unknown }> {
+function postJSON(
+  port: number,
+  path: string,
+  body: object,
+): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
     const req = http.request(
-      { hostname: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), Connection: 'close' } },
+      {
+        hostname: '127.0.0.1',
+        port,
+        path,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          Connection: 'close',
+        },
+      },
       (res) => {
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => {
-          try { resolve({ status: res.statusCode!, body: JSON.parse(raw) }); }
-          catch { resolve({ status: res.statusCode!, body: raw }); }
+          try {
+            resolve({ status: res.statusCode!, body: JSON.parse(raw) });
+          } catch {
+            resolve({ status: res.statusCode!, body: raw });
+          }
         });
       },
     );

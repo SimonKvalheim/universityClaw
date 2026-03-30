@@ -17,7 +17,6 @@ import {
   TIMEZONE,
   VAULT_DIR,
   UPLOAD_DIR,
-  TYPE_MAPPINGS_PATH,
 } from './config.js';
 import { initBotPool } from './channels/telegram.js';
 import { RagClient } from './rag/rag-client.js';
@@ -77,6 +76,48 @@ export { escapeXml, formatMessages } from './router.js';
 
 const REVIEW_AGENT_JID = 'web:review:__agent__';
 const WEB_REVIEW_PREFIX = 'web:review:';
+
+/**
+ * Build review context for a web:review:{draftId} chat.
+ * Reads the draft file and source document metadata so the agent
+ * knows exactly what it's reviewing.
+ */
+function buildReviewContext(chatJid: string): string {
+  const draftId = chatJid.replace(WEB_REVIEW_PREFIX, '');
+  if (!draftId || draftId === '__agent__') return '';
+
+  const draftPath = path.join(VAULT_DIR, 'drafts', `${draftId}.md`);
+  if (!fs.existsSync(draftPath)) return '';
+
+  try {
+    const draftContent = fs.readFileSync(draftPath, 'utf-8');
+
+    // Extract source path from frontmatter
+    const sourceMatch = draftContent.match(/^source:\s*"?\[\[(.+?)\]\]"?/m);
+    const sourcePath = sourceMatch?.[1] || null;
+
+    return [
+      '<review-context>',
+      `Draft file: /workspace/extra/vault/drafts/${draftId}.md (read-write)`,
+      sourcePath
+        ? `Source document: /workspace/extra/upload/${sourcePath} (read-only, reference only)`
+        : '',
+      '',
+      'Current draft content:',
+      '```',
+      draftContent,
+      '```',
+      '',
+      "You are reviewing this specific draft. Focus on answering the user's questions about it, and edit the draft file directly when asked to make changes.",
+      '</review-context>',
+      '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  } catch {
+    return '';
+  }
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -254,7 +295,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // For web review chats, prepend draft context so the agent knows what it's reviewing
+  const reviewContext = chatJid.startsWith(WEB_REVIEW_PREFIX)
+    ? buildReviewContext(chatJid)
+    : '';
+  const prompt = reviewContext + formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -395,6 +440,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        allowedTools: group.containerConfig?.allowedTools,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -569,14 +615,24 @@ async function main(): Promise<void> {
         additionalMounts: [
           {
             hostPath: join(process.cwd(), 'vault'),
-            containerPath: '/workspace/extra/vault',
+            containerPath: 'vault',
             readonly: false,
           },
           {
             hostPath: join(process.cwd(), 'upload'),
-            containerPath: '/workspace/extra/upload',
+            containerPath: 'upload',
             readonly: true,
           },
+        ],
+        allowedTools: [
+          'Bash',
+          'Read',
+          'Write',
+          'Edit',
+          'Glob',
+          'Grep',
+          'TodoWrite',
+          'mcp__nanoclaw__*',
         ],
       },
     });
@@ -593,14 +649,12 @@ async function main(): Promise<void> {
   const pipeline = new IngestionPipeline({
     uploadDir: UPLOAD_DIR,
     vaultDir: VAULT_DIR,
-    typeMappingsPath: TYPE_MAPPINGS_PATH,
-    getReviewAgentGroup: () => registeredGroups[REVIEW_AGENT_JID],
+    reviewAgentGroup: registeredGroups[REVIEW_AGENT_JID],
   });
   await pipeline.start();
 
   const ragClient = new RagClient({
-    workingDir: join(STORE_DIR, 'rag'),
-    vaultDir: VAULT_DIR,
+    serverUrl: process.env.LIGHTRAG_URL || 'http://localhost:9621',
   });
   const ragIndexer = new RagIndexer(VAULT_DIR, ragClient);
   await ragIndexer.start();
@@ -693,6 +747,15 @@ async function main(): Promise<void> {
       if (chatJid.startsWith(WEB_REVIEW_PREFIX)) {
         activeWebReviewJids.add(chatJid);
       }
+    },
+    onDraftClosed: (draftId: string) => {
+      const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
+      logger.info(
+        { draftId, chatJid },
+        'Draft closed, shutting down review agent',
+      );
+      queue.closeStdin(chatJid);
+      activeWebReviewJids.delete(chatJid);
     },
     onChatMetadata: (
       chatJid: string,

@@ -1,8 +1,8 @@
-import { relative } from 'node:path';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { runContainerAgent } from '../container-runner.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
-import { PathContext } from './path-parser.js';
 
 export interface AgentProcessorOpts {
   vaultDir: string;
@@ -19,59 +19,82 @@ export class AgentProcessor {
   }
 
   buildPrompt(
-    filePath: string,
+    extractedContent: string,
     fileName: string,
-    context: PathContext,
-    draftId: string,
+    jobId: string,
+    figures: string[],
   ): string {
-    const relativePath = relative(this.uploadDir, filePath);
-    const containerFilePath = `/workspace/extra/upload/${relativePath}`;
-    const vaultDraftPath = `/workspace/extra/vault/drafts/${draftId}.md`;
+    const draftsPath = `/workspace/extra/vault/drafts`;
 
-    const metadataLines: string[] = [];
-    if (context.courseCode)
-      metadataLines.push(`- Course code: ${context.courseCode}`);
-    if (context.courseName)
-      metadataLines.push(`- Course name: ${context.courseName}`);
-    if (context.semester) metadataLines.push(`- Semester: ${context.semester}`);
-    if (context.year) metadataLines.push(`- Year: ${context.year}`);
-    if (context.type) metadataLines.push(`- Material type: ${context.type}`);
+    const figuresSection =
+      figures.length > 0
+        ? `\n<figures>\n${figures.map((f) => `- ${f}`).join('\n')}\n</figures>\n\nReference these figures in your notes with descriptive captions.`
+        : '';
 
-    const metadataSection =
-      metadataLines.length > 0
-        ? `The folder structure suggests:\n${metadataLines.join('\n')}\n\nUse this as a starting point but verify against the document content.`
-        : 'No metadata was inferred from the folder structure. Determine all metadata from the document content.';
+    // Document content first (top of prompt) for better attention quality,
+    // then slim task parameters. Workflow instructions live in CLAUDE.md.
+    // See docs/research/2026-03-30-agent-prompt-architecture.md
+    return `<document>
+<source>${fileName}</source>
+<document_content>
+${extractedContent}
+</document_content>
+</document>
+${figuresSection}
 
-    return `Process this document and generate study notes.
+## Job Parameters
 
-## Source File
+- **Job ID:** ${jobId}
+- **Source filename:** ${fileName}
+- **Drafts path:** ${draftsPath}
+- **source_file value for frontmatter:** upload/processed/${jobId}-${fileName}
+- **Source note filename:** ${draftsPath}/${jobId}-source.md
+- **Concept note pattern:** ${draftsPath}/${jobId}-concept-NNN.md
+- **Manifest path:** ${draftsPath}/${jobId}-manifest.json
+- **Completion sentinel:** ${draftsPath}/${jobId}-complete
 
-Read this file: ${containerFilePath}
-Original filename: ${fileName}
+The content above has been pre-extracted by Docling. Do NOT read the original file.
+Location markers like \`<!-- page:N label:TYPE -->\` indicate source positions — use them for citations.
 
-## Inferred Metadata
-
-${metadataSection}
-
-## Output
-
-Write the generated note (with YAML frontmatter) to: ${vaultDraftPath}
-
-The _targetPath in frontmatter should be: courses/${context.courseCode || '_unsorted'}/${context.type || 'unsorted'}/${fileName.replace(/\.[^.]+$/, '.md')}
-
-Follow the instructions in your CLAUDE.md for note format and metadata schema.`;
+Process this document following your ingestion workflow.`;
   }
 
   async process(
-    filePath: string,
+    extractionPath: string,
     fileName: string,
-    context: PathContext,
-    draftId: string,
+    jobId: string,
     reviewAgentGroup: RegisteredGroup,
   ): Promise<{ status: 'success' | 'error'; error?: string }> {
-    const prompt = this.buildPrompt(filePath, fileName, context, draftId);
+    const contentFile = join(extractionPath, 'content.md');
+    let extractedContent: string;
+    try {
+      extractedContent = readFileSync(contentFile, 'utf-8');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        status: 'error',
+        error: `Failed to read extraction content: ${message}`,
+      };
+    }
 
-    logger.info({ fileName, draftId }, 'Starting agent processing');
+    const figuresDir = join(extractionPath, 'figures');
+    let figures: string[] = [];
+    if (existsSync(figuresDir)) {
+      try {
+        figures = readdirSync(figuresDir).filter((f) =>
+          /\.(png|jpg|jpeg|svg|webp)$/i.test(f),
+        );
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    const prompt = this.buildPrompt(extractedContent, fileName, jobId, figures);
+
+    logger.info(
+      { fileName, jobId, figures: figures.length },
+      'Starting agent processing',
+    );
 
     try {
       const output = await runContainerAgent(
@@ -79,8 +102,10 @@ Follow the instructions in your CLAUDE.md for note format and metadata schema.`;
         {
           prompt,
           groupFolder: reviewAgentGroup.folder,
-          chatJid: `web:review:${draftId}`,
+          chatJid: `ingestion:${jobId}`,
           isMain: false,
+          ipcNamespace: jobId,
+          singleTurn: false,
         },
         (_proc, _containerName) => {
           // No queue registration needed for ingestion containers
@@ -89,17 +114,17 @@ Follow the instructions in your CLAUDE.md for note format and metadata schema.`;
 
       if (output.status === 'error') {
         logger.error(
-          { fileName, draftId, error: output.error },
+          { fileName, jobId, error: output.error },
           'Agent processing failed',
         );
         return { status: 'error', error: output.error };
       }
 
-      logger.info({ fileName, draftId }, 'Agent processing completed');
+      logger.info({ fileName, jobId }, 'Agent processing completed');
       return { status: 'success' };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error({ fileName, draftId, err }, 'Agent processing error');
+      logger.error({ fileName, jobId, err }, 'Agent processing error');
       return { status: 'error', error: message };
     }
   }

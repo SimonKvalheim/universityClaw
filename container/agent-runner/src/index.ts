@@ -29,6 +29,8 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  allowedTools?: string[];
+  singleTurn?: boolean;
 }
 
 interface ContainerOutput {
@@ -401,7 +403,7 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      allowedTools: [
+      allowedTools: containerInput.allowedTools || [
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',
         'WebSearch', 'WebFetch',
@@ -409,7 +411,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__rag__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -425,6 +428,15 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(process.env.LIGHTRAG_URL ? {
+          rag: {
+            command: 'node',
+            args: [path.join(path.dirname(mcpServerPath), 'rag-mcp-stdio.js')],
+            env: {
+              LIGHTRAG_URL: process.env.LIGHTRAG_URL,
+            },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -458,6 +470,13 @@ async function runQuery(
         result: textResult || null,
         newSessionId
       });
+
+      // Single-turn mode: end the stream after the first result so the SDK terminates
+      if (containerInput.singleTurn) {
+        log('Single-turn mode, ending stream after result');
+        stream.end();
+        ipcPolling = false;
+      }
     }
   }
 
@@ -595,6 +614,12 @@ async function main(): Promise<void> {
       // idle timer and cause a 30-min delay before the next _close).
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
+        break;
+      }
+
+      // Single-turn mode: exit after the first query (used by ingestion pipeline)
+      if (containerInput.singleTurn) {
+        log('Single-turn mode, exiting after first query');
         break;
       }
 

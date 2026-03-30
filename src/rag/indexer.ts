@@ -1,53 +1,78 @@
-import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
-import chokidar, { type FSWatcher } from 'chokidar';
-import { RagClient } from './rag-client.js';
+import { watch, type FSWatcher } from 'chokidar';
+import { readFileSync } from 'fs';
+import { relative, resolve } from 'path';
+import { logger } from '../logger.js';
+import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
 
+/** Paths relative to vaultDir that should be indexed. */
+const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
+
 export class RagIndexer {
+  private vaultDir: string;
+  private ragClient: RagClient;
   private watcher: FSWatcher | null = null;
 
-  constructor(
-    private readonly vaultDir: string,
-    private readonly ragClient: RagClient,
-  ) {}
+  constructor(vaultDir: string, ragClient: RagClient) {
+    this.vaultDir = resolve(vaultDir);
+    this.ragClient = ragClient;
+  }
 
-  async start(): Promise<void> {
-    this.watcher = chokidar.watch(this.vaultDir, {
-      ignored: ['**/drafts/**', '**/attachments/**', '**/.*'],
+  start(): void {
+    const watchPaths = ALLOWED_PATHS.map((p) => resolve(this.vaultDir, p));
+    this.watcher = watch(watchPaths, {
       ignoreInitial: false,
-      awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+      awaitWriteFinish: { stabilityThreshold: 500 },
+      ignored: [/(^|[/\\])\./],
     });
-    this.watcher.on('add', (fp) => this.indexFile(fp));
-    this.watcher.on('change', (fp) => this.indexFile(fp));
+    this.watcher.on('add', (fp) => this.indexFile(fp).catch(() => {}));
+    this.watcher.on('change', (fp) => this.indexFile(fp).catch(() => {}));
   }
 
-  async stop(): Promise<void> {
-    if (this.watcher) {
-      await this.watcher.close();
-      this.watcher = null;
-    }
+  stop(): void {
+    this.watcher?.close();
+    this.watcher = null;
   }
 
-  private async indexFile(filePath: string): Promise<void> {
+  async indexFile(filePath: string): Promise<void> {
     if (!filePath.endsWith('.md')) return;
+
+    const relPath = relative(this.vaultDir, filePath);
+
+    // Allowlist check: must be under one of ALLOWED_PATHS
+    const isAllowed = ALLOWED_PATHS.some(
+      (p) => relPath.startsWith(p + '/') || relPath.startsWith(p + '\\'),
+    );
+    if (!isAllowed) return;
+
+    let content: string;
     try {
-      const raw = await readFile(filePath, 'utf-8');
-      const { data, content } = parseFrontmatter(raw);
-      if (data.status === 'draft') return;
-      const relPath = relative(this.vaultDir, filePath);
-      const metaPrefix = [
-        data.title && `Title: ${data.title}`,
-        data.course && `Course: ${data.course}`,
-        data.type && `Type: ${data.type}`,
-        data.semester && `Semester: ${data.semester}`,
-      ]
-        .filter(Boolean)
-        .join(' | ');
-      const indexText = `[${metaPrefix}]\nSource: ${relPath}\n\n${content}`;
-      await this.ragClient.index(indexText);
+      content = readFileSync(filePath, 'utf-8');
     } catch {
-      /* ignore index failures for individual files */
+      return;
+    }
+
+    const { data: fm, content: body } = parseFrontmatter(content);
+    if (fm.status === 'draft') return;
+
+    const title = fm.title || relPath;
+    const type = fm.type || 'unknown';
+    const topics = Array.isArray(fm.topics) ? fm.topics.join(', ') : '';
+    const sourceDoc = fm.source_doc || '';
+    const verification = fm.verification_status || 'unverified';
+
+    const parts = [`Title: ${title}`, `Type: ${type}`];
+    if (topics) parts.push(`Topics: ${topics}`);
+    if (sourceDoc) parts.push(`Source: ${sourceDoc}`);
+    parts.push(`Verification: ${verification}`);
+
+    const prefix = `[${parts.join(' | ')}]`;
+    const indexed = `${prefix}\nSource path: ${relPath}\n\n${body}`;
+
+    try {
+      await this.ragClient.index(indexed);
+    } catch (err) {
+      logger.warn({ err, relPath }, 'Failed to index file');
     }
   }
 }

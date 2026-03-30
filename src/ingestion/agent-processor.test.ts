@@ -1,66 +1,59 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { AgentProcessor } from './agent-processor.js';
 
-// Mock the container runner
-vi.mock('../container-runner.js', () => ({
-  runContainerAgent: vi.fn(),
-}));
-
-vi.mock('../db.js', () => ({
-  getAllRegisteredGroups: vi.fn(() => ({})),
-  setRegisteredGroup: vi.fn(),
-}));
-
-describe('AgentProcessor', () => {
-  let processor: AgentProcessor;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    processor = new AgentProcessor({
-      vaultDir: '/tmp/test-vault',
-      uploadDir: '/tmp/test-upload',
-    });
+describe('AgentProcessor prompt', () => {
+  const processor = new AgentProcessor({
+    vaultDir: '/vault',
+    uploadDir: '/upload',
   });
 
-  it('builds a prompt with file path and metadata context', () => {
+  it('wraps document content in XML tags at the top of the prompt', () => {
     const prompt = processor.buildPrompt(
-      '/tmp/test-upload/03_TCP.pdf',
-      '03_TCP.pdf',
-      {
-        courseCode: 'IS-1500',
-        courseName: 'Digital Samhandling',
-        semester: 3,
-        year: 2,
-        type: 'lecture',
-        fileName: '03_TCP.pdf',
-      },
-      'draft-id-123',
+      'Extracted content here <!-- page:4 label:section_header -->',
+      'paper.pdf',
+      'job-123',
+      ['figure_0_0.png'],
     );
 
-    expect(prompt).toContain('03_TCP.pdf');
-    expect(prompt).toContain('IS-1500');
-    expect(prompt).toContain('Digital Samhandling');
-    expect(prompt).toContain('draft-id-123');
-    expect(prompt).toContain('/workspace/extra/upload/03_TCP.pdf');
+    // Document content should be first (XML-wrapped)
+    const docStart = prompt.indexOf('<document>');
+    const jobParams = prompt.indexOf('## Job Parameters');
+    expect(docStart).toBeLessThan(jobParams);
+    expect(prompt).toContain('<source>paper.pdf</source>');
+    expect(prompt).toContain('<document_content>');
+    expect(prompt).toContain('Extracted content here');
   });
 
-  it('builds prompt with null metadata gracefully', () => {
-    const prompt = processor.buildPrompt(
-      '/tmp/test-upload/random.pdf',
-      'random.pdf',
-      {
-        courseCode: null,
-        courseName: null,
-        semester: null,
-        year: null,
-        type: null,
-        fileName: 'random.pdf',
-      },
-      'draft-id-456',
-    );
+  it('includes job-specific parameters', () => {
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', []);
 
-    expect(prompt).toContain('random.pdf');
-    expect(prompt).toContain('draft-id-456');
-    expect(prompt).not.toContain('IS-1500');
+    expect(prompt).toContain('job-123');
+    expect(prompt).toContain('job-123-manifest.json');
+    expect(prompt).toContain('job-123-complete');
+    expect(prompt).toContain('job-123-source.md');
+    expect(prompt).toContain('job-123-concept-NNN.md');
+    expect(prompt).toContain('upload/processed/job-123-paper.pdf');
+  });
+
+  it('does not contain workflow instructions (those live in CLAUDE.md)', () => {
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', []);
+
+    // These should be in CLAUDE.md, not the prompt
+    expect(prompt).not.toContain('cite-then-generate');
+    expect(prompt).not.toContain('Self-Review');
+    expect(prompt).not.toContain('verification_status: unverified');
+    expect(prompt).not.toContain('_targetPath');
+    expect(prompt).not.toContain('courses/');
+  });
+
+  it('includes figures when present', () => {
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', [
+      'figure_0_0.png',
+      'figure_1_0.png',
+    ]);
+
+    expect(prompt).toContain('<figures>');
+    expect(prompt).toContain('figure_0_0.png');
+    expect(prompt).toContain('figure_1_0.png');
   });
 });
