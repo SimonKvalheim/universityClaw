@@ -87,43 +87,15 @@ function createSchema(database: Database.Database): void {
       id TEXT PRIMARY KEY,
       source_path TEXT NOT NULL,
       source_filename TEXT NOT NULL,
-      course_code TEXT,
-      course_name TEXT,
-      semester INTEGER,
-      year INTEGER,
-      type TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      tier INTEGER DEFAULT 2,
+      status TEXT DEFAULT 'pending',
       extraction_path TEXT,
       error TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (datetime('now')),
       completed_at TEXT,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_status ON ingestion_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_source_path ON ingestion_jobs(source_path);
-
-    CREATE TABLE IF NOT EXISTS review_items (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL REFERENCES ingestion_jobs(id) ON DELETE CASCADE,
-      draft_path TEXT NOT NULL,
-      original_source TEXT,
-      suggested_type TEXT,
-      suggested_course TEXT,
-      figures TEXT DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      reviewed_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_review_items_status ON review_items(status);
-    CREATE INDEX IF NOT EXISTS idx_review_items_job_id ON review_items(job_id);
-
-    CREATE TABLE IF NOT EXISTS folder_type_overrides (
-      folder_name TEXT PRIMARY KEY,
-      note_type TEXT NOT NULL,
-      course_code TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -168,14 +140,7 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
-  // Add tier, extraction_path, updated_at columns if they don't exist (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE ingestion_jobs ADD COLUMN tier INTEGER DEFAULT 2`,
-    );
-  } catch {
-    /* column already exists */
-  }
+  // Add extraction_path, updated_at columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN extraction_path TEXT`);
   } catch {
@@ -749,25 +714,13 @@ export function createIngestionJob(
   id: string,
   sourcePath: string,
   sourceFilename: string,
-  courseCode: string | null,
-  courseName: string | null,
-  semester: number | null,
-  year: number | null,
-  type: string | null,
 ): void {
-  db.prepare(
-    `INSERT INTO ingestion_jobs (id, source_path, source_filename, course_code, course_name, semester, year, type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    sourcePath,
-    sourceFilename,
-    courseCode,
-    courseName,
-    semester,
-    year,
-    type,
-  );
+  getDb()
+    .prepare(
+      `INSERT INTO ingestion_jobs (id, source_path, source_filename)
+       VALUES (?, ?, ?)`,
+    )
+    .run(id, sourcePath, sourceFilename);
 }
 
 export function updateIngestionJobStatus(
@@ -794,45 +747,6 @@ export function getIngestionJobs(status?: string): unknown[] {
     .all();
 }
 
-// --- Review item accessors ---
-
-export function createReviewItem(
-  id: string,
-  jobId: string,
-  draftPath: string,
-  originalSource: string | null,
-  suggestedType: string | null,
-  suggestedCourse: string | null,
-  figures: string[],
-): void {
-  db.prepare(
-    `INSERT INTO review_items (id, job_id, draft_path, original_source, suggested_type, suggested_course, figures)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    jobId,
-    draftPath,
-    originalSource,
-    suggestedType,
-    suggestedCourse,
-    JSON.stringify(figures),
-  );
-}
-
-export function updateReviewItemStatus(id: string, status: string): void {
-  const reviewedAt = new Date().toISOString();
-  db.prepare(
-    `UPDATE review_items SET status = ?, reviewed_at = ? WHERE id = ?`,
-  ).run(status, reviewedAt, id);
-}
-
-export function getPendingReviewItems(): unknown[] {
-  return db
-    .prepare(
-      `SELECT * FROM review_items WHERE status = 'pending' ORDER BY created_at ASC`,
-    )
-    .all();
-}
 
 export function getJobsByStatus(status: string): unknown[] {
   return db
@@ -857,44 +771,35 @@ export function updateIngestionJob(
   id: string,
   updates: {
     status?: string;
-    tier?: number;
     extraction_path?: string | null;
     error?: string | null;
   },
 ): void {
-  const fields: string[] = ["updated_at = datetime('now')"];
+  const setClauses: string[] = ['updated_at = datetime(\'now\')'];
   const values: unknown[] = [];
 
   if (updates.status !== undefined) {
-    fields.push('status = ?');
+    setClauses.push('status = ?');
     values.push(updates.status);
     if (updates.status === 'completed') {
-      fields.push("completed_at = datetime('now')");
+      setClauses.push('completed_at = datetime(\'now\')');
     }
   }
-  if (updates.tier !== undefined) {
-    fields.push('tier = ?');
-    values.push(updates.tier);
+  if (updates.extraction_path !== undefined) {
+    setClauses.push('extraction_path = ?');
+    values.push(updates.extraction_path);
   }
-  if ('extraction_path' in updates) {
-    fields.push('extraction_path = ?');
-    values.push(updates.extraction_path ?? null);
-  }
-  if ('error' in updates) {
-    fields.push('error = ?');
-    values.push(updates.error ?? null);
+  if (updates.error !== undefined) {
+    setClauses.push('error = ?');
+    values.push(updates.error);
   }
 
   values.push(id);
-  db.prepare(`UPDATE ingestion_jobs SET ${fields.join(', ')} WHERE id = ?`).run(
-    ...values,
-  );
-}
-
-export function getReviewItemByJobId(jobId: string): unknown | undefined {
-  return db
-    .prepare(`SELECT * FROM review_items WHERE job_id = ? LIMIT 1`)
-    .get(jobId);
+  getDb()
+    .prepare(
+      `UPDATE ingestion_jobs SET ${setClauses.join(', ')} WHERE id = ?`,
+    )
+    .run(...values);
 }
 
 export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
@@ -905,29 +810,6 @@ export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
     .all(limit);
 }
 
-// --- Folder type override accessors ---
-
-export function setFolderTypeOverride(
-  folderName: string,
-  noteType: string,
-  courseCode?: string,
-): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO folder_type_overrides (folder_name, note_type, course_code) VALUES (?, ?, ?)`,
-  ).run(folderName, noteType, courseCode ?? null);
-}
-
-export function getFolderTypeOverride(
-  folderName: string,
-):
-  | { folder_name: string; note_type: string; course_code: string | null }
-  | undefined {
-  return db
-    .prepare('SELECT * FROM folder_type_overrides WHERE folder_name = ?')
-    .get(folderName) as
-    | { folder_name: string; note_type: string; course_code: string | null }
-    | undefined;
-}
 
 // --- JSON migration ---
 

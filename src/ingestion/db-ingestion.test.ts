@@ -3,32 +3,48 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   createIngestionJob,
-  createReviewItem,
   deleteIngestionJob,
+  getDb,
+  getIngestionJobs,
   getJobsByStatus,
   getRecentlyCompletedJobs,
-  getReviewItemByJobId,
   getStaleJobs,
   updateIngestionJob,
-  updateReviewItemStatus,
 } from '../db.js';
 
 beforeEach(() => {
   _initTestDatabase();
 });
 
-function makeJob(id: string, overrides: Partial<Parameters<typeof createIngestionJob>[1]> = {}): void {
-  createIngestionJob(
-    id,
-    `/uploads/${id}.pdf`,
-    `${id}.pdf`,
-    null,
-    null,
-    null,
-    null,
-    null,
-  );
+function makeJob(id: string): void {
+  createIngestionJob(id, `/uploads/${id}.pdf`, `${id}.pdf`);
 }
+
+// --- simplified schema ---
+
+describe('simplified ingestion schema', () => {
+  it('creates a job with only fileName, filePath, and status', () => {
+    createIngestionJob('job-1', '/upload/paper.pdf', 'paper.pdf');
+    const jobs = getIngestionJobs();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      id: 'job-1',
+      source_path: '/upload/paper.pdf',
+      source_filename: 'paper.pdf',
+      status: 'pending',
+    });
+    // Old columns should not exist
+    expect(jobs[0]).not.toHaveProperty('tier');
+    expect(jobs[0]).not.toHaveProperty('course_code');
+  });
+
+  it('does not have a review_items table', () => {
+    const db = getDb();
+    expect(() => {
+      db.prepare('SELECT * FROM review_items').all();
+    }).toThrow();
+  });
+});
 
 // --- getJobsByStatus ---
 
@@ -41,7 +57,9 @@ describe('getJobsByStatus', () => {
   });
 
   it('returns all jobs matching the given status', () => {
-    const pending = getJobsByStatus('pending') as Array<Record<string, unknown>>;
+    const pending = getJobsByStatus('pending') as Array<
+      Record<string, unknown>
+    >;
     expect(pending).toHaveLength(2);
     const ids = pending.map((j) => j.id);
     expect(ids).toContain('job-1');
@@ -49,7 +67,9 @@ describe('getJobsByStatus', () => {
   });
 
   it('returns jobs for a non-pending status', () => {
-    const processing = getJobsByStatus('processing') as Array<Record<string, unknown>>;
+    const processing = getJobsByStatus('processing') as Array<
+      Record<string, unknown>
+    >;
     expect(processing).toHaveLength(1);
     expect(processing[0].id).toBe('job-3');
   });
@@ -70,30 +90,19 @@ describe('updateIngestionJob', () => {
   it('updates status', () => {
     updateIngestionJob('upd-1', { status: 'processing' });
 
-    const jobs = getJobsByStatus('processing') as Array<Record<string, unknown>>;
+    const jobs = getJobsByStatus('processing') as Array<
+      Record<string, unknown>
+    >;
     expect(jobs).toHaveLength(1);
     expect(jobs[0].id).toBe('upd-1');
-  });
-
-  it('updates tier', () => {
-    updateIngestionJob('upd-1', { tier: 1 });
-
-    const jobs = getJobsByStatus('pending') as Array<Record<string, unknown>>;
-    expect(jobs[0].tier).toBe(1);
-  });
-
-  it('updates status and tier together', () => {
-    updateIngestionJob('upd-1', { status: 'processing', tier: 3 });
-
-    const jobs = getJobsByStatus('processing') as Array<Record<string, unknown>>;
-    expect(jobs[0].tier).toBe(3);
-    expect(jobs[0].status).toBe('processing');
   });
 
   it('sets completed_at when status is completed', () => {
     updateIngestionJob('upd-1', { status: 'completed' });
 
-    const completed = getRecentlyCompletedJobs(10) as Array<Record<string, unknown>>;
+    const completed = getRecentlyCompletedJobs(10) as Array<
+      Record<string, unknown>
+    >;
     expect(completed).toHaveLength(1);
     expect(completed[0].completed_at).not.toBeNull();
   });
@@ -114,66 +123,34 @@ describe('updateIngestionJob', () => {
   });
 
   it('always sets updated_at', () => {
-    const jobsBefore = getJobsByStatus('pending') as Array<Record<string, unknown>>;
+    const jobsBefore = getJobsByStatus('pending') as Array<
+      Record<string, unknown>
+    >;
     const updatedAtBefore = jobsBefore[0].updated_at as string;
 
     // Small sleep to ensure time difference
     const start = Date.now();
-    while (Date.now() - start < 2) { /* spin */ }
+    while (Date.now() - start < 2) {
+      /* spin */
+    }
 
     updateIngestionJob('upd-1', { status: 'processing' });
 
-    const jobsAfter = getJobsByStatus('processing') as Array<Record<string, unknown>>;
+    const jobsAfter = getJobsByStatus('processing') as Array<
+      Record<string, unknown>
+    >;
     // updated_at should be a valid datetime string
     expect(typeof jobsAfter[0].updated_at).toBe('string');
     expect(jobsAfter[0].updated_at).not.toBeNull();
   });
 });
 
-// --- updateReviewItemStatus ---
+// --- deleteIngestionJob ---
 
-describe('updateReviewItemStatus', () => {
-  beforeEach(() => {
-    makeJob('rev-job-1');
-    createReviewItem('rev-1', 'rev-job-1', '/drafts/note.md', null, null, null, []);
-  });
-
-  it('updates review item status to approved', () => {
-    updateReviewItemStatus('rev-1', 'approved');
-
-    const item = getReviewItemByJobId('rev-job-1') as Record<string, unknown> | undefined;
-    expect(item).toBeDefined();
-    expect(item!.status).toBe('approved');
-    expect(item!.reviewed_at).not.toBeNull();
-  });
-
-  it('updates review item status to rejected', () => {
-    updateReviewItemStatus('rev-1', 'rejected');
-
-    const item = getReviewItemByJobId('rev-job-1') as Record<string, unknown> | undefined;
-    expect(item!.status).toBe('rejected');
-  });
-});
-
-// --- deleteIngestionJob cascades to review_items ---
-
-describe('deleteIngestionJob cascade', () => {
-  it('cascades delete to associated review_items', () => {
-    makeJob('cascade-job');
-    createReviewItem('cascade-rev-1', 'cascade-job', '/drafts/a.md', null, null, null, []);
-    createReviewItem('cascade-rev-2', 'cascade-job', '/drafts/b.md', null, null, null, []);
-
-    // Verify review items exist before delete
-    const before1 = getReviewItemByJobId('cascade-job');
-    expect(before1).toBeDefined();
-
-    deleteIngestionJob('cascade-job');
-
-    // After deleting the job, review items should be gone (ON DELETE CASCADE)
-    const after = getReviewItemByJobId('cascade-job');
-    expect(after).toBeUndefined();
-
-    // Job itself should be gone
+describe('deleteIngestionJob', () => {
+  it('deletes a job', () => {
+    makeJob('del-job');
+    deleteIngestionJob('del-job');
     const jobs = getJobsByStatus('pending');
     expect(jobs).toHaveLength(0);
   });
@@ -190,27 +167,6 @@ describe('getStaleJobs', () => {
   });
 });
 
-// --- getReviewItemByJobId ---
-
-describe('getReviewItemByJobId', () => {
-  it('returns the review item for a job', () => {
-    makeJob('rij-job');
-    createReviewItem('rij-rev', 'rij-job', '/drafts/rij.md', '/source.pdf', 'lecture', 'CS101', []);
-
-    const item = getReviewItemByJobId('rij-job') as Record<string, unknown> | undefined;
-    expect(item).toBeDefined();
-    expect(item!.id).toBe('rij-rev');
-    expect(item!.suggested_type).toBe('lecture');
-    expect(item!.suggested_course).toBe('CS101');
-  });
-
-  it('returns undefined when no review item exists for job', () => {
-    makeJob('no-rev-job');
-    const item = getReviewItemByJobId('no-rev-job');
-    expect(item).toBeUndefined();
-  });
-});
-
 // --- getRecentlyCompletedJobs ---
 
 describe('getRecentlyCompletedJobs', () => {
@@ -223,7 +179,9 @@ describe('getRecentlyCompletedJobs', () => {
     updateIngestionJob('comp-2', { status: 'completed' });
     // comp-3 remains pending
 
-    const completed = getRecentlyCompletedJobs(10) as Array<Record<string, unknown>>;
+    const completed = getRecentlyCompletedJobs(10) as Array<
+      Record<string, unknown>
+    >;
     expect(completed).toHaveLength(2);
     const ids = completed.map((j) => j.id);
     expect(ids).toContain('comp-1');
