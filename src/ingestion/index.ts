@@ -8,7 +8,12 @@ import { PipelineDrainer, JobRow } from './pipeline.js';
 import { recoverStaleJobs } from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { promoteNote } from './promoter.js';
-import { waitForSentinel, sendIpcClose, cleanupSentinel } from './sentinel.js';
+import {
+  waitForSentinel,
+  sendIpcClose,
+  sendIpcMessage,
+  cleanupSentinel,
+} from './sentinel.js';
 import {
   validateDrafts,
   formatValidationMessage,
@@ -168,89 +173,99 @@ export class IngestionPipeline {
       throw new Error(`No extraction path for job ${job.id}`);
     }
 
-    // Process with agent (multi-note, multi-turn)
-    const result = await this.agentProcessor.process(
-      extractionPath,
-      fileName,
-      job.id,
-      this.reviewAgentGroup,
-    );
+    const dataDir = process.cwd();
+    const sentinelPath = join(draftsDir, `${job.id}-complete`);
+
+    // Validation loop — runs concurrently with the container.
+    // Polls for sentinel, validates drafts, sends IPC corrections or _close.
+    const validationLoop = async (): Promise<void> => {
+      const maxAttempts = 3;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const sentinelFound = await waitForSentinel(
+          sentinelPath,
+          SENTINEL_TIMEOUT,
+        );
+
+        if (!sentinelFound) {
+          logger.warn({ jobId: job.id }, 'Sentinel timeout — sending IPC close');
+          sendIpcClose(job.id, dataDir);
+          throw new Error('Agent did not complete within sentinel timeout');
+        }
+
+        // Validate the generated drafts
+        const validation = validateDrafts(draftsDir, job.id, fileName);
+
+        if (validation.valid) {
+          if (validation.warnings.length > 0) {
+            logger.info(
+              { jobId: job.id, warnings: validation.warnings.length },
+              'Draft validation passed with warnings',
+            );
+          }
+          // Tell the agent validation passed, then close the session
+          sendIpcMessage(
+            job.id,
+            dataDir,
+            'Output validation passed. Your work is complete. Shutting down.',
+          );
+          // Small delay so the agent receives the message before _close
+          await new Promise((r) => setTimeout(r, 500));
+          sendIpcClose(job.id, dataDir);
+          return;
+        }
+
+        // Validation failed
+        logger.warn(
+          { jobId: job.id, errors: validation.errors.length, attempt },
+          'Draft validation failed, sending corrections to agent',
+        );
+
+        if (attempt === maxAttempts) {
+          logger.error(
+            { jobId: job.id, errors: validation.errors },
+            'Draft validation failed after max attempts — closing agent',
+          );
+          sendIpcMessage(
+            job.id,
+            dataDir,
+            `Validation failed after ${maxAttempts} attempts. Shutting down.\n\n${formatValidationMessage(validation)}`,
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          sendIpcClose(job.id, dataDir);
+          throw new Error(
+            `Draft validation failed after ${maxAttempts} attempts: ${validation.errors.map((e) => e.message).join('; ')}`,
+          );
+        }
+
+        // Delete sentinel so we can wait for a new one
+        try {
+          const { unlinkSync } = await import('fs');
+          unlinkSync(sentinelPath);
+        } catch {
+          // Already gone
+        }
+
+        // Send corrections to agent via IPC — agent fixes and writes new sentinel
+        sendIpcMessage(job.id, dataDir, formatValidationMessage(validation));
+      }
+    };
+
+    // Run container and validation concurrently.
+    // validationLoop sends _close when done, which causes the container to exit,
+    // which causes process() to return.
+    const [result] = await Promise.all([
+      this.agentProcessor.process(
+        extractionPath,
+        fileName,
+        job.id,
+        this.reviewAgentGroup,
+      ),
+      validationLoop(),
+    ]);
 
     if (result.status === 'error') {
       throw new Error(result.error || 'Agent processing failed');
-    }
-
-    // Wait for sentinel, validate drafts, send corrections if needed
-    const sentinelPath = join(draftsDir, `${job.id}-complete`);
-    const maxAttempts = 3;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const sentinelFound = await waitForSentinel(sentinelPath, SENTINEL_TIMEOUT);
-
-      if (!sentinelFound) {
-        logger.warn({ jobId: job.id }, 'Sentinel timeout — sending IPC close');
-        sendIpcClose(job.id, join(this.reviewAgentGroup.folder, '..'));
-        throw new Error('Agent did not complete within sentinel timeout');
-      }
-
-      // Validate the generated drafts
-      const validation = validateDrafts(draftsDir, job.id, fileName);
-
-      if (validation.valid) {
-        if (validation.warnings.length > 0) {
-          logger.info(
-            { jobId: job.id, warnings: validation.warnings.length },
-            'Draft validation passed with warnings',
-          );
-        }
-        break;
-      }
-
-      // Validation failed — send errors back to agent for correction
-      logger.warn(
-        { jobId: job.id, errors: validation.errors.length, attempt },
-        'Draft validation failed, sending corrections to agent',
-      );
-
-      if (attempt === maxAttempts) {
-        logger.error(
-          { jobId: job.id, errors: validation.errors },
-          'Draft validation failed after max attempts',
-        );
-        throw new Error(
-          `Draft validation failed after ${maxAttempts} attempts: ${validation.errors.map((e) => e.message).join('; ')}`,
-        );
-      }
-
-      // Delete the sentinel so we can wait for a new one
-      try {
-        const { unlinkSync } = await import('fs');
-        unlinkSync(sentinelPath);
-      } catch {
-        // Already gone
-      }
-
-      // Send validation errors to agent via IPC
-      const ipcInputDir = join(
-        process.cwd(),
-        'data',
-        'ipc',
-        'ingestion',
-        job.id,
-        'input',
-      );
-      const correctionMessage = formatValidationMessage(validation);
-      try {
-        const { writeFileSync, mkdirSync } = await import('fs');
-        mkdirSync(ipcInputDir, { recursive: true });
-        writeFileSync(
-          join(ipcInputDir, `${Date.now()}.json`),
-          JSON.stringify({ type: 'message', text: correctionMessage }),
-        );
-      } catch (err) {
-        logger.error({ jobId: job.id, err }, 'Failed to send validation corrections via IPC');
-        throw new Error('Failed to send validation corrections to agent');
-      }
     }
 
     updateIngestionJob(job.id, { status: 'generated' });

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { logger } from '../logger.js';
 
@@ -35,6 +35,27 @@ export function sendIpcClose(ipcNamespace: string, dataDir: string): void {
     logger.info({ ipcNamespace }, 'Sent IPC close sentinel');
   } catch (err) {
     logger.warn({ ipcNamespace, err }, 'Failed to send IPC close sentinel');
+  }
+}
+
+/**
+ * Sends a message to the container agent via IPC input.
+ */
+export function sendIpcMessage(
+  ipcNamespace: string,
+  dataDir: string,
+  text: string,
+): void {
+  const inputDir = join(dataDir, 'ipc', 'ingestion', ipcNamespace, 'input');
+  try {
+    mkdirSync(inputDir, { recursive: true });
+    writeFileSync(
+      join(inputDir, `${Date.now()}.json`),
+      JSON.stringify({ type: 'message', text }),
+    );
+    logger.info({ ipcNamespace }, 'Sent IPC message to agent');
+  } catch (err) {
+    logger.warn({ ipcNamespace, err }, 'Failed to send IPC message');
   }
 }
 
