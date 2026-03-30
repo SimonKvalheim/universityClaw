@@ -29,6 +29,12 @@ dashboard/
 
 ---
 
+**Note on parallelism:** Tasks 1, 2, and 3 are fully independent and can be executed in parallel.
+
+**Note on state management:** The spec mentions `useReducer` for page state, but the plan uses individual `useState` calls. This is an intentional simplification — the state is flat with independent fields, making `useState` cleaner. No `useReducer` needed.
+
+---
+
 ### Task 1: Install pdfjs-dist and set up PDF worker
 
 **Files:**
@@ -58,7 +64,17 @@ ls -la public/pdf.worker.min.mjs
 
 Expected: file exists, ~300-700KB.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Add a postinstall script to keep the worker in sync**
+
+In `dashboard/package.json`, add to the `"scripts"` section:
+
+```json
+"postinstall": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs"
+```
+
+This ensures the worker file is refreshed whenever `pdfjs-dist` is updated via `npm install`.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add package.json package-lock.json public/pdf.worker.min.mjs
@@ -562,8 +578,7 @@ export default function ReadPage() {
     readingStartTime.current = Date.now();
     totalPauseTime.current = 0;
     engine.restart();
-    // Small delay to let state settle, then play
-    setTimeout(() => engine.play(), 50);
+    engine.play();
   }
 
   // --- Tab classes ---
@@ -885,9 +900,14 @@ function getFontSize(chunk: { word: string }[]): number {
 }
 ```
 
-- [ ] **Step 2: Replace the reader/complete placeholder with the reader phase**
+- [ ] **Step 2: Add reader/complete phase logic and replace the placeholder return**
 
-Replace the final `return` block (the reading + complete placeholder) with:
+This step adds code in **two locations** inside the `ReadPage` function:
+
+1. **Before the `if (phase === 'input')` block:** Insert the `useEffect` hooks, `completionStats` state, `engineRef`, and computed values. These are React hooks and must appear before any conditional returns.
+2. **Replace the final placeholder `return`** (the `"Reader phase — coming in next task"` block) with the complete and reading phase JSX.
+
+Replace everything from the `// ==================== READING + COMPLETE PHASES` comment through the closing `);` and `}` of the placeholder with:
 
 ```tsx
   // --- Track pause time ---
@@ -901,6 +921,12 @@ Replace the final `return` block (the reading + complete placeholder) with:
     }
   }, [engine.isPlaying, phase]);
 
+  // --- Completion stats (computed once on transition to complete) ---
+  const [completionStats, setCompletionStats] = useState<{
+    totalTime: number;
+    effectiveWpm: number;
+  } | null>(null);
+
   // --- Detect completion ---
   useEffect(() => {
     if (
@@ -913,9 +939,16 @@ Replace the final `return` block (the reading + complete placeholder) with:
         totalPauseTime.current += Date.now() - lastPauseStart.current;
         lastPauseStart.current = 0;
       }
+      const totalTime = (Date.now() - readingStartTime.current - totalPauseTime.current) / 1000;
+      const effectiveWpm = totalTime > 0 ? Math.round(engine.totalWords / (totalTime / 60)) : 0;
+      setCompletionStats({ totalTime, effectiveWpm });
       setPhase('complete');
     }
   }, [engine.isPlaying, engine.position, engine.totalWords, phase]);
+
+  // --- Engine ref for stable keyboard handler ---
+  const engineRef = useRef(engine);
+  useEffect(() => { engineRef.current = engine; }, [engine]);
 
   // --- Keyboard shortcuts ---
   useEffect(() => {
@@ -927,18 +960,19 @@ Replace the final `return` block (the reading + complete placeholder) with:
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return;
       if ((e.target as HTMLElement).getAttribute('role') === 'slider') return;
 
+      const eng = engineRef.current;
       switch (e.code) {
         case 'Space':
           e.preventDefault();
-          engine.isPlaying ? engine.pause() : engine.play();
+          eng.isPlaying ? eng.pause() : eng.play();
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          engine.seek(-10);
+          eng.seek(-10);
           break;
         case 'ArrowRight':
           e.preventDefault();
-          engine.seek(10);
+          eng.seek(10);
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -950,7 +984,7 @@ Replace the final `return` block (the reading + complete placeholder) with:
           break;
         case 'KeyR':
           e.preventDefault();
-          engine.restart();
+          eng.restart();
           setPhase('reading');
           break;
         case 'KeyT':
@@ -978,15 +1012,7 @@ Replace the final `return` block (the reading + complete placeholder) with:
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [phase, engine]);
-
-  // --- Completion stats ---
-  const totalReadingTime = readingStartTime.current > 0
-    ? (Date.now() - readingStartTime.current - totalPauseTime.current) / 1000
-    : 0;
-  const effectiveWpm = totalReadingTime > 0
-    ? Math.round(engine.totalWords / (totalReadingTime / 60))
-    : 0;
+  }, [phase]);
 
   const fontSize = getFontSize(engine.currentChunk);
   const showSettings = !engine.isPlaying && phase === 'reading';
@@ -999,11 +1025,11 @@ Replace the final `return` block (the reading + complete placeholder) with:
         <div className="flex justify-center gap-8 mb-8 text-sm">
           <div>
             <div className="text-gray-500">Time</div>
-            <div className="text-gray-200 text-lg">{formatTime(totalReadingTime)}</div>
+            <div className="text-gray-200 text-lg">{formatTime(completionStats?.totalTime ?? 0)}</div>
           </div>
           <div>
             <div className="text-gray-500">Effective WPM</div>
-            <div className="text-gray-200 text-lg">{effectiveWpm}</div>
+            <div className="text-gray-200 text-lg">{completionStats?.effectiveWpm ?? 0}</div>
           </div>
           <div>
             <div className="text-gray-500">Words</div>

@@ -50,11 +50,11 @@ Manages all reading state and timing logic.
 **Exposed interface:**
 ```typescript
 {
-  words: string[]
+  words: TokenizedWord[]     // {word, index, paragraphBreak, duration}
   position: number
   isPlaying: boolean
   progress: number          // 0-1
-  currentChunk: string[]    // current word(s) being displayed
+  currentChunk: TokenizedWord[]  // current word(s) being displayed
   totalWords: number
   estimatedTimeLeft: number // seconds
   play: () => void
