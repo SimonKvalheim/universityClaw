@@ -127,3 +127,8 @@ export const WEB_CHANNEL_PORT = parseInt(
   process.env.WEB_CHANNEL_PORT || '3200',
   10,
 );
+
+export const SENTINEL_TIMEOUT = Number(
+  process.env.SENTINEL_TIMEOUT ?? 10 * 60 * 1000, // 10 minutes
+);
+export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
