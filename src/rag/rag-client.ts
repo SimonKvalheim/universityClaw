@@ -87,7 +87,8 @@ print("ok")
           },
         },
         (err, stdout, stderr) => {
-          if (err) return reject(new Error(`Python error: ${stderr || err.message}`));
+          if (err)
+            return reject(new Error(`Python error: ${stderr || err.message}`));
           resolve(stdout);
         },
       );

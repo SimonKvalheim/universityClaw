@@ -96,7 +96,10 @@ export class IngestionPipeline {
     }
 
     const jobId = randomUUID();
-    logger.info({ jobId, relativePath }, `ingestion: Enqueuing: ${relativePath}`);
+    logger.info(
+      { jobId, relativePath },
+      `ingestion: Enqueuing: ${relativePath}`,
+    );
     createIngestionJob(jobId, filePath, fileName);
   }
 
@@ -104,14 +107,20 @@ export class IngestionPipeline {
     const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
 
-    logger.info({ jobId: job.id, relativePath }, `ingestion: Extracting: ${relativePath}`);
+    logger.info(
+      { jobId: job.id, relativePath },
+      `ingestion: Extracting: ${relativePath}`,
+    );
 
     const result = await this.extractor.extract(job.id, job.source_path);
 
     // Copy original file to vault attachments
     const attachmentDir = join('attachments', '_unsorted');
     await mkdir(join(this.vaultDir, attachmentDir), { recursive: true });
-    await copyFile(job.source_path, join(this.vaultDir, attachmentDir, fileName));
+    await copyFile(
+      job.source_path,
+      join(this.vaultDir, attachmentDir, fileName),
+    );
 
     // Copy figures to vault attachments if any exist
     if (result.figures.length > 0) {
@@ -132,14 +141,20 @@ export class IngestionPipeline {
       extraction_path: result.contentPath.replace(/\/content\.md$/, ''),
     });
 
-    logger.info({ jobId: job.id, relativePath }, `ingestion: Extracted: ${relativePath}`);
+    logger.info(
+      { jobId: job.id, relativePath },
+      `ingestion: Extracted: ${relativePath}`,
+    );
   }
 
   async handleGeneration(job: JobRow): Promise<void> {
     const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
 
-    logger.info({ jobId: job.id, relativePath }, `ingestion: Generating: ${relativePath}`);
+    logger.info(
+      { jobId: job.id, relativePath },
+      `ingestion: Generating: ${relativePath}`,
+    );
 
     const draftsDir = join(this.vaultDir, 'drafts');
     await mkdir(draftsDir, { recursive: true });
@@ -173,7 +188,10 @@ export class IngestionPipeline {
 
     updateIngestionJob(job.id, { status: 'generated' });
 
-    logger.info({ jobId: job.id, relativePath }, `ingestion: Generated: ${relativePath}`);
+    logger.info(
+      { jobId: job.id, relativePath },
+      `ingestion: Generated: ${relativePath}`,
+    );
   }
 
   async handlePromotion(job: JobRow): Promise<void> {
@@ -181,10 +199,14 @@ export class IngestionPipeline {
     const relativePath = relative(this.uploadDir, job.source_path);
     const draftsDir = join(this.vaultDir, 'drafts');
 
-    logger.info({ jobId: job.id, relativePath }, `ingestion: Promoting: ${relativePath}`);
+    logger.info(
+      { jobId: job.id, relativePath },
+      `ingestion: Promoting: ${relativePath}`,
+    );
 
     // Read or infer manifest
-    const manifest = readManifest(draftsDir, job.id) ?? inferManifest(draftsDir, job.id);
+    const manifest =
+      readManifest(draftsDir, job.id) ?? inferManifest(draftsDir, job.id);
 
     // Promote source note
     const promotedPaths: string[] = [];
@@ -195,7 +217,10 @@ export class IngestionPipeline {
         promotedPaths.push(promoted);
         logger.info({ jobId: job.id, promoted }, 'Promoted source note');
       } catch (err) {
-        logger.warn({ jobId: job.id, file: manifest.source_note, err }, 'Failed to promote source note');
+        logger.warn(
+          { jobId: job.id, file: manifest.source_note, err },
+          'Failed to promote source note',
+        );
       }
     }
 
@@ -207,14 +232,20 @@ export class IngestionPipeline {
         promotedPaths.push(promoted);
         logger.info({ jobId: job.id, promoted }, 'Promoted concept note');
       } catch (err) {
-        logger.warn({ jobId: job.id, file: conceptFile, err }, 'Failed to promote concept note');
+        logger.warn(
+          { jobId: job.id, file: conceptFile, err },
+          'Failed to promote concept note',
+        );
       }
     }
 
     // Move source file to processed/
     await mkdir(PROCESSED_DIR, { recursive: true });
     try {
-      await rename(job.source_path, join(PROCESSED_DIR, `${job.id}-${fileName}`));
+      await rename(
+        job.source_path,
+        join(PROCESSED_DIR, `${job.id}-${fileName}`),
+      );
     } catch {
       logger.warn({ jobId: job.id }, 'Failed to move source to processed/');
     }

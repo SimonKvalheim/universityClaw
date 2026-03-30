@@ -40,7 +40,9 @@ export class RagIndexer {
     const relPath = relative(this.vaultDir, filePath);
 
     // Allowlist check: must be under one of ALLOWED_PATHS
-    const isAllowed = ALLOWED_PATHS.some((p) => relPath.startsWith(p + '/') || relPath.startsWith(p + '\\'));
+    const isAllowed = ALLOWED_PATHS.some(
+      (p) => relPath.startsWith(p + '/') || relPath.startsWith(p + '\\'),
+    );
     if (!isAllowed) return;
 
     let content: string;

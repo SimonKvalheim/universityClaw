@@ -49,11 +49,13 @@ describe('RagClient', () => {
       pythonBin: 'nonexistent-python-bin-xyz',
     });
 
-    mockExecFile.mockImplementation((_cmd: any, _args: any, _opts: any, cb?: any) => {
-      const callback = typeof _opts === 'function' ? _opts : cb;
-      if (callback) callback(new Error('spawn failed'), '', '');
-      return { stdin: { write: vi.fn(), end: vi.fn() } } as any;
-    });
+    mockExecFile.mockImplementation(
+      (_cmd: any, _args: any, _opts: any, cb?: any) => {
+        const callback = typeof _opts === 'function' ? _opts : cb;
+        if (callback) callback(new Error('spawn failed'), '', '');
+        return { stdin: { write: vi.fn(), end: vi.fn() } } as any;
+      },
+    );
 
     const result = await client.query('What is integration?');
     expect(result.answer).toBe('');
@@ -76,13 +78,16 @@ describe('RagClient stdin safety', () => {
     const stdinWrite = vi.fn();
     const stdinEnd = vi.fn();
 
-    mockExecFile.mockImplementation((_cmd: any, _args: any, _opts: any, cb?: any) => {
-      const callback = typeof _opts === 'function' ? _opts : cb;
-      if (callback) callback(null, 'ok', '');
-      return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
-    });
+    mockExecFile.mockImplementation(
+      (_cmd: any, _args: any, _opts: any, cb?: any) => {
+        const callback = typeof _opts === 'function' ? _opts : cb;
+        if (callback) callback(null, 'ok', '');
+        return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
+      },
+    );
 
-    const dangerousContent = 'Text with """triple quotes""" and $VARS and `backticks`';
+    const dangerousContent =
+      'Text with """triple quotes""" and $VARS and `backticks`';
     await client.index(dangerousContent);
 
     const pythonArg = mockExecFile.mock.calls[0]?.[1]?.[1] as string;
@@ -94,11 +99,13 @@ describe('RagClient stdin safety', () => {
     const stdinWrite = vi.fn();
     const stdinEnd = vi.fn();
 
-    mockExecFile.mockImplementation((_cmd: any, _args: any, _opts: any, cb?: any) => {
-      const callback = typeof _opts === 'function' ? _opts : cb;
-      if (callback) callback(null, 'some answer', '');
-      return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
-    });
+    mockExecFile.mockImplementation(
+      (_cmd: any, _args: any, _opts: any, cb?: any) => {
+        const callback = typeof _opts === 'function' ? _opts : cb;
+        if (callback) callback(null, 'some answer', '');
+        return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
+      },
+    );
 
     const dangerousQuery = 'What about "injection" and ${code}?';
     await client.query(dangerousQuery);
@@ -112,11 +119,13 @@ describe('RagClient stdin safety', () => {
     const stdinWrite = vi.fn();
     const stdinEnd = vi.fn();
 
-    mockExecFile.mockImplementation((_cmd: any, _args: any, _opts: any, cb?: any) => {
-      const callback = typeof _opts === 'function' ? _opts : cb;
-      if (callback) callback(null, 'ok', '');
-      return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
-    });
+    mockExecFile.mockImplementation(
+      (_cmd: any, _args: any, _opts: any, cb?: any) => {
+        const callback = typeof _opts === 'function' ? _opts : cb;
+        if (callback) callback(null, 'ok', '');
+        return { stdin: { write: stdinWrite, end: stdinEnd } } as any;
+      },
+    );
 
     await client.index('hello world');
 

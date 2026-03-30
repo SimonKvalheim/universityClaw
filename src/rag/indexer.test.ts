@@ -40,7 +40,9 @@ Content here.`);
 
     expect(mockRagClient.index).toHaveBeenCalledOnce();
     const indexed = mockRagClient.index.mock.calls[0][0] as string;
-    expect(indexed).toContain('[Title: Self-Attention | Type: concept | Topics: deep-learning, transformers | Source: Vaswani et al. 2017 | Verification: unverified]');
+    expect(indexed).toContain(
+      '[Title: Self-Attention | Type: concept | Topics: deep-learning, transformers | Source: Vaswani et al. 2017 | Verification: unverified]',
+    );
     expect(indexed).toContain('Source path: concepts/self-attention.md');
   });
 

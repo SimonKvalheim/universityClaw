@@ -22,7 +22,14 @@ export async function waitForSentinel(
  * Writes the IPC _close sentinel to signal the container to exit.
  */
 export function sendIpcClose(ipcNamespace: string, dataDir: string): void {
-  const closePath = join(dataDir, 'ipc', 'ingestion', ipcNamespace, 'input', '_close');
+  const closePath = join(
+    dataDir,
+    'ipc',
+    'ingestion',
+    ipcNamespace,
+    'input',
+    '_close',
+  );
   try {
     writeFileSync(closePath, '', { flag: 'w' });
     logger.info({ ipcNamespace }, 'Sent IPC close sentinel');
@@ -34,10 +41,7 @@ export function sendIpcClose(ipcNamespace: string, dataDir: string): void {
 /**
  * Cleans up sentinel and manifest files after promotion.
  */
-export function cleanupSentinel(
-  draftsDir: string,
-  jobId: string,
-): void {
+export function cleanupSentinel(draftsDir: string, jobId: string): void {
   const files = [
     join(draftsDir, `${jobId}-complete`),
     join(draftsDir, `${jobId}-manifest.json`),

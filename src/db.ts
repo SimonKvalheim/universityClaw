@@ -747,7 +747,6 @@ export function getIngestionJobs(status?: string): unknown[] {
     .all();
 }
 
-
 export function getJobsByStatus(status: string): unknown[] {
   return db
     .prepare(
@@ -775,14 +774,14 @@ export function updateIngestionJob(
     error?: string | null;
   },
 ): void {
-  const setClauses: string[] = ['updated_at = datetime(\'now\')'];
+  const setClauses: string[] = ["updated_at = datetime('now')"];
   const values: unknown[] = [];
 
   if (updates.status !== undefined) {
     setClauses.push('status = ?');
     values.push(updates.status);
     if (updates.status === 'completed') {
-      setClauses.push('completed_at = datetime(\'now\')');
+      setClauses.push("completed_at = datetime('now')");
     }
   }
   if (updates.extraction_path !== undefined) {
@@ -796,9 +795,7 @@ export function updateIngestionJob(
 
   values.push(id);
   getDb()
-    .prepare(
-      `UPDATE ingestion_jobs SET ${setClauses.join(', ')} WHERE id = ?`,
-    )
+    .prepare(`UPDATE ingestion_jobs SET ${setClauses.join(', ')} WHERE id = ?`)
     .run(...values);
 }
 
@@ -809,7 +806,6 @@ export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
     )
     .all(limit);
 }
-
 
 // --- JSON migration ---
 

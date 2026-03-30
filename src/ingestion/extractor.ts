@@ -3,10 +3,7 @@ import { access, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import {
-  EXTRACTION_TIMEOUT,
-  EXTRACTIONS_DIR,
-} from '../config.js';
+import { EXTRACTION_TIMEOUT, EXTRACTIONS_DIR } from '../config.js';
 
 const execFileAsync = promisify(execFile);
 
