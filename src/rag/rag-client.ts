@@ -1,7 +1,4 @@
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
 
 export interface RagConfig {
   workingDir: string;
@@ -15,7 +12,13 @@ export interface RagResult {
 }
 
 export class RagClient {
-  constructor(private config: RagConfig) {}
+  private pythonBin: string;
+  private workingDir: string;
+
+  constructor(private config: RagConfig) {
+    this.pythonBin = config.pythonBin || 'python3';
+    this.workingDir = config.workingDir;
+  }
 
   buildQuery(query: string, filters?: Record<string, string>): string {
     let enriched = query;
@@ -33,44 +36,63 @@ export class RagClient {
     mode: 'naive' | 'local' | 'global' | 'hybrid' = 'hybrid',
     filters?: Record<string, string>,
   ): Promise<RagResult> {
-    const enrichedQuery = this.buildQuery(question, filters);
+    const enriched = this.buildQuery(question, filters);
+    const script = `
+import sys, asyncio, os
+from lightrag import LightRAG
+rag = LightRAG(working_dir=os.environ["LIGHTRAG_WORKING_DIR"])
+question = sys.stdin.read()
+mode = os.environ["LIGHTRAG_QUERY_MODE"]
+result = asyncio.run(rag.aquery(question, param={"mode": mode}))
+print(result)
+`;
     try {
-      const { stdout } = await execFileAsync(
-        this.config.pythonBin || 'python3',
-        [
-          '-c',
-          `
-import json
-from lightrag import LightRAG, QueryParam
-rag = LightRAG(working_dir="${this.config.workingDir}")
-result = rag.query("${enrichedQuery.replace(/"/g, '\\"')}", param=QueryParam(mode="${mode}"))
-print(json.dumps({"answer": result, "sources": []}))
-`,
-        ],
-        { timeout: 60_000 },
-      );
-      return JSON.parse(stdout.trim()) as RagResult;
+      const result = await this.execPythonWithStdin(script, enriched, {
+        LIGHTRAG_QUERY_MODE: mode,
+      });
+      return { answer: result.trim(), sources: [] };
     } catch {
-      return {
-        answer: `RAG query failed. Falling back to general knowledge. Original question: ${question}`,
-        sources: [],
-      };
+      return { answer: '', sources: [] };
     }
   }
 
   async index(text: string): Promise<void> {
-    await execFileAsync(
-      this.config.pythonBin || 'python3',
-      [
-        '-c',
-        `
+    const script = `
+import sys, asyncio, os
 from lightrag import LightRAG
-rag = LightRAG(working_dir="${this.config.workingDir}")
-rag.insert("""${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}""")
-print("indexed")
-`,
-      ],
-      { timeout: 120_000 },
-    );
+rag = LightRAG(working_dir=os.environ["LIGHTRAG_WORKING_DIR"])
+content = sys.stdin.read()
+asyncio.run(rag.ainsert(content))
+print("ok")
+`;
+    await this.execPythonWithStdin(script, text);
+  }
+
+  private execPythonWithStdin(
+    script: string,
+    input: string,
+    extraEnv?: Record<string, string>,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = execFile(
+        this.pythonBin,
+        ['-c', script],
+        {
+          timeout: 120_000,
+          maxBuffer: 10 * 1024 * 1024,
+          env: {
+            ...process.env,
+            LIGHTRAG_WORKING_DIR: this.workingDir,
+            ...extraEnv,
+          },
+        },
+        (err, stdout, stderr) => {
+          if (err) return reject(new Error(`Python error: ${stderr || err.message}`));
+          resolve(stdout);
+        },
+      );
+      child.stdin?.write(input);
+      child.stdin?.end();
+    });
   }
 }
