@@ -30,7 +30,7 @@ Inbound (STT) — runs entirely on host:
 Outbound (TTS) — host service, container client:
   Agent calls synthesize_speech MCP tool
     → HTTP POST to host TTS service (host.docker.internal:8771)
-    → Voxtral-4B (MLX) generates audio → OGG Opus returned
+    → Voxtral-4B (MLX) generates audio → WAV returned
     → saved to /workspace/group/audio/
     → Agent calls send_voice → IPC → host → Telegram sendVoice → User
 ```
@@ -65,11 +65,11 @@ A local HTTP server running Voxtral-4B via MLX on Apple Silicon.
   "model": "voxtral-4b",
   "input": "Text to synthesize",
   "voice": "jessica",
-  "response_format": "opus"
+  "response_format": "wav"
 }
 ```
 
-**Response:** Raw audio bytes (OGG Opus if supported, WAV otherwise — see transcoding note below).
+**Response:** Raw WAV audio bytes. No transcoding needed — Telegram accepts WAV via `sendVoice` and converts server-side.
 
 **Resource usage:** ~3GB RAM (Q4 quantized). Model loads on first request, stays resident. Since STT and TTS never run in parallel, peak memory is ~3GB (not additive).
 
@@ -122,7 +122,7 @@ const response = await fetch(`${ttsUrl}/v1/audio/speech`, {
     model: 'voxtral-4b',
     input: args.text,
     voice: args.voice ?? 'jessica',
-    response_format: 'opus',
+    response_format: 'wav',
   }),
 });
 const audioBuffer = Buffer.from(await response.arrayBuffer());
@@ -132,19 +132,13 @@ No API keys needed — the service runs on localhost with no authentication. The
 
 ### Output
 
-- Format: OGG Opus (Telegram-native for voice messages)
+- Format: WAV (raw output from Voxtral — no transcoding in the container)
 - Sample rate: 24kHz
 - Directory: `/workspace/group/audio/` (created on first use via `mkdir -p`)
-- Filename: `tts-{timestamp}-{random4}.opus` (random suffix prevents collision)
+- Filename: `tts-{timestamp}-{random4}.wav` (random suffix prevents collision)
 - Returns: JSON `{ path, duration_seconds, language }`
 
-### Transcoding
-
-If the Voxtral MLX server only outputs WAV/PCM (not Opus), the MCP tool must transcode before saving. This requires ffmpeg in the container:
-```
-ffmpeg -i input.wav -c:a libopus -b:a 64k output.opus
-```
-Check during implementation whether `mlx-audio`/`mlx-voxtral` supports Opus output natively. If not, add ffmpeg to the container Dockerfile.
+Note: The WAV file is converted to OGG Opus on the host side before sending to Telegram (see `send_voice` IPC flow below). This keeps the container ffmpeg-free.
 
 ### Voice Selection
 
@@ -166,7 +160,7 @@ A new MCP tool for sending audio files as Telegram voice messages.
 ### IPC Flow
 
 1. Agent calls `send_voice` MCP tool with file path
-2. Tool writes IPC JSON to `/workspace/ipc/messages/{timestamp}.json` with `{ type: "voice", file: "/workspace/group/audio/tts-xxx.opus", chatJid, caption?, sender }`
+2. Tool writes IPC JSON to `/workspace/ipc/messages/{timestamp}.json` with `{ type: "voice", file: "/workspace/group/audio/tts-xxx.wav", chatJid, caption?, sender }`
 3. Host `ipc.ts` picks up the file, checks `type` field
 4. For `type: "voice"`, host resolves container path to host path, then calls `sendVoice()` on the channel
 
@@ -186,7 +180,12 @@ sendVoice?(jid: string, filePath: string, caption?: string): Promise<void>;
 2. Add an `else if (data.type === 'voice')` dispatch branch in the message handler. Currently only `type: "message"` is handled; without this branch, voice IPC files will be silently consumed and unlinked. The new branch must:
 - Apply the same authorization check (`isMain || folder === sourceGroup`)
 - Resolve the container file path to the host-absolute path (strip `/workspace/group/` prefix, prepend `resolveGroupFolderPath(sourceGroup)`)
-- Call `deps.sendVoice()` on the target channel (check it exists first — gracefully skip if the channel doesn't support voice)
+- Convert WAV to OGG Opus via ffmpeg before sending (Telegram requires OGG Opus for proper voice bubbles with waveform and speed controls):
+  ```
+  ffmpeg -i input.wav -c:a libopus -b:a 48k -vbr on -application voip output.ogg
+  ```
+- Call `deps.sendVoice()` with the converted OGG file path (check it exists first — gracefully skip if the channel doesn't support voice)
+- Clean up both the original WAV and converted OGG after sending
 - Handle missing file gracefully (log error, skip)
 
 **`src/types.ts`** — Add optional `sendVoice` to the Channel interface:
@@ -274,7 +273,7 @@ bot.on("message:voice", async (ctx) => {
 | NB-Whisper Large Q5_0 | STT model | Download from HuggingFace (`NbAiLab/nb-whisper-large`) |
 | `mlx-audio` or `mlx-voxtral` | TTS inference + HTTP server | `pip install mlx-audio` or `pip install mlx-voxtral` |
 | Voxtral-4B Q4 | TTS model | Auto-downloaded on first run by MLX |
-| `ffmpeg` | OGG→WAV conversion for STT + optional TTS transcoding | `brew install ffmpeg` (required) |
+| `ffmpeg` | OGG→WAV conversion for STT only (not needed for TTS) | `brew install ffmpeg` (required on host) |
 | `@grammyjs/files` | Telegram file download plugin | `npm install @grammyjs/files` |
 
 ### Configuration Constants
