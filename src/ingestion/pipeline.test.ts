@@ -26,6 +26,7 @@ describe('PipelineDrainer', () => {
         extracted.push(job.id);
       },
       onGenerate: async () => {},
+      onPromote: async () => {},
       maxExtractionConcurrent: 2,
       maxGenerationConcurrent: 2,
       pollIntervalMs: 100,
@@ -51,6 +52,7 @@ describe('PipelineDrainer', () => {
       onGenerate: async (job) => {
         generated.push(job.id);
       },
+      onPromote: async () => {},
       maxExtractionConcurrent: 2,
       maxGenerationConcurrent: 2,
       pollIntervalMs: 100,
@@ -63,5 +65,30 @@ describe('PipelineDrainer', () => {
     expect(generated).toContain('job-2');
     const jobs = getJobsByStatus('generating') as Array<{ id: string }>;
     expect(jobs.some((j) => j.id === 'job-2')).toBe(true);
+  });
+
+  it('picks up generated jobs and calls onPromote', async () => {
+    createIngestionJob('job-3', '/uploads/job-3.pdf', 'job-3.pdf');
+    updateIngestionJob('job-3', { status: 'generated' });
+
+    const promoted: string[] = [];
+    const drainer = new PipelineDrainer({
+      onExtract: async () => {},
+      onGenerate: async () => {},
+      onPromote: async (job) => {
+        promoted.push(job.id);
+      },
+      maxExtractionConcurrent: 2,
+      maxGenerationConcurrent: 2,
+      pollIntervalMs: 100,
+    });
+
+    drainer.drain();
+    await vi.advanceTimersByTimeAsync(150);
+    drainer.stop();
+
+    expect(promoted).toContain('job-3');
+    const jobs = getJobsByStatus('promoting') as Array<{ id: string }>;
+    expect(jobs.some((j) => j.id === 'job-3')).toBe(true);
   });
 });

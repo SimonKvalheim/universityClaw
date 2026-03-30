@@ -30,10 +30,10 @@ export class FileWatcher {
 
   async start(): Promise<void> {
     this.watcher = chokidar.watch(this.watchDir, {
-      ignoreInitial: true,
+      ignoreInitial: false,
       awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 },
       depth: 10,
-      ignored: /[\\/]\.processed[\\/]/,
+      ignored: [/[\\/]\.processed[\\/]/, /[\\/]processed[\\/]/],
     });
     this.watcher.on('add', (filePath: string) => {
       const fileName = filePath.split('/').pop() || '';

@@ -65,6 +65,23 @@ export function recoverStaleJobs(opts: RecoveryOpts): RecoveryResult {
     result.generating++;
   }
 
+  // Reset stale promoting → generated (retry promotion)
+  const stalePromoting = getStaleJobs(
+    'promoting',
+    opts.generatingThresholdMin,
+  ) as IngestionJob[];
+  for (const job of stalePromoting) {
+    logger.warn(
+      { jobId: job.id, sourcePath: job.source_path },
+      'Recovering stale promoting job → generated',
+    );
+    updateIngestionJob(job.id, {
+      status: 'generated',
+      error: 'Reset: stale promoting state on startup',
+    });
+    result.generating++;
+  }
+
   if (result.extracting > 0 || result.generating > 0) {
     logger.info({ ...result }, 'Recovered stale jobs on startup');
   }

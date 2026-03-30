@@ -13,6 +13,7 @@ export interface JobRow {
 export interface PipelineDrainerOpts {
   onExtract: (job: JobRow) => Promise<void>;
   onGenerate: (job: JobRow) => Promise<void>;
+  onPromote: (job: JobRow) => Promise<void>;
   onComplete?: (job: JobRow) => Promise<void>;
   maxExtractionConcurrent: number;
   maxGenerationConcurrent: number;
@@ -46,6 +47,7 @@ export class PipelineDrainer {
   async tick(): Promise<void> {
     await this.drainExtractions();
     await this.drainGenerations();
+    await this.drainPromotions();
   }
 
   async drainExtractions(): Promise<void> {
@@ -90,6 +92,19 @@ export class PipelineDrainer {
         .finally(() => {
           this.activeGenerations--;
         });
+    }
+  }
+
+  async drainPromotions(): Promise<void> {
+    const generated = getJobsByStatus('generated') as JobRow[];
+    for (const job of generated) {
+      updateIngestionJob(job.id, { status: 'promoting' });
+      try {
+        await this.opts.onPromote(job);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        updateIngestionJob(job.id, { status: 'failed', error: msg });
+      }
     }
   }
 }

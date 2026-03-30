@@ -77,6 +77,26 @@ describe('recoverStaleJobs', () => {
     expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
   });
 
+  it('resets stale promoting jobs to generated', () => {
+    const id = 'stale-promoting-' + Date.now();
+    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
+    updateIngestionJob(id, { status: 'promoting' });
+    getDb()
+      .prepare(
+        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
+      )
+      .run(id);
+
+    const recovered = recoverStaleJobs({
+      extractingThresholdMin: 10,
+      generatingThresholdMin: 45,
+    });
+    expect(recovered.generating).toBeGreaterThan(0);
+
+    const jobs = getJobsByStatus('generated');
+    expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
+  });
+
   it('does not reset recent jobs', () => {
     const id = 'recent-generating-' + Date.now();
     createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');

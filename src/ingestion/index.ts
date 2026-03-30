@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
@@ -7,6 +6,9 @@ import { AgentProcessor } from './agent-processor.js';
 import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
 import { recoverStaleJobs } from './job-recovery.js';
+import { readManifest, inferManifest } from './manifest.js';
+import { promoteNote } from './promoter.js';
+import { waitForSentinel, sendIpcClose, cleanupSentinel } from './sentinel.js';
 import {
   createIngestionJob,
   getIngestionJobByPath,
@@ -14,7 +16,12 @@ import {
 } from '../db.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
-import { MAX_EXTRACTION_CONCURRENT, EXTRACTIONS_DIR } from '../config.js';
+import {
+  MAX_EXTRACTION_CONCURRENT,
+  EXTRACTIONS_DIR,
+  SENTINEL_TIMEOUT,
+  PROCESSED_DIR,
+} from '../config.js';
 
 export interface IngestionPipelineOpts {
   uploadDir: string;
@@ -47,7 +54,7 @@ export class IngestionPipeline {
     this.drainer = new PipelineDrainer({
       onExtract: (job) => this.handleExtraction(job),
       onGenerate: (job) => this.handleGeneration(job),
-      onComplete: (job) => this.handleCleanup(job),
+      onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
       maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 3,
       pollIntervalMs: 5000,
@@ -58,27 +65,29 @@ export class IngestionPipeline {
     const relativePath = relative(this.uploadDir, filePath);
     const fileName = basename(filePath);
 
-    // Skip files that already have a completed or in-progress job
     const existing = getIngestionJobByPath(filePath);
     if (existing) {
       if (
         existing.status === 'completed' ||
         existing.status === 'extracting' ||
-        existing.status === 'generating'
+        existing.status === 'generating' ||
+        existing.status === 'promoting'
       ) {
         logger.info(
           `ingestion: Skipping (already ${existing.status}): ${relativePath}`,
         );
         return;
       }
-      // Reset failed job for retry
       if (existing.status === 'failed') {
         updateIngestionJob(existing.id, { status: 'pending', error: null });
         logger.info(`ingestion: Retrying failed job: ${relativePath}`);
         return;
       }
-      // Already pending or extracted — skip
-      if (existing.status === 'pending' || existing.status === 'extracted') {
+      if (
+        existing.status === 'pending' ||
+        existing.status === 'extracted' ||
+        existing.status === 'generated'
+      ) {
         logger.info(
           `ingestion: Skipping (already ${existing.status}): ${relativePath}`,
         );
@@ -87,12 +96,7 @@ export class IngestionPipeline {
     }
 
     const jobId = randomUUID();
-
-    logger.info(
-      { jobId, relativePath },
-      `ingestion: Enqueuing: ${relativePath}`,
-    );
-
+    logger.info({ jobId, relativePath }, `ingestion: Enqueuing: ${relativePath}`);
     createIngestionJob(jobId, filePath, fileName);
   }
 
@@ -100,20 +104,14 @@ export class IngestionPipeline {
     const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
 
-    logger.info(
-      { jobId: job.id, relativePath },
-      `ingestion: Extracting: ${relativePath}`,
-    );
+    logger.info({ jobId: job.id, relativePath }, `ingestion: Extracting: ${relativePath}`);
 
     const result = await this.extractor.extract(job.id, job.source_path);
 
     // Copy original file to vault attachments
     const attachmentDir = join('attachments', '_unsorted');
     await mkdir(join(this.vaultDir, attachmentDir), { recursive: true });
-    await copyFile(
-      job.source_path,
-      join(this.vaultDir, attachmentDir, fileName),
-    );
+    await copyFile(job.source_path, join(this.vaultDir, attachmentDir, fileName));
 
     // Copy figures to vault attachments if any exist
     if (result.figures.length > 0) {
@@ -124,58 +122,38 @@ export class IngestionPipeline {
           join(result.figuresDir, fig),
           join(figuresAttachDir, fig),
         ).catch(() => {
-          // Non-fatal: log and continue
           logger.warn({ jobId: job.id, figure: fig }, 'Failed to copy figure');
         });
       }
     }
 
-    // Update job with extraction path
     updateIngestionJob(job.id, {
       status: 'extracted',
       extraction_path: result.contentPath.replace(/\/content\.md$/, ''),
     });
 
-    logger.info(
-      { jobId: job.id, relativePath },
-      `ingestion: Extracted: ${relativePath}`,
-    );
+    logger.info({ jobId: job.id, relativePath }, `ingestion: Extracted: ${relativePath}`);
   }
 
   async handleGeneration(job: JobRow): Promise<void> {
     const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
-    const draftId = randomUUID();
 
-    logger.info(
-      { jobId: job.id, relativePath },
-      `ingestion: Generating: ${relativePath}`,
-    );
+    logger.info({ jobId: job.id, relativePath }, `ingestion: Generating: ${relativePath}`);
 
-    // Ensure drafts directory exists
-    await mkdir(join(this.vaultDir, 'drafts'), { recursive: true });
+    const draftsDir = join(this.vaultDir, 'drafts');
+    await mkdir(draftsDir, { recursive: true });
 
     const extractionPath = job.extraction_path;
     if (!extractionPath) {
       throw new Error(`No extraction path for job ${job.id}`);
     }
 
-    // Minimal context — no path parsing, agent determines metadata from content
-    const context = {
-      semester: null,
-      year: null,
-      courseCode: null,
-      courseName: null,
-      type: null,
-      fileName,
-    };
-
-    // Process with agent
+    // Process with agent (multi-note, multi-turn)
     const result = await this.agentProcessor.process(
       extractionPath,
       fileName,
-      context,
-      draftId,
+      job.id,
       this.reviewAgentGroup,
     );
 
@@ -183,45 +161,77 @@ export class IngestionPipeline {
       throw new Error(result.error || 'Agent processing failed');
     }
 
-    // Validate the agent actually wrote the draft file with _targetPath
-    const draftPath = join(this.vaultDir, 'drafts', `${draftId}.md`);
-    let draftContent: string;
+    // Wait for sentinel file indicating agent completion
+    const sentinelPath = join(draftsDir, `${job.id}-complete`);
+    const sentinelFound = await waitForSentinel(sentinelPath, SENTINEL_TIMEOUT);
+
+    if (!sentinelFound) {
+      logger.warn({ jobId: job.id }, 'Sentinel timeout — sending IPC close');
+      sendIpcClose(job.id, join(this.reviewAgentGroup.folder, '..'));
+      throw new Error('Agent did not complete within sentinel timeout');
+    }
+
+    updateIngestionJob(job.id, { status: 'generated' });
+
+    logger.info({ jobId: job.id, relativePath }, `ingestion: Generated: ${relativePath}`);
+  }
+
+  async handlePromotion(job: JobRow): Promise<void> {
+    const fileName = job.source_filename;
+    const relativePath = relative(this.uploadDir, job.source_path);
+    const draftsDir = join(this.vaultDir, 'drafts');
+
+    logger.info({ jobId: job.id, relativePath }, `ingestion: Promoting: ${relativePath}`);
+
+    // Read or infer manifest
+    const manifest = readManifest(draftsDir, job.id) ?? inferManifest(draftsDir, job.id);
+
+    // Promote source note
+    const promotedPaths: string[] = [];
+    if (manifest.source_note) {
+      const sourceDraftPath = join(draftsDir, manifest.source_note);
+      try {
+        const promoted = promoteNote(sourceDraftPath, this.vaultDir, job.id);
+        promotedPaths.push(promoted);
+        logger.info({ jobId: job.id, promoted }, 'Promoted source note');
+      } catch (err) {
+        logger.warn({ jobId: job.id, file: manifest.source_note, err }, 'Failed to promote source note');
+      }
+    }
+
+    // Promote concept notes
+    for (const conceptFile of manifest.concept_notes) {
+      const conceptDraftPath = join(draftsDir, conceptFile);
+      try {
+        const promoted = promoteNote(conceptDraftPath, this.vaultDir, job.id);
+        promotedPaths.push(promoted);
+        logger.info({ jobId: job.id, promoted }, 'Promoted concept note');
+      } catch (err) {
+        logger.warn({ jobId: job.id, file: conceptFile, err }, 'Failed to promote concept note');
+      }
+    }
+
+    // Move source file to processed/
+    await mkdir(PROCESSED_DIR, { recursive: true });
     try {
-      draftContent = readFileSync(draftPath, 'utf-8');
+      await rename(job.source_path, join(PROCESSED_DIR, `${job.id}-${fileName}`));
     } catch {
-      throw new Error(
-        `Agent completed but draft file not found at ${draftPath}`,
-      );
+      logger.warn({ jobId: job.id }, 'Failed to move source to processed/');
     }
 
-    if (!draftContent.includes('_targetPath')) {
-      throw new Error(
-        `Draft file missing _targetPath frontmatter field at ${draftPath}`,
-      );
-    }
-
-    // Move original out of upload folder
-    const processedDir = join(this.uploadDir, '.processed');
-    await mkdir(processedDir, { recursive: true });
-    await rename(job.source_path, join(processedDir, `${job.id}-${fileName}`));
+    // Cleanup
+    cleanupSentinel(draftsDir, job.id);
+    await this.extractor.cleanup(job.id);
+    await this.pruneEmptyDirs(dirname(job.source_path));
 
     updateIngestionJob(job.id, { status: 'completed' });
 
-    // Clean up extraction artifacts
-    await this.extractor.cleanup(job.id);
-
-    // Prune empty directories left behind in upload/
-    await this.pruneEmptyDirs(dirname(job.source_path));
-
     logger.info(
-      { jobId: job.id, draftId, relativePath },
-      `ingestion: Completed: ${relativePath} → draft ${draftId}`,
+      { jobId: job.id, relativePath, notes: promotedPaths.length },
+      `ingestion: Completed: ${relativePath} → ${promotedPaths.length} notes promoted`,
     );
   }
 
-  /**
-   * Walk up from dir, removing empty directories until we hit uploadDir.
-   */
   private async pruneEmptyDirs(dir: string): Promise<void> {
     let current = dir;
     while (current !== this.uploadDir && current.startsWith(this.uploadDir)) {
@@ -239,20 +249,11 @@ export class IngestionPipeline {
     }
   }
 
-  /**
-   * Clean up after a job completes.
-   */
-  private async handleCleanup(job: {
-    id: string;
-    source_path: string;
-  }): Promise<void> {
-    await this.extractor.cleanup(job.id);
-    await this.pruneEmptyDirs(dirname(job.source_path));
-  }
-
   async start(): Promise<void> {
     await mkdir(this.uploadDir, { recursive: true });
     await mkdir(EXTRACTIONS_DIR, { recursive: true });
+    await mkdir(PROCESSED_DIR, { recursive: true });
+    await mkdir(join(this.vaultDir, 'drafts'), { recursive: true });
 
     recoverStaleJobs({
       extractingThresholdMin: 15,
