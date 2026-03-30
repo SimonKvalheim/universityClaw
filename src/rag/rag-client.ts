@@ -1,3 +1,5 @@
+import { logger } from '../logger.js';
+
 export interface RagConfig {
   serverUrl: string;
   /** @deprecated kept for indexer compatibility, not used by HTTP client */
@@ -57,7 +59,8 @@ export class RagClient {
           ? data
           : ((data as Record<string, unknown>).response ?? '');
       return { answer: String(answer).trim(), sources: [] };
-    } catch {
+    } catch (err) {
+      logger.warn({ err }, 'RAG query failed');
       return { answer: '', sources: [] };
     }
   }

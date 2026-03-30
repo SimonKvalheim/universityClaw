@@ -173,16 +173,25 @@ export class IngestionPipeline {
     const dataDir = process.cwd();
     const sentinelPath = join(draftsDir, `${job.id}-complete`);
 
+    // Shared abort controller — either side can signal the other to stop.
+    const ac = new AbortController();
+
     // Validation loop — runs concurrently with the container.
     // Polls for sentinel, validates drafts, sends IPC corrections or _close.
     const validationLoop = async (): Promise<void> => {
       const maxAttempts = 3;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (ac.signal.aborted) return;
+
         const sentinelFound = await waitForSentinel(
           sentinelPath,
           SENTINEL_TIMEOUT,
+          1000,
+          ac.signal,
         );
+
+        if (ac.signal.aborted) return;
 
         if (!sentinelFound) {
           logger.warn(
@@ -233,6 +242,8 @@ export class IngestionPipeline {
           );
           await new Promise((r) => setTimeout(r, 500));
           sendIpcClose(job.id, dataDir);
+          // Signal the container to stop waiting
+          ac.abort();
           throw new Error(
             `Draft validation failed after ${maxAttempts} attempts: ${validation.errors.map((e) => e.message).join('; ')}`,
           );
@@ -252,18 +263,31 @@ export class IngestionPipeline {
     };
 
     // Run container and validation concurrently.
-    // validationLoop sends _close when done, which causes the container to exit,
-    // which causes process() to return.
-    const [result] = await Promise.all([
-      this.agentProcessor.process(
-        extractionPath,
-        fileName,
-        job.id,
-        this.reviewAgentGroup,
-      ),
-      validationLoop(),
+    // When the container exits (success or error), abort the validation loop.
+    // When validation fails terminally, it aborts before throwing.
+    const containerPromise = this.agentProcessor
+      .process(extractionPath, fileName, job.id, this.reviewAgentGroup)
+      .finally(() => ac.abort());
+
+    const validationPromise = validationLoop();
+
+    // Use allSettled so we can inspect both outcomes regardless of which threw.
+    const [containerSettled, validationSettled] = await Promise.allSettled([
+      containerPromise,
+      validationPromise,
     ]);
 
+    // If the container errored, that takes priority.
+    if (containerSettled.status === 'rejected') {
+      throw containerSettled.reason;
+    }
+
+    // If validation errored (and the container didn't), surface that.
+    if (validationSettled.status === 'rejected') {
+      throw validationSettled.reason;
+    }
+
+    const result = containerSettled.value;
     if (result.status === 'error') {
       throw new Error(result.error || 'Agent processing failed');
     }
@@ -380,7 +404,7 @@ export class IngestionPipeline {
   }
 
   async stop(): Promise<void> {
-    this.drainer.stop();
+    await this.drainer.stop();
     await this.watcher.stop();
   }
 }

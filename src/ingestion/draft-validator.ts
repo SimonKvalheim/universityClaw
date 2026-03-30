@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../vault/frontmatter.js';
+import { toKebabCase } from './utils.js';
 
 export interface ValidationIssue {
   severity: 'must-fix' | 'should-fix';
@@ -24,15 +25,6 @@ export interface ValidationResult {
 interface NoteManifest {
   source_note: string;
   concept_notes: string[];
-}
-
-function toKebabCase(str: string): string {
-  return str
-    .toLowerCase()
-    .replace(/[()[\]{}'"]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
 }
 
 /**

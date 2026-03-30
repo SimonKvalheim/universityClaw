@@ -1,18 +1,20 @@
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
 
 /**
  * Polls for a sentinel file. Returns true if found, false on timeout.
+ * If an AbortSignal is provided and aborted, returns false immediately.
  */
 export async function waitForSentinel(
   sentinelPath: string,
   timeoutMs: number,
   pollIntervalMs = 1000,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    if (signal?.aborted) return false;
     if (existsSync(sentinelPath)) return true;
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
@@ -21,22 +23,19 @@ export async function waitForSentinel(
 
 /**
  * Writes the IPC _close sentinel to signal the container to exit.
+ * Throws on failure so callers know the close signal was not delivered.
  */
-export function sendIpcClose(ipcNamespace: string, _dataDir?: string): void {
+export function sendIpcClose(ipcNamespace: string, dataDir: string): void {
   const closePath = join(
-    DATA_DIR,
+    dataDir,
     'ipc',
     'ingestion',
     ipcNamespace,
     'input',
     '_close',
   );
-  try {
-    writeFileSync(closePath, '', { flag: 'w' });
-    logger.info({ ipcNamespace }, 'Sent IPC close sentinel');
-  } catch (err) {
-    logger.warn({ ipcNamespace, err }, 'Failed to send IPC close sentinel');
-  }
+  writeFileSync(closePath, '', { flag: 'w' });
+  logger.info({ ipcNamespace }, 'Sent IPC close sentinel');
 }
 
 /**
@@ -44,10 +43,10 @@ export function sendIpcClose(ipcNamespace: string, _dataDir?: string): void {
  */
 export function sendIpcMessage(
   ipcNamespace: string,
-  _dataDir: string,
+  dataDir: string,
   text: string,
 ): void {
-  const inputDir = join(DATA_DIR, 'ipc', 'ingestion', ipcNamespace, 'input');
+  const inputDir = join(dataDir, 'ipc', 'ingestion', ipcNamespace, 'input');
   try {
     mkdirSync(inputDir, { recursive: true });
     writeFileSync(

@@ -25,6 +25,7 @@ export class PipelineDrainer {
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeExtractions = 0;
   private activeGenerations = 0;
+  private inFlight: Set<Promise<void>> = new Set();
 
   constructor(opts: PipelineDrainerOpts) {
     this.opts = opts;
@@ -37,10 +38,13 @@ export class PipelineDrainer {
     }, this.opts.pollIntervalMs);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
     }
   }
 
@@ -60,7 +64,7 @@ export class PipelineDrainer {
     for (const job of batch) {
       updateIngestionJob(job.id, { status: 'extracting' });
       this.activeExtractions++;
-      this.opts
+      const p = this.opts
         .onExtract(job)
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -68,7 +72,9 @@ export class PipelineDrainer {
         })
         .finally(() => {
           this.activeExtractions--;
+          this.inFlight.delete(p);
         });
+      this.inFlight.add(p);
     }
   }
 
@@ -83,7 +89,7 @@ export class PipelineDrainer {
 
       updateIngestionJob(job.id, { status: 'generating' });
       this.activeGenerations++;
-      this.opts
+      const p = this.opts
         .onGenerate(job)
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -91,7 +97,9 @@ export class PipelineDrainer {
         })
         .finally(() => {
           this.activeGenerations--;
+          this.inFlight.delete(p);
         });
+      this.inFlight.add(p);
     }
   }
 

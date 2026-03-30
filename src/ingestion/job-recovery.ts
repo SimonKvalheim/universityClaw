@@ -9,6 +9,7 @@ interface RecoveryOpts {
 interface RecoveryResult {
   extracting: number;
   generating: number;
+  promoting: number;
 }
 
 interface IngestionJob {
@@ -18,7 +19,7 @@ interface IngestionJob {
 }
 
 export function recoverStaleJobs(opts: RecoveryOpts): RecoveryResult {
-  const result: RecoveryResult = { extracting: 0, generating: 0 };
+  const result: RecoveryResult = { extracting: 0, generating: 0, promoting: 0 };
 
   // Reset stale extracting → pending (retry extraction from scratch)
   const staleExtracting = getStaleJobs(
@@ -79,10 +80,10 @@ export function recoverStaleJobs(opts: RecoveryOpts): RecoveryResult {
       status: 'generated',
       error: 'Reset: stale promoting state on startup',
     });
-    result.generating++;
+    result.promoting++;
   }
 
-  if (result.extracting > 0 || result.generating > 0) {
+  if (result.extracting > 0 || result.generating > 0 || result.promoting > 0) {
     logger.info({ ...result }, 'Recovered stale jobs on startup');
   }
 

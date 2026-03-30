@@ -1,15 +1,7 @@
 import { readFileSync, renameSync, existsSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../vault/frontmatter.js';
-
-function toKebabCase(str: string): string {
-  return str
-    .toLowerCase()
-    .replace(/[()[\]{}'"]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-}
+import { toKebabCase } from './utils.js';
 
 export function promoteNote(
   draftPath: string,

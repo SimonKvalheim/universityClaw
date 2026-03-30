@@ -39,7 +39,7 @@ export class FileWatcher {
       const fileName = filePath.split('/').pop() || '';
       if (IGNORED_FILES.has(fileName.toLowerCase())) return;
       const ext = extname(fileName).toLowerCase();
-      if (!ext || SUPPORTED_EXTENSIONS.has(ext)) {
+      if (ext && SUPPORTED_EXTENSIONS.has(ext)) {
         this.onFile(filePath);
       }
     });

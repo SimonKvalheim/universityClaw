@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { waitForSentinel } from './sentinel.js';
+import {
+  waitForSentinel,
+  sendIpcClose,
+  sendIpcMessage,
+} from './sentinel.js';
 
 const TMP = join(import.meta.dirname, '../../.test-tmp/sentinel');
 
@@ -26,5 +30,49 @@ describe('waitForSentinel', () => {
 
     const result = await waitForSentinel(sentinelPath, 200, 50);
     expect(result).toBe(false);
+  });
+});
+
+describe('sendIpcClose', () => {
+  beforeEach(() => {
+    rmSync(TMP, { recursive: true, force: true });
+    mkdirSync(TMP, { recursive: true });
+  });
+
+  it('writes _close sentinel file using the provided dataDir', () => {
+    const ns = 'test-job';
+    const inputDir = join(TMP, 'ipc', 'ingestion', ns, 'input');
+    mkdirSync(inputDir, { recursive: true });
+
+    sendIpcClose(ns, TMP);
+
+    expect(existsSync(join(inputDir, '_close'))).toBe(true);
+  });
+
+  it('throws when the directory does not exist', () => {
+    expect(() => sendIpcClose('nope', join(TMP, 'no-such-dir'))).toThrow();
+  });
+});
+
+describe('sendIpcMessage', () => {
+  beforeEach(() => {
+    rmSync(TMP, { recursive: true, force: true });
+    mkdirSync(TMP, { recursive: true });
+  });
+
+  it('writes a JSON message file using the provided dataDir', () => {
+    const ns = 'test-job';
+    sendIpcMessage(ns, TMP, 'hello agent');
+
+    const inputDir = join(TMP, 'ipc', 'ingestion', ns, 'input');
+    expect(existsSync(inputDir)).toBe(true);
+
+    const files = require('fs')
+      .readdirSync(inputDir)
+      .filter((f: string) => f.endsWith('.json'));
+    expect(files).toHaveLength(1);
+
+    const content = JSON.parse(readFileSync(join(inputDir, files[0]), 'utf-8'));
+    expect(content).toEqual({ type: 'message', text: 'hello agent' });
   });
 });

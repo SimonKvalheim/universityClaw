@@ -91,7 +91,7 @@ describe('recoverStaleJobs', () => {
       extractingThresholdMin: 10,
       generatingThresholdMin: 45,
     });
-    expect(recovered.generating).toBeGreaterThan(0);
+    expect(recovered.promoting).toBeGreaterThan(0);
 
     const jobs = getJobsByStatus('generated');
     expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
