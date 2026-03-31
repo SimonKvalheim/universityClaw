@@ -17,15 +17,15 @@ import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
-const execFileAsync = promisify(execFile);
-
-type FilesContext = FileFlavor<Context>;
 import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+
+const execFileAsync = promisify(execFile);
+type FilesContext = FileFlavor<Context>;
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -331,18 +331,37 @@ export class TelegramChannel implements Channel {
 
         try {
           // Convert OGG Opus to WAV (whisper.cpp needs WAV input)
-          await execFileAsync('ffmpeg', [
-            '-y', '-i', localPath,
-            '-ar', '16000', '-ac', '1', '-f', 'wav', wavPath,
-          ], { timeout: 15_000 });
+          await execFileAsync(
+            'ffmpeg',
+            [
+              '-y',
+              '-i',
+              localPath,
+              '-ar',
+              '16000',
+              '-ac',
+              '1',
+              '-f',
+              'wav',
+              wavPath,
+            ],
+            { timeout: 15_000 },
+          );
 
           // Transcribe with NB-Whisper
-          const { stdout } = await execFileAsync(WHISPER_BIN_PATH, [
-            '-m', WHISPER_MODEL_PATH,
-            '-l', 'no',
-            '-f', wavPath,
-            '--no-timestamps',
-          ], { timeout: 60_000 });
+          const { stdout } = await execFileAsync(
+            WHISPER_BIN_PATH,
+            [
+              '-m',
+              WHISPER_MODEL_PATH,
+              '-l',
+              'no',
+              '-f',
+              wavPath,
+              '--no-timestamps',
+            ],
+            { timeout: 60_000 },
+          );
 
           const text = stdout.trim();
           if (text) {
@@ -353,7 +372,10 @@ export class TelegramChannel implements Channel {
           fs.unlink(wavPath, () => {});
         }
       } catch (err) {
-        logger.error({ err, chatJid: `tg:${ctx.chat.id}` }, 'Voice transcription failed');
+        logger.error(
+          { err, chatJid: `tg:${ctx.chat.id}` },
+          'Voice transcription failed',
+        );
       }
 
       // Store the transcribed (or fallback) text as a normal message

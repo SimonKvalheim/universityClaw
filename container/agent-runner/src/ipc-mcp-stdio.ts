@@ -338,6 +338,9 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 );
 
 const AUDIO_DIR = '/workspace/group/audio';
+// Validation constants duplicated from src/voice-validation.ts
+// (container agent-runner has a separate build and cannot import from host src/)
+const TTS_MAX_TEXT_LENGTH = 5000;
 
 server.tool(
   'synthesize_speech',
@@ -361,12 +364,12 @@ server.tool(
         isError: true,
       };
     }
-    if (args.text.length > 5000) {
+    if (args.text.length > TTS_MAX_TEXT_LENGTH) {
       return {
         content: [
           {
             type: 'text' as const,
-            text: `Error: text too long (${args.text.length} chars, max 5000).`,
+            text: `Error: text too long (${args.text.length} chars, max ${TTS_MAX_TEXT_LENGTH}).`,
           },
         ],
         isError: true,
