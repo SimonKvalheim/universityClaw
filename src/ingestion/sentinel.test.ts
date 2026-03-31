@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import {
-  waitForSentinel,
-  sendIpcClose,
-  sendIpcMessage,
-} from './sentinel.js';
+import { waitForSentinel, sendIpcClose, sendIpcMessage } from './sentinel.js';
 
 const TMP = join(import.meta.dirname, '../../.test-tmp/sentinel');
 

@@ -1,16 +1,31 @@
+import fs from 'fs';
 import https from 'https';
-import { Api, Bot } from 'grammy';
+import os from 'os';
+import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { Api, Bot, Context, InputFile } from 'grammy';
+import { FileFlavor, hydrateFiles } from '@grammyjs/files';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import {
+  ASSISTANT_NAME,
+  TRIGGER_PATTERN,
+  WHISPER_BIN_PATH,
+  WHISPER_MODEL_PATH,
+} from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
+
 import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+
+const execFileAsync = promisify(execFile);
+type FilesContext = FileFlavor<Context>;
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -136,7 +151,7 @@ export async function sendPoolMessage(
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
-  private bot: Bot | null = null;
+  private bot: Bot<FilesContext> | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
 
@@ -146,11 +161,14 @@ export class TelegramChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    this.bot = new Bot(this.botToken, {
+    this.bot = new Bot<FilesContext>(this.botToken, {
       client: {
         baseFetchConfig: { agent: https.globalAgent, compress: true },
       },
     });
+
+    // Enable file downloads for voice transcription
+    this.bot.api.config.use(hydrateFiles(this.botToken));
 
     // Command to get chat ID (useful for registration)
     this.bot.command('chatid', (ctx) => {
@@ -295,7 +313,74 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
+    this.bot.on('message:voice', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      let transcribedText = '[Voice message (transcription failed)]';
+
+      try {
+        const file = await ctx.getFile();
+        const localPath = path.join(
+          os.tmpdir(),
+          `voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.oga`,
+        );
+        await file.download(localPath);
+        const wavPath = localPath.replace(/\.oga$/, '.wav');
+
+        try {
+          // Convert OGG Opus to WAV (whisper.cpp needs WAV input)
+          await execFileAsync(
+            'ffmpeg',
+            [
+              '-y',
+              '-i',
+              localPath,
+              '-ar',
+              '16000',
+              '-ac',
+              '1',
+              '-f',
+              'wav',
+              wavPath,
+            ],
+            { timeout: 15_000 },
+          );
+
+          // Transcribe with NB-Whisper
+          const { stdout } = await execFileAsync(
+            WHISPER_BIN_PATH,
+            [
+              '-m',
+              WHISPER_MODEL_PATH,
+              '-l',
+              'no',
+              '-f',
+              wavPath,
+              '--no-timestamps',
+            ],
+            { timeout: 60_000 },
+          );
+
+          const text = stdout.trim();
+          if (text) {
+            transcribedText = `[Voice]: ${text}`;
+          }
+        } finally {
+          fs.unlink(localPath, () => {});
+          fs.unlink(wavPath, () => {});
+        }
+      } catch (err) {
+        logger.error(
+          { err, chatJid: `tg:${ctx.chat.id}` },
+          'Voice transcription failed',
+        );
+      }
+
+      // Store the transcribed (or fallback) text as a normal message
+      storeNonText(ctx, transcribedText);
+    });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
@@ -367,6 +452,27 @@ export class TelegramChannel implements Channel {
       );
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+  }
+
+  async sendVoice(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      await this.bot.api.sendVoice(numericId, new InputFile(filePath), {
+        caption,
+      });
+      logger.info({ jid, filePath }, 'Telegram voice message sent');
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to send Telegram voice');
     }
   }
 

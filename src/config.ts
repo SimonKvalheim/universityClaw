@@ -132,3 +132,16 @@ export const SENTINEL_TIMEOUT = Number(
   process.env.SENTINEL_TIMEOUT ?? 10 * 60 * 1000, // 10 minutes
 );
 export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
+
+// Voice: local STT (whisper.cpp + NB-Whisper)
+export const WHISPER_BIN_PATH =
+  process.env.WHISPER_BIN_PATH || '/opt/homebrew/bin/whisper-cpp';
+export const WHISPER_MODEL_PATH =
+  process.env.WHISPER_MODEL_PATH ||
+  path.join(HOME_DIR, '.cache', 'whisper', 'nb-whisper-large-q5_0.bin');
+
+// Voice: local TTS (Voxtral via MLX)
+export const VOXTRAL_TTS_PORT = parseInt(
+  process.env.VOXTRAL_TTS_PORT || '8771',
+  10,
+);
