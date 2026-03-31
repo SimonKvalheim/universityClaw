@@ -1,7 +1,7 @@
 export const TTS_MAX_TEXT_LENGTH = 5000;
 export const TTS_VALID_LANGUAGES = ['en', 'de', 'it'] as const;
 export type TtsLanguage = (typeof TTS_VALID_LANGUAGES)[number];
-export const TTS_DEFAULT_VOICE = 'jessica';
+export const TTS_DEFAULT_VOICE = 'neutral_female';
 
 export function validateTtsText(text: string): string | null {
   if (!text || text.trim().length === 0) return 'Text cannot be empty';

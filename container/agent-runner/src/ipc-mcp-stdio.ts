@@ -353,8 +353,8 @@ server.tool(
       .describe('Language for synthesis: en (English), de (German), it (Italian)'),
     voice: z
       .string()
-      .default('jessica')
-      .describe('Voxtral preset voice name (default: jessica)'),
+      .default('neutral_female')
+      .describe('Voxtral preset voice name (e.g., neutral_female, casual_male, cheerful_female, de_female)'),
   },
   async (args) => {
     // Validate text
@@ -391,9 +391,9 @@ server.tool(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'voxtral-4b',
+          model: 'mlx-community/Voxtral-4B-TTS-2603-mlx-4bit',
           input: args.text,
-          voice: args.voice ?? 'jessica',
+          voice: args.voice ?? 'neutral_female',
           language: args.language ?? 'en',
           response_format: 'wav',
         }),

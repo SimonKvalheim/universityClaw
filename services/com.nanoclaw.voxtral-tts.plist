@@ -6,13 +6,10 @@
     <string>com.nanoclaw.voxtral-tts</string>
     <key>ProgramArguments</key>
     <array>
-        <!-- Replace with actual command during setup. Example for mlx-audio: -->
-        <string>/usr/bin/env</string>
-        <string>python3</string>
+        <!-- Uses project venv; model selected per-request (mlx-community/Voxtral-4B-TTS-2603-mlx-4bit) -->
+        <string>/Users/simonkvalheim/Documents/01 - Projects/universityClaw/.venv/bin/python3</string>
         <string>-m</string>
         <string>mlx_audio.server</string>
-        <string>--model</string>
-        <string>mistralai/Voxtral-4B-TTS-2603</string>
         <string>--port</string>
         <string>8771</string>
     </array>
