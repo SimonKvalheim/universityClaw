@@ -128,9 +128,10 @@ export const WEB_CHANNEL_PORT = parseInt(
   10,
 );
 
-export const SENTINEL_TIMEOUT = Number(
-  process.env.SENTINEL_TIMEOUT ?? 10 * 60 * 1000, // 10 minutes
-);
+export const SENTINEL_TIMEOUT = parseInt(
+  process.env.SENTINEL_TIMEOUT || '600000',
+  10,
+); // 10min default
 export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
 
 // Voice: local STT (whisper.cpp + NB-Whisper)
