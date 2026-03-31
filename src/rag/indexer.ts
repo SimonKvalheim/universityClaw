@@ -2,8 +2,14 @@ import { watch, type FSWatcher } from 'chokidar';
 import { readFileSync } from 'fs';
 import { relative, resolve } from 'path';
 import { logger } from '../logger.js';
+import {
+  getTrackedDoc,
+  upsertTrackedDoc,
+  deleteTrackedDoc,
+} from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
+import { computeDocId } from './doc-id.js';
 
 /** Paths relative to vaultDir that should be indexed. */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
@@ -12,6 +18,7 @@ export class RagIndexer {
   private vaultDir: string;
   private ragClient: RagClient;
   private watcher: FSWatcher | null = null;
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(vaultDir: string, ragClient: RagClient) {
     this.vaultDir = resolve(vaultDir);
@@ -25,8 +32,9 @@ export class RagIndexer {
       awaitWriteFinish: { stabilityThreshold: 500 },
       ignored: [/(^|[/\\])\./],
     });
-    this.watcher.on('add', (fp) => this.indexFile(fp).catch(() => {}));
-    this.watcher.on('change', (fp) => this.indexFile(fp).catch(() => {}));
+    this.watcher.on('add', (fp) => this.enqueue(() => this.indexFile(fp)));
+    this.watcher.on('change', (fp) => this.enqueue(() => this.indexFile(fp)));
+    this.watcher.on('unlink', (fp) => this.enqueue(() => this.handleUnlink(fp)));
   }
 
   stop(): void {
@@ -34,12 +42,16 @@ export class RagIndexer {
     this.watcher = null;
   }
 
+  /** Serialize operations to avoid overwhelming LightRAG. */
+  private enqueue(fn: () => Promise<void>): void {
+    this.queue = this.queue.then(fn, fn);
+  }
+
   async indexFile(filePath: string): Promise<void> {
     if (!filePath.endsWith('.md')) return;
 
     const relPath = relative(this.vaultDir, filePath);
 
-    // Allowlist check: must be under one of ALLOWED_PATHS
     const isAllowed = ALLOWED_PATHS.some(
       (p) => relPath.startsWith(p + '/') || relPath.startsWith(p + '\\'),
     );
@@ -69,10 +81,53 @@ export class RagIndexer {
     const prefix = `[${parts.join(' | ')}]`;
     const indexed = `${prefix}\nSource path: ${relPath}\n\n${body}`;
 
+    // Compute hash and check tracker.
+    // Note: parseFrontmatter calls JS .trim() on body content, which strips
+    // Unicode whitespace (U+00A0) that Python's strip() keeps. This is a
+    // pre-existing behavior — the hash we compute here is based on what we
+    // actually send to LightRAG, so it stays consistent for our tracking
+    // purposes even if it diverges from what LightRAG would compute on the
+    // raw file content.
+    const { hash, docId } = computeDocId(indexed);
+    const tracked = getTrackedDoc(relPath);
+
+    if (tracked && tracked.content_hash === hash) {
+      return; // Already indexed with identical content
+    }
+
+    // Delete old doc if content changed
+    if (tracked) {
+      try {
+        await this.ragClient.deleteDocument(tracked.doc_id);
+      } catch (err) {
+        logger.warn({ err, relPath }, 'Failed to delete old doc from LightRAG');
+      }
+    }
+
+    // Index new content
     try {
       await this.ragClient.index(indexed);
     } catch (err) {
       logger.warn({ err, relPath }, 'Failed to index file');
+      return; // Don't update tracker — will retry on next event/restart
     }
+
+    upsertTrackedDoc(relPath, docId, hash);
+  }
+
+  async handleUnlink(filePath: string): Promise<void> {
+    if (!filePath.endsWith('.md')) return;
+
+    const relPath = relative(this.vaultDir, filePath);
+    const tracked = getTrackedDoc(relPath);
+    if (!tracked) return;
+
+    try {
+      await this.ragClient.deleteDocument(tracked.doc_id);
+    } catch (err) {
+      logger.warn({ err, relPath }, 'Failed to delete doc from LightRAG on unlink');
+    }
+
+    deleteTrackedDoc(relPath);
   }
 }
