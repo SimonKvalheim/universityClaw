@@ -148,49 +148,49 @@ export function startIpcWatcher(deps: IpcDeps): void {
                           'Voice file is not a .wav, skipping conversion',
                         );
                       } else {
-                      const oggPath = wavPath.replace(/\.wav$/, '.ogg');
+                        const oggPath = wavPath.replace(/\.wav$/, '.ogg');
 
-                      try {
-                        // Convert WAV to OGG Opus for Telegram voice bubbles
-                        await execFileAsync(
-                          'ffmpeg',
-                          [
-                            '-y',
-                            '-i',
-                            wavPath,
-                            '-c:a',
-                            'libopus',
-                            '-b:a',
-                            '48k',
-                            '-vbr',
-                            'on',
-                            '-application',
-                            'voip',
+                        try {
+                          // Convert WAV to OGG Opus for Telegram voice bubbles
+                          await execFileAsync(
+                            'ffmpeg',
+                            [
+                              '-y',
+                              '-i',
+                              wavPath,
+                              '-c:a',
+                              'libopus',
+                              '-b:a',
+                              '48k',
+                              '-vbr',
+                              'on',
+                              '-application',
+                              'voip',
+                              oggPath,
+                            ],
+                            { timeout: 30_000 },
+                          );
+
+                          await deps.sendVoice(
+                            data.chatJid,
                             oggPath,
-                          ],
-                          { timeout: 30_000 },
-                        );
+                            (data.caption as string) || undefined,
+                          );
+                          logger.info(
+                            { chatJid: data.chatJid, sourceGroup },
+                            'IPC voice message sent',
+                          );
 
-                        await deps.sendVoice(
-                          data.chatJid,
-                          oggPath,
-                          (data.caption as string) || undefined,
-                        );
-                        logger.info(
-                          { chatJid: data.chatJid, sourceGroup },
-                          'IPC voice message sent',
-                        );
-
-                        // Clean up audio files — safe because grammY's sendVoice
-                        // fully uploads the file before the promise resolves
-                        fs.unlink(wavPath, () => {});
-                        fs.unlink(oggPath, () => {});
-                      } catch (err) {
-                        logger.error(
-                          { file: wavPath, sourceGroup, err },
-                          'Failed to convert/send voice message',
-                        );
-                      }
+                          // Clean up audio files — safe because grammY's sendVoice
+                          // fully uploads the file before the promise resolves
+                          fs.unlink(wavPath, () => {});
+                          fs.unlink(oggPath, () => {});
+                        } catch (err) {
+                          logger.error(
+                            { file: wavPath, sourceGroup, err },
+                            'Failed to convert/send voice message',
+                          );
+                        }
                       }
                     }
                   }
