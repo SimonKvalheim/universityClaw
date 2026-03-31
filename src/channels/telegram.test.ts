@@ -12,6 +12,8 @@ vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
+  WHISPER_BIN_PATH: '/opt/homebrew/bin/whisper-cpp',
+  WHISPER_MODEL_PATH: '/tmp/test-model.bin',
 }));
 
 // Mock logger
@@ -30,7 +32,14 @@ type Handler = (...args: any[]) => any;
 
 const botRef = vi.hoisted(() => ({ current: null as any }));
 
+vi.mock('@grammyjs/files', () => ({
+  hydrateFiles: vi.fn(() => vi.fn()),
+}));
+
 vi.mock('grammy', () => ({
+  InputFile: class MockInputFile {
+    constructor(public path: string) {}
+  },
   Bot: class MockBot {
     token: string;
     commandHandlers = new Map<string, Handler>();
@@ -40,6 +49,8 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      sendVoice: vi.fn().mockResolvedValue(undefined),
+      config: { use: vi.fn() },
     };
 
     constructor(token: string) {
@@ -596,7 +607,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores voice message with placeholder', async () => {
+    it('stores voice message with transcription fallback', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -606,7 +617,9 @@ describe('TelegramChannel', () => {
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
+        expect.objectContaining({
+          content: '[Voice message (transcription failed)]',
+        }),
       );
     });
 
