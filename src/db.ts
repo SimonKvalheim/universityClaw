@@ -769,6 +769,7 @@ export function updateIngestionJob(
     status?: string;
     extraction_path?: string | null;
     error?: string | null;
+    content_hash?: string;
   },
 ): void {
   const setClauses: string[] = ["updated_at = datetime('now')"];
@@ -788,6 +789,10 @@ export function updateIngestionJob(
   if (updates.error !== undefined) {
     setClauses.push('error = ?');
     values.push(updates.error);
+  }
+  if (updates.content_hash !== undefined) {
+    setClauses.push('content_hash = ?');
+    values.push(updates.content_hash);
   }
 
   values.push(id);
