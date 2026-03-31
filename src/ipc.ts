@@ -1,5 +1,7 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 
 import { CronExpressionParser } from 'cron-parser';
 
@@ -7,12 +9,15 @@ import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { sendPoolMessage } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
+const execFileAsync = promisify(execFile);
+
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendVoice?: (jid: string, filePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -100,6 +105,77 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              } else if (data.type === 'voice' && data.chatJid && data.file) {
+                // Voice message: resolve path, convert WAV→OGG, send via channel
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  if (!deps.sendVoice) {
+                    logger.warn(
+                      { chatJid: data.chatJid },
+                      'sendVoice not available, skipping voice IPC',
+                    );
+                  } else {
+                    // Resolve container path to host path
+                    const containerFile = data.file as string;
+                    if (
+                      !containerFile.startsWith('/workspace/group/') ||
+                      containerFile.includes('..')
+                    ) {
+                      logger.warn(
+                        { file: containerFile, sourceGroup },
+                        'Invalid voice file path',
+                      );
+                    } else {
+                      const relative = containerFile.replace(
+                        /^\/workspace\/group\//,
+                        '',
+                      );
+                      const hostGroupDir = resolveGroupFolderPath(sourceGroup);
+                      const wavPath = path.join(hostGroupDir, relative);
+                      const oggPath = wavPath.replace(/\.wav$/, '.ogg');
+
+                      try {
+                        // Convert WAV to OGG Opus for Telegram voice bubbles
+                        await execFileAsync('ffmpeg', [
+                          '-y',
+                          '-i', wavPath,
+                          '-c:a', 'libopus',
+                          '-b:a', '48k',
+                          '-vbr', 'on',
+                          '-application', 'voip',
+                          oggPath,
+                        ], { timeout: 30_000 });
+
+                        await deps.sendVoice(
+                          data.chatJid,
+                          oggPath,
+                          (data.caption as string) || undefined,
+                        );
+                        logger.info(
+                          { chatJid: data.chatJid, sourceGroup },
+                          'IPC voice message sent',
+                        );
+
+                        // Clean up audio files
+                        fs.unlink(wavPath, () => {});
+                        fs.unlink(oggPath, () => {});
+                      } catch (err) {
+                        logger.error(
+                          { file: wavPath, sourceGroup, err },
+                          'Failed to convert/send voice message',
+                        );
+                      }
+                    }
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC voice attempt blocked',
                   );
                 }
               }
