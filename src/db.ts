@@ -156,6 +156,14 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN content_hash TEXT`);
+    database.exec(
+      `CREATE INDEX idx_ingestion_jobs_hash ON ingestion_jobs(content_hash)`,
+    );
+  } catch {
+    /* column/index already exists */
+  }
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
@@ -706,6 +714,16 @@ export function getIngestionJobByPath(
     .get(sourcePath) as { id: string; status: string } | undefined;
 }
 
+export function getCompletedJobByHash(
+  hash: string,
+): { id: string } | undefined {
+  return db
+    .prepare(
+      `SELECT id FROM ingestion_jobs WHERE content_hash = ? AND status = 'completed' LIMIT 1`,
+    )
+    .get(hash) as { id: string } | undefined;
+}
+
 export function deleteIngestionJob(id: string): void {
   db.prepare(`DELETE FROM ingestion_jobs WHERE id = ?`).run(id);
 }
@@ -714,24 +732,14 @@ export function createIngestionJob(
   id: string,
   sourcePath: string,
   sourceFilename: string,
+  contentHash?: string,
 ): void {
   getDb()
     .prepare(
-      `INSERT INTO ingestion_jobs (id, source_path, source_filename)
-       VALUES (?, ?, ?)`,
+      `INSERT INTO ingestion_jobs (id, source_path, source_filename, content_hash)
+       VALUES (?, ?, ?, ?)`,
     )
-    .run(id, sourcePath, sourceFilename);
-}
-
-export function updateIngestionJobStatus(
-  id: string,
-  status: string,
-  error?: string,
-): void {
-  const completedAt = status === 'completed' ? new Date().toISOString() : null;
-  db.prepare(
-    `UPDATE ingestion_jobs SET status = ?, error = ?, completed_at = COALESCE(?, completed_at) WHERE id = ?`,
-  ).run(status, error ?? null, completedAt, id);
+    .run(id, sourcePath, sourceFilename, contentHash ?? null);
 }
 
 export function getIngestionJobs(status?: string): unknown[] {
@@ -753,17 +761,6 @@ export function getJobsByStatus(status: string): unknown[] {
       `SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY created_at DESC`,
     )
     .all(status);
-}
-
-export function getStaleJobs(
-  status: string,
-  olderThanMinutes: number,
-): unknown[] {
-  return db
-    .prepare(
-      `SELECT * FROM ingestion_jobs WHERE status = ? AND updated_at < datetime('now', '-' || ? || ' minutes') ORDER BY updated_at ASC`,
-    )
-    .all(status, olderThanMinutes);
 }
 
 export function updateIngestionJob(

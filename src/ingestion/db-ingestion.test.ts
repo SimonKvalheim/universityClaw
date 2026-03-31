@@ -4,11 +4,11 @@ import {
   _initTestDatabase,
   createIngestionJob,
   deleteIngestionJob,
+  getCompletedJobByHash,
   getDb,
   getIngestionJobs,
   getJobsByStatus,
   getRecentlyCompletedJobs,
-  getStaleJobs,
   updateIngestionJob,
 } from '../db.js';
 
@@ -156,17 +156,6 @@ describe('deleteIngestionJob', () => {
   });
 });
 
-// --- getStaleJobs ---
-
-describe('getStaleJobs', () => {
-  it('returns empty when no jobs are stale', () => {
-    makeJob('fresh-job');
-    // Job was just created, so updated_at is now — not stale
-    const stale = getStaleJobs('pending', 60);
-    expect(stale).toHaveLength(0);
-  });
-});
-
 // --- getRecentlyCompletedJobs ---
 
 describe('getRecentlyCompletedJobs', () => {
@@ -202,5 +191,37 @@ describe('getRecentlyCompletedJobs', () => {
     makeJob('pending-job');
     const completed = getRecentlyCompletedJobs(10);
     expect(completed).toHaveLength(0);
+  });
+});
+
+// --- content hash dedup ---
+
+describe('content hash dedup', () => {
+  it('createIngestionJob stores content_hash', () => {
+    createIngestionJob('hash-1', '/upload/a.pdf', 'a.pdf', 'abc123hash');
+    const jobs = getIngestionJobs();
+    const job = jobs.find(
+      (j) => (j as Record<string, unknown>).id === 'hash-1',
+    ) as Record<string, unknown>;
+    expect(job.content_hash).toBe('abc123hash');
+  });
+
+  it('getCompletedJobByHash finds completed job with matching hash', () => {
+    createIngestionJob('hash-2', '/upload/b.pdf', 'b.pdf', 'deadbeef');
+    updateIngestionJob('hash-2', { status: 'completed' });
+    const found = getCompletedJobByHash('deadbeef');
+    expect(found).toBeDefined();
+    expect(found!.id).toBe('hash-2');
+  });
+
+  it('getCompletedJobByHash ignores non-completed jobs', () => {
+    createIngestionJob('hash-3', '/upload/c.pdf', 'c.pdf', 'cafebabe');
+    const found = getCompletedJobByHash('cafebabe');
+    expect(found).toBeUndefined();
+  });
+
+  it('getCompletedJobByHash returns undefined for unknown hash', () => {
+    const found = getCompletedJobByHash('nonexistent');
+    expect(found).toBeUndefined();
   });
 });
