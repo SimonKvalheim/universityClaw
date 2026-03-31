@@ -135,7 +135,7 @@ export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
 
 // Voice: local STT (whisper.cpp + NB-Whisper)
 export const WHISPER_BIN_PATH =
-  process.env.WHISPER_BIN_PATH || '/opt/homebrew/bin/whisper-cpp';
+  process.env.WHISPER_BIN_PATH || '/opt/homebrew/bin/whisper-cli';
 export const WHISPER_MODEL_PATH =
   process.env.WHISPER_MODEL_PATH ||
   path.join(HOME_DIR, '.cache', 'whisper', 'nb-whisper-large-q5_0.bin');
