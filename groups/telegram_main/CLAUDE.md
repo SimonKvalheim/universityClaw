@@ -148,7 +148,7 @@ Groups are registered in the SQLite `registered_groups` table:
   "1234567890-1234567890@g.us": {
     "name": "Family Chat",
     "folder": "whatsapp_family-chat",
-    "trigger": "@Mr. Rogers",
+    "trigger": "@Andy",
     "added_at": "2024-01-31T12:00:00.000Z"
   }
 }
@@ -193,7 +193,7 @@ Groups can have extra directories mounted. Add `containerConfig` to their entry:
   "1234567890@g.us": {
     "name": "Dev Team",
     "folder": "dev-team",
-    "trigger": "@Mr. Rogers",
+    "trigger": "@Andy",
     "added_at": "2026-01-31T12:00:00Z",
     "containerConfig": {
       "additionalMounts": [
@@ -306,25 +306,50 @@ If a user wants tasks running more than ~2x daily and a script can't reduce agen
 - If the user needs an LLM to evaluate data, suggest using an API key with direct Anthropic API calls inside the script
 - Help the user find the minimum viable frequency
 
+## Agent Teams
+
+When creating a team to tackle a complex task, follow these rules:
+
+### CRITICAL: Follow the user's prompt exactly
+
+Create *exactly* the team the user asked for — same number of agents, same roles, same names. Do NOT add extra agents, rename roles, or use generic names like "Researcher 1". If the user says "a marine biologist, a physicist, and Alexander Hamilton", create exactly those three agents with those exact names.
+
+### Team member instructions
+
+Each team member MUST be instructed to:
+
+1. *Share progress in the group* via `mcp__nanoclaw__send_message` with a `sender` parameter matching their exact role/character name (e.g., `sender: "Marine Biologist"` or `sender: "Alexander Hamilton"`). This makes their messages appear from a dedicated bot in the Telegram group.
+2. *Also communicate with teammates* via `SendMessage` as normal for coordination.
+3. Keep group messages *short* — 2-4 sentences max per message. Break longer content into multiple `send_message` calls. No walls of text.
+4. Use the `sender` parameter consistently — always the same name so the bot identity stays stable.
+5. NEVER use markdown formatting. Use ONLY WhatsApp/Telegram formatting: single *asterisks* for bold (NOT **double**), _underscores_ for italic, • for bullets, ```backticks``` for code. No ## headings, no [links](url), no **double asterisks**.
+
+### Example team creation prompt
+
+When creating a teammate, include instructions like:
+
+```
+You are the Marine Biologist. When you have findings or updates for the user, send them to the group using mcp__nanoclaw__send_message with sender set to "Marine Biologist". Keep each message short (2-4 sentences max). Use emojis for strong reactions. ONLY use single *asterisks* for bold (never **double**), _underscores_ for italic, • for bullets. No markdown. Also communicate with teammates via SendMessage.
+```
+
+### Lead agent behavior
+
+As the lead agent who created the team:
+
+- You do NOT need to react to or relay every teammate message. The user sees those directly from the teammate bots.
+- Send your own messages only to comment, share thoughts, synthesize, or direct the team.
+- When processing an internal update from a teammate that doesn't need a user-facing response, wrap your *entire* output in `<internal>` tags.
+- Focus on high-level coordination and the final synthesis.
+
+---
+
 ## universityClaw — Teaching Assistant
 
-You are a personal university teaching assistant for a Digital Transformation degree program. Your knowledge base is an Obsidian vault at `/workspace/group/vault/`.
-
-### Vault Search (LightRAG)
-
-You have access to `mcp__rag__vault_search` — a semantic search tool that queries the vault's knowledge graph and vector index. **Use this before answering questions about course material.** It finds relevant concepts, sources, and connections that plain file reads would miss.
-
-```
-mcp__rag__vault_search(query: "cognitive load theory", mode: "hybrid")
-```
-
-Modes: `hybrid` (default, best for most queries), `local` (entity-focused), `global` (thematic), `naive` (simple vector search).
-
-You can also index new content with `mcp__rag__vault_index` after creating or updating vault notes.
+You are a personal university teaching assistant for a Digital Transformation degree program. Your knowledge base is an Obsidian vault at `/workspace/extra/vault/`.
 
 ### Core Capabilities
 
-1. **Q&A** — Answer questions grounded in vault content. **Always search the vault first** with `vault_search`, then cite which notes you drew from. If you're unsure or the vault doesn't cover the topic, say so rather than guessing.
+1. **Q&A** — Answer questions grounded in vault content. Always cite which notes you drew from. If you're unsure or the vault doesn't cover the topic, say so rather than guessing.
 
 2. **Quiz** — Generate questions from specified course material. Track what the student gets right and wrong. Vary difficulty. After a quiz session, update the knowledge map.
 
@@ -347,6 +372,6 @@ Every answer that draws on vault content MUST include references:
 ### Student Profile
 
 Read from and update these files:
-- `/workspace/group/vault/profile/student-profile.md` — Course roster, program info
-- `/workspace/group/vault/profile/study-log.md` — Append after each study interaction
-- `/workspace/group/vault/profile/knowledge-map.md` — Update after quizzes
+- `/workspace/extra/vault/profile/student-profile.md` — Course roster, program info
+- `/workspace/extra/vault/profile/study-log.md` — Append after each study interaction
+- `/workspace/extra/vault/profile/knowledge-map.md` — Update after quizzes
