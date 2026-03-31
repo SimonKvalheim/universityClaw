@@ -2,11 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   _initTestDatabase,
   createIngestionJob,
-  getDb,
   getJobsByStatus,
   updateIngestionJob,
 } from '../db.js';
-import { recoverStaleJobs } from './job-recovery.js';
+import { markInterruptedJobsFailed } from './job-recovery.js';
 
 describe('pipeline integration', () => {
   beforeEach(() => {
@@ -35,7 +34,7 @@ describe('pipeline integration', () => {
     );
   });
 
-  it('recovery resets stale generating jobs to extracted', () => {
+  it('recovery marks interrupted generating jobs as failed', () => {
     const id = 'integration-recovery-' + Date.now();
     createIngestionJob(id, '/tmp/recovery.pdf', 'recovery.pdf');
     updateIngestionJob(id, {
@@ -43,21 +42,11 @@ describe('pipeline integration', () => {
       extraction_path: '/tmp/ext/' + id,
     });
 
-    // Backdate to simulate staleness
-    getDb()
-      .prepare(
-        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
-      )
-      .run(id);
+    const count = markInterruptedJobsFailed();
+    expect(count).toBe(1);
 
-    const result = recoverStaleJobs({
-      extractingThresholdMin: 10,
-      generatingThresholdMin: 45,
-    });
-    expect(result.generating).toBeGreaterThan(0);
-
-    // Should be reset to extracted (preserving extraction artifacts)
-    const jobs = getJobsByStatus('extracted');
+    // Should be marked as failed (no auto-retry)
+    const jobs = getJobsByStatus('failed');
     expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
   });
 
