@@ -77,7 +77,7 @@ systemctl --user restart nanoclaw
 
 ## universityClaw Extensions
 
-This is a fork of NanoClaw customized as a personal university teaching assistant ("Andy").
+This is a fork of NanoClaw customized as a personal university teaching assistant ("Mr. Rogers").
 
 ### Subsystems
 
@@ -163,7 +163,7 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ASSISTANT_NAME` | `Andy` | Bot name and trigger word |
+| `ASSISTANT_NAME` | `Andy` (should be `Mr. Rogers`) | Bot name and trigger word |
 | `VAULT_DIR` | `./vault` | Obsidian vault path |
 | `UPLOAD_DIR` | `./upload` | Ingestion watch directory |
 | `ONECLI_URL` | `http://localhost:10254` | OneCLI gateway URL |
