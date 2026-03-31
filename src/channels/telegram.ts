@@ -1,5 +1,6 @@
 import https from 'https';
 import { Api, Bot, InputFile } from 'grammy';
+import { hydrateFiles } from '@grammyjs/files';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -151,6 +152,9 @@ export class TelegramChannel implements Channel {
         baseFetchConfig: { agent: https.globalAgent, compress: true },
       },
     });
+
+    // Enable file downloads for voice transcription
+    this.bot.api.config.use(hydrateFiles(this.botToken));
 
     // Command to get chat ID (useful for registration)
     this.bot.command('chatid', (ctx) => {

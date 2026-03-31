@@ -21,6 +21,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@grammyjs/files": "^1.2.0",
     "@onecli-sh/sdk": "^0.2.0",
     "better-sqlite3": "11.10.0",
     "chokidar": "^5.0.0",
