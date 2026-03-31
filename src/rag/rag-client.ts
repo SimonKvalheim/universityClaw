@@ -78,6 +78,20 @@ export class RagClient {
     }
   }
 
+  async deleteDocument(docId: string): Promise<void> {
+    const res = await fetch(`${this.serverUrl}/documents`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [docId] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    // 404 is fine — doc may already be gone
+    if (!res.ok && res.status !== 404) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`LightRAG delete failed (${res.status}): ${body}`);
+    }
+  }
+
   async healthy(): Promise<boolean> {
     try {
       const res = await fetch(`${this.serverUrl}/health`, {

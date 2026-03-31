@@ -112,4 +112,28 @@ describe('RagClient HTTP', () => {
     fetchSpy.mockRejectedValue(new Error('ECONNREFUSED'));
     expect(await client.healthy()).toBe(false);
   });
+
+  it('deleteDocument sends DELETE /documents with doc ID', async () => {
+    fetchSpy.mockResolvedValue(new Response('OK', { status: 200 }));
+
+    await client.deleteDocument('doc-abc123');
+
+    const [url, opts] = fetchSpy.mock.calls[0];
+    expect(url).toBe('http://localhost:9621/documents');
+    expect(opts?.method).toBe('DELETE');
+    const body = JSON.parse(opts?.body as string);
+    expect(body.ids).toEqual(['doc-abc123']);
+  });
+
+  it('deleteDocument does not throw on 404 (already deleted)', async () => {
+    fetchSpy.mockResolvedValue(new Response('Not found', { status: 404 }));
+    await expect(client.deleteDocument('doc-gone')).resolves.toBeUndefined();
+  });
+
+  it('deleteDocument throws on server error', async () => {
+    fetchSpy.mockResolvedValue(new Response('Server Error', { status: 500 }));
+    await expect(client.deleteDocument('doc-x')).rejects.toThrow(
+      'LightRAG delete failed',
+    );
+  });
 });
