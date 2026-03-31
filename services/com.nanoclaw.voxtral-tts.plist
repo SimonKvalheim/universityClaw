@@ -6,8 +6,8 @@
     <string>com.nanoclaw.voxtral-tts</string>
     <key>ProgramArguments</key>
     <array>
-        <!-- Uses project venv; model selected per-request (mlx-community/Voxtral-4B-TTS-2603-mlx-4bit) -->
-        <string>/Users/simonkvalheim/Documents/01 - Projects/universityClaw/.venv/bin/python3</string>
+        <!-- Update path to your project's .venv/bin/python3 during setup -->
+        <string>REPLACE_WITH_VENV_PYTHON</string>
         <string>-m</string>
         <string>mlx_audio.server</string>
         <string>--port</string>

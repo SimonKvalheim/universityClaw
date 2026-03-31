@@ -3,9 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validateTtsText,
   validateTtsLanguage,
-  resolveTtsVoice,
   TTS_MAX_TEXT_LENGTH,
-  TTS_DEFAULT_VOICE,
 } from './voice-validation.js';
 
 describe('TTS validation', () => {
@@ -33,16 +31,10 @@ describe('TTS validation', () => {
   });
 
   describe('validateTtsLanguage', () => {
-    it('accepts en', () => {
-      expect(validateTtsLanguage('en')).toBeNull();
-    });
-
-    it('accepts de', () => {
-      expect(validateTtsLanguage('de')).toBeNull();
-    });
-
-    it('accepts it', () => {
-      expect(validateTtsLanguage('it')).toBeNull();
+    it('accepts all supported languages', () => {
+      for (const lang of ['en', 'de', 'it', 'fr', 'es', 'pt', 'nl', 'ar', 'hi']) {
+        expect(validateTtsLanguage(lang)).toBeNull();
+      }
     });
 
     it('rejects Norwegian (not supported for TTS)', () => {
@@ -54,22 +46,7 @@ describe('TTS validation', () => {
     });
 
     it('rejects arbitrary strings', () => {
-      expect(validateTtsLanguage('fr')).toMatch(/Unsupported language/);
-    });
-  });
-
-  describe('resolveTtsVoice', () => {
-    it('returns default voice when none specified', () => {
-      expect(resolveTtsVoice()).toBe(TTS_DEFAULT_VOICE);
-      expect(resolveTtsVoice(undefined)).toBe(TTS_DEFAULT_VOICE);
-    });
-
-    it('returns specified voice', () => {
-      expect(resolveTtsVoice('alloy')).toBe('alloy');
-    });
-
-    it('does not return default for empty string', () => {
-      expect(resolveTtsVoice('')).toBe(TTS_DEFAULT_VOICE);
+      expect(validateTtsLanguage('zh')).toMatch(/Unsupported language/);
     });
   });
 });
