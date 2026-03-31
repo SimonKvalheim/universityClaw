@@ -60,4 +60,24 @@ describe('promoteNote', () => {
     expect(result).toMatch(/^concepts\/gradient-descent-[a-f0-9]{4}\.md$/);
     expect(existsSync(join(VAULT, result))).toBe(true);
   });
+
+  it('creates destination directory if it does not exist', () => {
+    // Don't create concepts/ dir — promoteNote should handle it
+    rmSync(TMP, { recursive: true, force: true });
+    mkdirSync(join(VAULT, 'drafts'), { recursive: true });
+    // Note: concepts/ does NOT exist
+
+    const draftPath = join(VAULT, 'drafts', 'job2-concept-001.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Backpropagation\ntype: concept\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job2');
+
+    expect(result).toBe('concepts/backpropagation.md');
+    expect(existsSync(join(VAULT, 'concepts', 'backpropagation.md'))).toBe(
+      true,
+    );
+  });
 });

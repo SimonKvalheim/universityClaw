@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, existsSync } from 'fs';
+import { readFileSync, renameSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../vault/frontmatter.js';
 import { toKebabCase } from './utils.js';
@@ -14,6 +14,7 @@ export function promoteNote(
   const type = fm.type as string;
   const title = fm.title as string;
   const destFolder = type === 'source' ? 'sources' : 'concepts';
+  mkdirSync(join(vaultDir, destFolder), { recursive: true });
   const slug = toKebabCase(title);
 
   let filename = `${slug}.md`;
