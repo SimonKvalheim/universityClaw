@@ -2,11 +2,7 @@ import { watch, type FSWatcher } from 'chokidar';
 import { readFileSync } from 'fs';
 import { relative, resolve } from 'path';
 import { logger } from '../logger.js';
-import {
-  getTrackedDoc,
-  upsertTrackedDoc,
-  deleteTrackedDoc,
-} from '../db.js';
+import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
 import { computeDocId } from './doc-id.js';
@@ -34,7 +30,9 @@ export class RagIndexer {
     });
     this.watcher.on('add', (fp) => this.enqueue(() => this.indexFile(fp)));
     this.watcher.on('change', (fp) => this.enqueue(() => this.indexFile(fp)));
-    this.watcher.on('unlink', (fp) => this.enqueue(() => this.handleUnlink(fp)));
+    this.watcher.on('unlink', (fp) =>
+      this.enqueue(() => this.handleUnlink(fp)),
+    );
   }
 
   stop(): void {
@@ -44,7 +42,7 @@ export class RagIndexer {
 
   /** Serialize operations to avoid overwhelming LightRAG. */
   private enqueue(fn: () => Promise<void>): void {
-    this.queue = this.queue.then(fn, fn);
+    this.queue = this.queue.then(fn, fn).catch(() => {});
   }
 
   async indexFile(filePath: string): Promise<void> {
@@ -125,7 +123,10 @@ export class RagIndexer {
     try {
       await this.ragClient.deleteDocument(tracked.doc_id);
     } catch (err) {
-      logger.warn({ err, relPath }, 'Failed to delete doc from LightRAG on unlink');
+      logger.warn(
+        { err, relPath },
+        'Failed to delete doc from LightRAG on unlink',
+      );
     }
 
     deleteTrackedDoc(relPath);

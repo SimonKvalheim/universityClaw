@@ -136,6 +136,11 @@ Archived content.`);
     expect(mockUpsertTrackedDoc.mock.calls[0][0]).toBe(
       'concepts/self-attention.md',
     );
+    // Verify the stored docId matches what was actually indexed
+    const expectedDocId = computeDocId(
+      mockRagClient.index.mock.calls[0][0] as string,
+    ).docId;
+    expect(mockUpsertTrackedDoc.mock.calls[0][1]).toBe(expectedDocId);
   });
 
   it('indexes and tracks new file (not in tracker)', async () => {
