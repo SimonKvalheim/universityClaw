@@ -77,25 +77,107 @@ systemctl --user restart nanoclaw
 
 ## universityClaw Extensions
 
-This is a fork of NanoClaw customized as a personal university teaching assistant.
+This is a fork of NanoClaw customized as a personal university teaching assistant ("Andy").
 
-### Additional Subsystems
-- **Vault Utility** (`src/vault/`) — Direct Obsidian vault file I/O (gray-matter + regex)
-- **Ingestion Pipeline** (`src/ingestion/`) — File watcher → Docling → Claude note gen → review queue
-- **RAG Layer** (`src/rag/`) — LightRAG hybrid retrieval over the vault
-- **Student Profile** (`src/profile/`) — Learning progress tracking
-- **Web Dashboard** (`dashboard/`) — Next.js app for upload, review, vault browsing
+### Subsystems
+
+| Subsystem | Location | Purpose |
+|-----------|----------|---------|
+| Vault Utility | `src/vault/` | Direct Obsidian vault file I/O (gray-matter + regex) |
+| Ingestion Pipeline | `src/ingestion/` | File watcher → Docling extraction → Claude note generation → auto-promotion |
+| RAG Layer | `src/rag/` | LightRAG hybrid retrieval with SQLite-tracked indexing |
+| RAG Indexer | `src/rag/indexer.ts` | Chokidar watcher with content-hash dedup, delete-before-reinsert lifecycle |
+| Student Profile | `src/profile/` | Learning progress tracking, knowledge map, study log rotation |
+| Web Dashboard | `dashboard/` | Next.js app for upload, verification status, vault browsing |
 
 ### Key Paths
-- `vault/` — Obsidian vault (primary knowledge store)
-- `upload/` — Watched folder for new documents
+
+- `vault/` — Obsidian vault (flat structure: `concepts/`, `sources/`, `profile/archive/`)
+- `upload/` — Watched folder for new documents (processed files move to `upload/processed/`)
 - `dashboard/` — Next.js web dashboard
 - `scripts/docling-extract.py` — Python document extraction script
+- `store/messages.db` — SQLite database (messages, tasks, ingestion jobs, RAG tracker)
+- `data/` — IPC files, extraction artifacts
+- `onecli/` — OneCLI credential gateway Docker Compose config
 
 ### Testing
+
 - `npm test` — Run all tests (vitest)
 - `cd dashboard && npm test` — Dashboard tests
+
+## Services & Dependencies
+
+universityClaw runs as a stack of 4 services. All must be running for full functionality.
+
+### Service Stack
+
+| Service | What it does | How to start | How to stop | Port |
+|---------|-------------|--------------|-------------|------|
+| **NanoClaw** | Main orchestrator (Node.js) | `npm run dev` | Ctrl+C or `kill <pid>` | — |
+| **LightRAG** | RAG server (Python) | `python3 -m lightrag.api.lightrag_server` | `kill <pid>` | 9621 |
+| **OneCLI** | Credential proxy (Docker) | `docker compose -f onecli/docker-compose.yml up -d` | `docker compose -f onecli/docker-compose.yml down` | 10254 |
+| **Dashboard** | Web UI (Next.js) | `cd dashboard && npm run dev` | Ctrl+C or `kill <pid>` | 3100 |
+
+### Start Everything
+
+```bash
+# 1. OneCLI (credential proxy — Docker)
+docker compose -f onecli/docker-compose.yml up -d
+
+# 2. LightRAG (RAG server — background)
+python3 -m lightrag.api.lightrag_server &
+
+# 3. Dashboard (web UI — background)
+cd dashboard && npm run dev &
+cd ..
+
+# 4. NanoClaw (main process — foreground)
+npm run dev
+```
+
+### Stop Everything
+
+```bash
+# Find and kill Node/Python processes
+pkill -f "lightrag.api.lightrag_server"
+pkill -f "tsx src/index.ts"
+pkill -f "next dev.*dashboard"
+
+# Stop OneCLI containers
+docker compose -f onecli/docker-compose.yml down
+```
+
+### Verify Status
+
+```bash
+# Check all processes
+ps aux | grep -iE "nanoclaw|universityClaw|lightrag|next.*dashboard" | grep -v grep
+
+# Check Docker
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+### Environment Variables
+
+Key env vars (set in `.env` or shell). All have sensible defaults:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ASSISTANT_NAME` | `Andy` | Bot name and trigger word |
+| `VAULT_DIR` | `./vault` | Obsidian vault path |
+| `UPLOAD_DIR` | `./upload` | Ingestion watch directory |
+| `ONECLI_URL` | `http://localhost:10254` | OneCLI gateway URL |
+| `CONTAINER_IMAGE` | `nanoclaw-agent:latest` | Docker image for agent containers |
+| `CONTAINER_TIMEOUT` | `1800000` (30min) | Agent container idle timeout |
+| `MAX_CONCURRENT_CONTAINERS` | `5` | Parallel container limit |
+| `EXTRACTION_TIMEOUT` | `600000` (10min) | Docling per-document timeout |
+| `DASHBOARD_PORT` | `3100` | Dashboard web UI port |
+| `TZ` | auto-detected | Timezone for scheduling |
 
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+
+## Design Specs
+
+Active design documents live in `docs/superpowers/specs/`. Implementation plans in `docs/superpowers/plans/`. Check these before making changes to covered subsystems.
