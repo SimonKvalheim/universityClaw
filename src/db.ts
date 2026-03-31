@@ -96,6 +96,14 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_status ON ingestion_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_source_path ON ingestion_jobs(source_path);
+
+    CREATE TABLE IF NOT EXISTS rag_index_tracker (
+      vault_path   TEXT PRIMARY KEY,
+      doc_id       TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      indexed_at   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rag_tracker_doc_id ON rag_index_tracker(doc_id);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -807,6 +815,44 @@ export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
       `SELECT * FROM ingestion_jobs WHERE status = 'completed' ORDER BY completed_at DESC LIMIT ?`,
     )
     .all(limit);
+}
+
+// --- RAG index tracker ---
+
+export interface TrackedDoc {
+  vault_path: string;
+  doc_id: string;
+  content_hash: string;
+  indexed_at: string;
+}
+
+export function getTrackedDoc(vaultPath: string): TrackedDoc | null {
+  return (
+    (db
+      .prepare('SELECT * FROM rag_index_tracker WHERE vault_path = ?')
+      .get(vaultPath) as TrackedDoc | undefined) ?? null
+  );
+}
+
+export function upsertTrackedDoc(
+  vaultPath: string,
+  docId: string,
+  contentHash: string,
+): void {
+  db.prepare(
+    `INSERT INTO rag_index_tracker (vault_path, doc_id, content_hash, indexed_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(vault_path) DO UPDATE SET
+       doc_id = excluded.doc_id,
+       content_hash = excluded.content_hash,
+       indexed_at = excluded.indexed_at`,
+  ).run(vaultPath, docId, contentHash, new Date().toISOString());
+}
+
+export function deleteTrackedDoc(vaultPath: string): void {
+  db.prepare('DELETE FROM rag_index_tracker WHERE vault_path = ?').run(
+    vaultPath,
+  );
 }
 
 // --- JSON migration ---

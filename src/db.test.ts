@@ -14,6 +14,7 @@ import {
   storeMessage,
   updateTask,
 } from './db.js';
+import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from './db.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -480,5 +481,38 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+describe('rag_index_tracker', () => {
+  it('getTrackedDoc returns null for unknown path', () => {
+    expect(getTrackedDoc('concepts/foo.md')).toBeNull();
+  });
+
+  it('upsertTrackedDoc inserts and getTrackedDoc retrieves', () => {
+    upsertTrackedDoc('concepts/foo.md', 'doc-abc', 'abc');
+    const row = getTrackedDoc('concepts/foo.md');
+    expect(row).not.toBeNull();
+    expect(row!.doc_id).toBe('doc-abc');
+    expect(row!.content_hash).toBe('abc');
+    expect(row!.indexed_at).toBeTruthy();
+  });
+
+  it('upsertTrackedDoc updates existing row', () => {
+    upsertTrackedDoc('concepts/bar.md', 'doc-111', '111');
+    upsertTrackedDoc('concepts/bar.md', 'doc-222', '222');
+    const row = getTrackedDoc('concepts/bar.md');
+    expect(row!.doc_id).toBe('doc-222');
+    expect(row!.content_hash).toBe('222');
+  });
+
+  it('deleteTrackedDoc removes the row', () => {
+    upsertTrackedDoc('concepts/baz.md', 'doc-xyz', 'xyz');
+    deleteTrackedDoc('concepts/baz.md');
+    expect(getTrackedDoc('concepts/baz.md')).toBeNull();
+  });
+
+  it('deleteTrackedDoc is safe for nonexistent path', () => {
+    expect(() => deleteTrackedDoc('nope.md')).not.toThrow();
   });
 });
