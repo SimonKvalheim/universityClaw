@@ -682,7 +682,13 @@ export class RagIndexer {
     const prefix = `[${parts.join(' | ')}]`;
     const indexed = `${prefix}\nSource path: ${relPath}\n\n${body}`;
 
-    // Compute hash and check tracker
+    // Compute hash and check tracker.
+    // Note: parseFrontmatter calls JS .trim() on body content, which strips
+    // Unicode whitespace (U+00A0) that Python's strip() keeps. This is a
+    // pre-existing behavior — the hash we compute here is based on what we
+    // actually send to LightRAG, so it stays consistent for our tracking
+    // purposes even if it diverges from what LightRAG would compute on the
+    // raw file content.
     const { hash, docId } = computeDocId(indexed);
     const tracked = getTrackedDoc(relPath);
 
@@ -767,6 +773,16 @@ Expected: Clean compile, no errors
 If prettier reformatted anything during the build:
 
 ```bash
-git add -A
+git add src/
 git commit -m "chore: format fixes from build"
 ```
+
+---
+
+### Deferred: Integration Sanity Test
+
+The spec calls for an integration test that starts the indexer against a temp vault dir and verifies tracker rows match files on disk after the startup walk. This is deferred from the initial implementation because:
+
+- All logic paths (new/unchanged/changed/deleted files) are covered by unit tests with mocked DB and RagClient
+- The integration test would require setting up a real SQLite DB and temp directory, which adds complexity without covering new logic
+- Can be added later if the unit tests prove insufficient for catching real-world issues

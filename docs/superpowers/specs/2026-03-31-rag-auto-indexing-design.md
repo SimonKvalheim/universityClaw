@@ -78,7 +78,7 @@ Uses Node's built-in `crypto.createHash('md5')`. **Important:** JavaScript's `.t
 
 1. Read file, parse frontmatter, skip if `status: draft`
 2. Build indexed text (metadata prefix + body) — same format as current
-3. Compute `md5(indexedText.trim())` -> `hash`, `docId`
+3. Compute `computeDocId(indexedText)` -> `hash`, `docId` (uses `pythonStrip`, not JS `.trim()`)
 4. Look up `getTrackedDoc(relPath)` from SQLite
 5. **If tracked and hash matches** -> skip (already indexed with identical content)
 6. **If tracked and hash differs** -> `deleteDocument(oldDocId)` -> `index(indexedText)` -> `upsertTrackedDoc(relPath, docId, hash)`
@@ -121,7 +121,8 @@ File events can fire rapidly (startup walk, bulk promotions). Index calls are se
 |------|--------|
 | `src/db.ts` | `rag_index_tracker` table creation in schema init + 3 helper functions |
 | `src/rag/rag-client.ts` | `deleteDocument(docId)` method |
-| `src/rag/indexer.ts` | Hash tracking, delete-before-reinsert, `unlink` handler, serial queue, `computeDocId` utility |
+| `src/rag/doc-id.ts` | `computeDocId` and `pythonStrip` utilities (new file) |
+| `src/rag/indexer.ts` | Hash tracking, delete-before-reinsert, `unlink` handler, serial queue |
 
 ### Files NOT changed
 
