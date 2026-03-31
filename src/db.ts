@@ -212,7 +212,7 @@ export function _closeDatabase(): void {
   db.close();
 }
 
-export function getDb() {
+export function getDb(): Database.Database {
   return db;
 }
 
