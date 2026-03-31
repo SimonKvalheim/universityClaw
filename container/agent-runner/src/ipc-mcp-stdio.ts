@@ -337,6 +337,156 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+const AUDIO_DIR = '/workspace/group/audio';
+
+server.tool(
+  'synthesize_speech',
+  'Convert text to speech audio using the local Voxtral TTS service. Returns a file path to the generated WAV audio. Use send_voice to deliver it to the user as a Telegram voice message.',
+  {
+    text: z.string().describe('Text to synthesize (max 5000 characters)'),
+    language: z
+      .enum(['en', 'de', 'it'])
+      .default('en')
+      .describe('Language for synthesis: en (English), de (German), it (Italian)'),
+    voice: z
+      .string()
+      .default('jessica')
+      .describe('Voxtral preset voice name (default: jessica)'),
+  },
+  async (args) => {
+    // Validate text
+    if (!args.text || args.text.trim().length === 0) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: text cannot be empty.' }],
+        isError: true,
+      };
+    }
+    if (args.text.length > 5000) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: text too long (${args.text.length} chars, max 5000).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const ttsUrl = process.env.VOXTRAL_TTS_URL;
+    if (!ttsUrl) {
+      return {
+        content: [
+          { type: 'text' as const, text: 'Error: TTS service not configured (VOXTRAL_TTS_URL not set).' },
+        ],
+        isError: true,
+      };
+    }
+
+    try {
+      const response = await fetch(`${ttsUrl}/v1/audio/speech`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'voxtral-4b',
+          input: args.text,
+          voice: args.voice ?? 'jessica',
+          language: args.language ?? 'en',
+          response_format: 'wav',
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => 'unknown error');
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: TTS service returned ${response.status}: ${errText}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const audioBuffer = Buffer.from(await response.arrayBuffer());
+
+      // Save to group audio directory
+      fs.mkdirSync(AUDIO_DIR, { recursive: true });
+      const random = Math.random().toString(36).slice(2, 6);
+      const filename = `tts-${Date.now()}-${random}.wav`;
+      const filepath = path.join(AUDIO_DIR, filename);
+      fs.writeFileSync(filepath, audioBuffer);
+
+      // Estimate duration from WAV size (24kHz, 16-bit mono = 48000 bytes/sec)
+      const durationSeconds = Math.round(audioBuffer.length / 48000);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              path: filepath,
+              duration_seconds: durationSeconds,
+              language: args.language,
+            }),
+          },
+        ],
+      };
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : String(err);
+      return {
+        content: [
+          { type: 'text' as const, text: `Error: TTS request failed: ${message}` },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'send_voice',
+  'Send an audio file as a Telegram voice message. Use after synthesize_speech to deliver the generated audio to the user.',
+  {
+    file_path: z
+      .string()
+      .describe('Absolute path to the audio file (e.g., from synthesize_speech output)'),
+    caption: z
+      .string()
+      .optional()
+      .describe('Optional caption text to accompany the voice message'),
+  },
+  async (args) => {
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [
+          { type: 'text' as const, text: `Error: file not found: ${args.file_path}` },
+        ],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'voice',
+      chatJid,
+      file: args.file_path,
+      caption: args.caption || undefined,
+      sender: undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: 'Voice message queued for delivery.' }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
