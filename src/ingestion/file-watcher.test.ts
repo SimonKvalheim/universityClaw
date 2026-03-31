@@ -20,7 +20,6 @@ describe('FileWatcher', () => {
       detectedFiles.push(filePath);
     });
     await watcher.start();
-    // Give chokidar time to set up watchers
     await wait(200);
   });
 
@@ -28,7 +27,7 @@ describe('FileWatcher', () => {
     await watcher.stop();
   });
 
-  it('detects new files added to the watch directory', async () => {
+  it('detects new PDF files', async () => {
     const filePath = join(tmpDir, 'document.pdf');
     await writeFile(filePath, 'PDF content');
     await wait(2000);
@@ -36,14 +35,32 @@ describe('FileWatcher', () => {
     expect(detectedFiles).toContain(filePath);
   });
 
-  it('detects files in nested directories', async () => {
-    const nestedDir = join(tmpDir, 'subdir', 'deeper');
+  it('detects PDFs in nested directories', async () => {
+    const nestedDir = join(tmpDir, 'subdir');
     await mkdir(nestedDir, { recursive: true });
-    const filePath = join(nestedDir, 'notes.md');
-    await writeFile(filePath, '# Notes');
+    const filePath = join(nestedDir, 'paper.pdf');
+    await writeFile(filePath, 'PDF content');
     await wait(2000);
 
     expect(detectedFiles).toContain(filePath);
+  });
+
+  it('ignores non-PDF file types', async () => {
+    const files = ['file.docx', 'file.pptx', 'file.txt', 'file.md', 'file.png', 'file.csv'];
+    for (const name of files) {
+      await writeFile(join(tmpDir, name), 'content');
+    }
+    await wait(2000);
+
+    expect(detectedFiles).toHaveLength(0);
+  });
+
+  it('ignores ~$ temp files', async () => {
+    const filePath = join(tmpDir, '~$document.pdf');
+    await writeFile(filePath, 'lock file');
+    await wait(2000);
+
+    expect(detectedFiles).not.toContain(filePath);
   });
 
   it('ignores .DS_Store files', async () => {
@@ -52,48 +69,5 @@ describe('FileWatcher', () => {
     await wait(2000);
 
     expect(detectedFiles).not.toContain(ignoredPath);
-  });
-
-  it('ignores Thumbs.db files', async () => {
-    const ignoredPath = join(tmpDir, 'Thumbs.db');
-    await writeFile(ignoredPath, '');
-    await wait(2000);
-
-    expect(detectedFiles).not.toContain(ignoredPath);
-  });
-
-  it('ignores non-document files', async () => {
-    const ignoredPath = join(tmpDir, 'data.csv');
-    await writeFile(ignoredPath, 'a,b,c');
-    await wait(2000);
-
-    expect(detectedFiles).not.toContain(ignoredPath);
-  });
-
-  it('detects all supported document types', async () => {
-    const files = [
-      'file.pdf',
-      'file.pptx',
-      'file.docx',
-      'file.doc',
-      'file.ppt',
-      'file.png',
-      'file.jpg',
-      'file.jpeg',
-      'file.tiff',
-      'file.bmp',
-      'file.md',
-      'file.txt',
-      'file.html',
-      'file.htm',
-    ];
-    for (const name of files) {
-      await writeFile(join(tmpDir, name), 'content');
-    }
-    await wait(2000);
-
-    for (const name of files) {
-      expect(detectedFiles).toContain(join(tmpDir, name));
-    }
   });
 });

@@ -1,22 +1,7 @@
 import chokidar, { type FSWatcher } from 'chokidar';
 import { extname } from 'node:path';
 
-const SUPPORTED_EXTENSIONS = new Set([
-  '.pdf',
-  '.pptx',
-  '.docx',
-  '.doc',
-  '.ppt',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.tiff',
-  '.bmp',
-  '.md',
-  '.txt',
-  '.html',
-  '.htm',
-]);
+const SUPPORTED_EXTENSIONS = new Set(['.pdf']);
 
 const IGNORED_FILES = new Set(['.ds_store', 'thumbs.db', '.gitkeep']);
 
@@ -37,6 +22,7 @@ export class FileWatcher {
     });
     this.watcher.on('add', (filePath: string) => {
       const fileName = filePath.split('/').pop() || '';
+      if (fileName.startsWith('~$')) return;
       if (IGNORED_FILES.has(fileName.toLowerCase())) return;
       const ext = extname(fileName).toLowerCase();
       if (ext && SUPPORTED_EXTENSIONS.has(ext)) {
