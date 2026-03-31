@@ -422,8 +422,8 @@ server.tool(
       const filepath = path.join(AUDIO_DIR, filename);
       fs.writeFileSync(filepath, audioBuffer);
 
-      // Estimate duration from WAV size (24kHz, 16-bit mono = 48000 bytes/sec)
-      const durationSeconds = Math.round(audioBuffer.length / 48000);
+      // Estimate duration from WAV size (24kHz, 16-bit mono = 48000 bytes/sec, minus 44-byte header)
+      const durationSeconds = Math.max(0, Math.round((audioBuffer.length - 44) / 48000));
 
       return {
         content: [
@@ -463,6 +463,15 @@ server.tool(
       .describe('Optional caption text to accompany the voice message'),
   },
   async (args) => {
+    // Restrict to audio directory to prevent exfiltration of arbitrary container files
+    if (!args.file_path.startsWith(AUDIO_DIR + '/') || args.file_path.includes('..')) {
+      return {
+        content: [
+          { type: 'text' as const, text: 'Error: file must be in the audio directory.' },
+        ],
+        isError: true,
+      };
+    }
     if (!fs.existsSync(args.file_path)) {
       return {
         content: [

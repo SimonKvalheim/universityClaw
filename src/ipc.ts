@@ -141,6 +141,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       );
                       const hostGroupDir = resolveGroupFolderPath(sourceGroup);
                       const wavPath = path.join(hostGroupDir, relative);
+
+                      if (!wavPath.endsWith('.wav')) {
+                        logger.warn(
+                          { file: wavPath, sourceGroup },
+                          'Voice file is not a .wav, skipping conversion',
+                        );
+                      } else {
                       const oggPath = wavPath.replace(/\.wav$/, '.ogg');
 
                       try {
@@ -174,7 +181,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
                           'IPC voice message sent',
                         );
 
-                        // Clean up audio files
+                        // Clean up audio files — safe because grammY's sendVoice
+                        // fully uploads the file before the promise resolves
                         fs.unlink(wavPath, () => {});
                         fs.unlink(oggPath, () => {});
                       } catch (err) {
@@ -182,6 +190,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                           { file: wavPath, sourceGroup, err },
                           'Failed to convert/send voice message',
                         );
+                      }
                       }
                     }
                   }
