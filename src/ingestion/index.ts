@@ -5,7 +5,7 @@ import { FileWatcher } from './file-watcher.js';
 import { AgentProcessor } from './agent-processor.js';
 import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
-import { recoverStaleJobs } from './job-recovery.js';
+import { markInterruptedJobsFailed } from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { promoteNote } from './promoter.js';
 import {
@@ -392,10 +392,7 @@ export class IngestionPipeline {
     await mkdir(PROCESSED_DIR, { recursive: true });
     await mkdir(join(this.vaultDir, 'drafts'), { recursive: true });
 
-    recoverStaleJobs({
-      extractingThresholdMin: 15,
-      generatingThresholdMin: 60,
-    });
+    markInterruptedJobsFailed();
 
     await this.watcher.start();
     this.drainer.drain();

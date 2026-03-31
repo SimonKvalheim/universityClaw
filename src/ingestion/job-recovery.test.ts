@@ -1,116 +1,87 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { recoverStaleJobs } from './job-recovery.js';
+import { markInterruptedJobsFailed } from './job-recovery.js';
 import {
   _initTestDatabase,
   createIngestionJob,
   updateIngestionJob,
   getJobsByStatus,
-  getDb,
 } from '../db.js';
 
 beforeEach(() => {
   _initTestDatabase();
 });
 
-describe('recoverStaleJobs', () => {
-  it('resets stale extracting jobs to pending', () => {
-    const id = 'stale-extracting-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
-    updateIngestionJob(id, { status: 'extracting' });
-    // Manually backdate updated_at for test
-    getDb()
-      .prepare(
-        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
-      )
-      .run(id);
+describe('markInterruptedJobsFailed', () => {
+  it('marks extracting jobs as failed', () => {
+    createIngestionJob('ext-1', '/tmp/ext-1.pdf', 'test.pdf');
+    updateIngestionJob('ext-1', { status: 'extracting' });
 
-    const recovered = recoverStaleJobs({
-      extractingThresholdMin: 10,
-      generatingThresholdMin: 45,
-    });
-    expect(recovered.extracting).toBeGreaterThan(0);
+    const count = markInterruptedJobsFailed();
 
-    const jobs = getJobsByStatus('pending');
-    expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
+    expect(count).toBe(1);
+    const failed = getJobsByStatus('failed') as Array<Record<string, unknown>>;
+    expect(failed).toHaveLength(1);
+    expect(failed[0].id).toBe('ext-1');
+    expect(failed[0].error).toBe('Interrupted: process restarted');
   });
 
-  it('resets stale generating jobs to extracted (with extraction path)', () => {
-    const id = 'stale-generating-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
-    updateIngestionJob(id, {
-      status: 'generating',
-      extraction_path: '/tmp/extractions/' + id,
-    });
-    getDb()
-      .prepare(
-        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
-      )
-      .run(id);
+  it('marks generating jobs as failed', () => {
+    createIngestionJob('gen-1', '/tmp/gen-1.pdf', 'test.pdf');
+    updateIngestionJob('gen-1', { status: 'generating' });
 
-    const recovered = recoverStaleJobs({
-      extractingThresholdMin: 10,
-      generatingThresholdMin: 45,
-    });
-    expect(recovered.generating).toBeGreaterThan(0);
+    const count = markInterruptedJobsFailed();
 
-    const jobs = getJobsByStatus('extracted');
-    expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
+    expect(count).toBe(1);
+    const failed = getJobsByStatus('failed') as Array<Record<string, unknown>>;
+    expect(failed[0].id).toBe('gen-1');
   });
 
-  it('resets stale generating jobs to pending (without extraction path)', () => {
-    const id = 'stale-gen-noext-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
-    updateIngestionJob(id, { status: 'generating' });
-    getDb()
-      .prepare(
-        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
-      )
-      .run(id);
+  it('marks promoting jobs as failed', () => {
+    createIngestionJob('promo-1', '/tmp/promo-1.pdf', 'test.pdf');
+    updateIngestionJob('promo-1', { status: 'promoting' });
 
-    const recovered = recoverStaleJobs({
-      extractingThresholdMin: 10,
-      generatingThresholdMin: 45,
-    });
-    expect(recovered.generating).toBeGreaterThan(0);
+    const count = markInterruptedJobsFailed();
 
-    const jobs = getJobsByStatus('pending');
-    expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
+    expect(count).toBe(1);
+    const failed = getJobsByStatus('failed') as Array<Record<string, unknown>>;
+    expect(failed[0].id).toBe('promo-1');
   });
 
-  it('resets stale promoting jobs to generated', () => {
-    const id = 'stale-promoting-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
-    updateIngestionJob(id, { status: 'promoting' });
-    getDb()
-      .prepare(
-        "UPDATE ingestion_jobs SET updated_at = datetime('now', '-60 minutes') WHERE id = ?",
-      )
-      .run(id);
+  it('marks all in-progress jobs across statuses', () => {
+    createIngestionJob('a', '/tmp/a.pdf', 'a.pdf');
+    createIngestionJob('b', '/tmp/b.pdf', 'b.pdf');
+    createIngestionJob('c', '/tmp/c.pdf', 'c.pdf');
+    updateIngestionJob('a', { status: 'extracting' });
+    updateIngestionJob('b', { status: 'generating' });
+    updateIngestionJob('c', { status: 'promoting' });
 
-    const recovered = recoverStaleJobs({
-      extractingThresholdMin: 10,
-      generatingThresholdMin: 45,
-    });
-    expect(recovered.promoting).toBeGreaterThan(0);
+    const count = markInterruptedJobsFailed();
 
-    const jobs = getJobsByStatus('generated');
-    expect(jobs.find((j) => (j as { id: string }).id === id)).toBeDefined();
+    expect(count).toBe(3);
+    const failed = getJobsByStatus('failed');
+    expect(failed).toHaveLength(3);
   });
 
-  it('does not reset recent jobs', () => {
-    const id = 'recent-generating-' + Date.now();
-    createIngestionJob(id, `/tmp/${id}.pdf`, 'test.pdf');
-    updateIngestionJob(id, { status: 'generating' });
-    // Don't backdate — this job is fresh
+  it('does not touch pending, extracted, generated, or completed jobs', () => {
+    createIngestionJob('p', '/tmp/p.pdf', 'p.pdf');
+    createIngestionJob('e', '/tmp/e.pdf', 'e.pdf');
+    createIngestionJob('g', '/tmp/g.pdf', 'g.pdf');
+    createIngestionJob('c', '/tmp/c.pdf', 'c.pdf');
+    updateIngestionJob('e', { status: 'extracted' });
+    updateIngestionJob('g', { status: 'generated' });
+    updateIngestionJob('c', { status: 'completed' });
 
-    const before = getJobsByStatus('generating').length;
-    recoverStaleJobs({
-      extractingThresholdMin: 10,
-      generatingThresholdMin: 45,
-    });
-    const after = getJobsByStatus('generating').length;
+    const count = markInterruptedJobsFailed();
 
-    // Fresh job should still be in generating
-    expect(after).toBe(before);
+    expect(count).toBe(0);
+    expect(getJobsByStatus('pending')).toHaveLength(1);
+    expect(getJobsByStatus('extracted')).toHaveLength(1);
+    expect(getJobsByStatus('generated')).toHaveLength(1);
+    expect(getJobsByStatus('completed')).toHaveLength(1);
+  });
+
+  it('returns 0 when no in-progress jobs exist', () => {
+    const count = markInterruptedJobsFailed();
+    expect(count).toBe(0);
   });
 });
