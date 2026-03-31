@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
@@ -18,6 +19,7 @@ import { validateDrafts, formatValidationMessage } from './draft-validator.js';
 import {
   createIngestionJob,
   getIngestionJobByPath,
+  getCompletedJobByHash,
   updateIngestionJob,
 } from '../db.js';
 import { RegisteredGroup } from '../types.js';
@@ -71,6 +73,29 @@ export class IngestionPipeline {
     const relativePath = relative(this.uploadDir, filePath);
     const fileName = basename(filePath);
 
+    // Content-hash dedup: skip if identical file already completed
+    let contentHash: string;
+    try {
+      const fileBuffer = readFileSync(filePath);
+      contentHash = createHash('sha256').update(fileBuffer).digest('hex');
+    } catch (err) {
+      logger.warn(
+        { filePath, err },
+        'ingestion: Failed to hash file, skipping',
+      );
+      return;
+    }
+
+    const completedDuplicate = getCompletedJobByHash(contentHash);
+    if (completedDuplicate) {
+      logger.info(
+        { filePath: relativePath, duplicateOfJob: completedDuplicate.id },
+        `ingestion: Skipping duplicate of completed job ${completedDuplicate.id}: ${relativePath}`,
+      );
+      return;
+    }
+
+    // Path-based dedup: skip if same path is already in-flight
     const existing = getIngestionJobByPath(filePath);
     if (existing) {
       if (
@@ -103,15 +128,27 @@ export class IngestionPipeline {
 
     const jobId = randomUUID();
     logger.info(
-      { jobId, relativePath },
+      { jobId, relativePath, contentHash },
       `ingestion: Enqueuing: ${relativePath}`,
     );
-    createIngestionJob(jobId, filePath, fileName);
+    createIngestionJob(jobId, filePath, fileName, contentHash);
   }
 
   async handleExtraction(job: JobRow): Promise<void> {
-    const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
+
+    // Skip if extraction artifacts already exist (recovery re-run)
+    if (await this.extractor.hasArtifacts(job.id)) {
+      logger.info(
+        { jobId: job.id, relativePath },
+        'ingestion: Extraction artifacts exist — skipping Docling',
+      );
+      updateIngestionJob(job.id, {
+        status: 'extracted',
+        extraction_path: this.extractor.getExtractionDir(job.id),
+      });
+      return;
+    }
 
     logger.info(
       { jobId: job.id, relativePath },
@@ -120,17 +157,9 @@ export class IngestionPipeline {
 
     const result = await this.extractor.extract(job.id, job.source_path);
 
-    // Copy original file to vault attachments
-    const attachmentDir = join('attachments', '_unsorted');
-    await mkdir(join(this.vaultDir, attachmentDir), { recursive: true });
-    await copyFile(
-      job.source_path,
-      join(this.vaultDir, attachmentDir, fileName),
-    );
-
-    // Copy figures to vault attachments if any exist
+    // Copy figures to vault attachments (per-job directory)
     if (result.figures.length > 0) {
-      const figuresAttachDir = join(this.vaultDir, attachmentDir, 'figures');
+      const figuresAttachDir = join(this.vaultDir, 'attachments', job.id);
       await mkdir(figuresAttachDir, { recursive: true });
       for (const fig of result.figures) {
         await copyFile(
@@ -157,13 +186,24 @@ export class IngestionPipeline {
     const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
 
+    const draftsDir = join(this.vaultDir, 'drafts');
+    await mkdir(draftsDir, { recursive: true });
+
+    // Skip if valid drafts already exist (recovery re-run with prior output)
+    const existingValidation = validateDrafts(draftsDir, job.id, fileName);
+    if (existingValidation.valid) {
+      logger.info(
+        { jobId: job.id, relativePath },
+        'ingestion: Valid drafts already exist — skipping agent',
+      );
+      updateIngestionJob(job.id, { status: 'generated' });
+      return;
+    }
+
     logger.info(
       { jobId: job.id, relativePath },
       `ingestion: Generating: ${relativePath}`,
     );
-
-    const draftsDir = join(this.vaultDir, 'drafts');
-    await mkdir(draftsDir, { recursive: true });
 
     const extractionPath = job.extraction_path;
     if (!extractionPath) {
@@ -251,7 +291,6 @@ export class IngestionPipeline {
 
         // Delete sentinel so we can wait for a new one
         try {
-          const { unlinkSync } = await import('fs');
           unlinkSync(sentinelPath);
         } catch {
           // Already gone
