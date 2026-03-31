@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanoclaw.voxtral-tts</string>
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Replace with actual command during setup. Example for mlx-audio: -->
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>-m</string>
+        <string>mlx_audio.server</string>
+        <string>--model</string>
+        <string>mistralai/Voxtral-4B-TTS-2603</string>
+        <string>--port</string>
+        <string>8771</string>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/tmp/voxtral-tts.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/voxtral-tts.err</string>
+</dict>
+</plist>
