@@ -50,20 +50,25 @@ One new method on `RagClient` (`src/rag/rag-client.ts`):
 async deleteDocument(docId: string): Promise<void>
 ```
 
-Calls `DELETE /documents/` on the LightRAG HTTP API with the doc ID. Cascades to remove extracted entities and relations from the knowledge graph.
+Calls `DELETE /documents` on the LightRAG HTTP API with a JSON body `{"ids": ["<docId>"]}`. Cascades — LightRAG removes the document and its extracted entities/relations from the knowledge graph. Must verify the exact endpoint format against the running LightRAG version at implementation time.
 
 ### Hash Computation
 
 Doc IDs are computed locally to avoid parsing API responses:
 
 ```ts
+/** Strip only ASCII whitespace to match Python's str.strip(). */
+function pythonStrip(s: string): string {
+  return s.replace(/^[\t\n\r\f\v ]+|[\t\n\r\f\v ]+$/g, '');
+}
+
 function computeDocId(content: string): { hash: string; docId: string } {
-  const hash = md5(content.trim());  // matches Python's content.strip()
+  const hash = md5(pythonStrip(content));
   return { hash, docId: `doc-${hash}` };
 }
 ```
 
-Uses Node's built-in `crypto.createHash('md5')`. The hash is computed on the final indexed text (metadata prefix + body), matching what LightRAG receives and hashes server-side.
+Uses Node's built-in `crypto.createHash('md5')`. **Important:** JavaScript's `.trim()` strips Unicode whitespace (e.g., U+00A0 non-breaking spaces) that Python's `str.strip()` does not. Since LightRAG computes doc IDs in Python, we must match its exact behavior. The `pythonStrip` helper strips only ASCII whitespace characters `\t\n\r\f\v` and space. The hash is computed on the final indexed text (metadata prefix + body), matching what LightRAG receives and hashes server-side.
 
 ---
 
@@ -84,15 +89,25 @@ Uses Node's built-in `crypto.createHash('md5')`. The hash is computed on the fin
 1. Look up `getTrackedDoc(relPath)`
 2. If tracked -> `deleteDocument(docId)` -> `deleteTrackedDoc(relPath)`
 
+### On `unlink` via rename:
+
+File renames in the vault (e.g., `self-attention.md` -> `self-attention-mechanism.md`) emit `unlink` for the old path then `add` for the new path. This is handled correctly by the existing event handlers — the old path gets deleted from LightRAG and tracker, the new path gets indexed and tracked as a new file.
+
 ### On startup:
 
-Chokidar with `ignoreInitial: false` fires `add` for every existing file. The hash comparison in step 5 makes this cheap — only genuinely new or changed files hit the LightRAG API. First-ever startup indexes everything (empty tracker).
+Chokidar with `ignoreInitial: false` fires `add` for every existing file. The hash comparison in step 5 makes this cheap — only genuinely new or changed files hit the LightRAG API. First-ever startup indexes everything (empty tracker). Note: first-ever bulk index of a large vault (hundreds of notes) will be slow since each `index()` call involves LLM extraction on the LightRAG side — expect minutes, not seconds.
+
+**Crash recovery dependency:** If the process crashes between a `deleteDocument` and the subsequent `index` call (step 6), the content is temporarily missing from LightRAG. On next restart, `ignoreInitial: false` ensures chokidar fires `add` for the file, and since the tracker was not updated (crash happened before step 6 completes), the file gets reindexed. This recovery path depends entirely on `ignoreInitial: false` — changing it would break crash recovery.
 
 ### Error Handling
 
 - **`deleteDocument` fails** (LightRAG down, doc already gone) -> log warning, proceed with reindex anyway. Stale entities are better than missing content.
 - **`index` fails** -> log warning, don't update tracker. File will be retried on next event or restart.
 - **DB write fails** -> log error. Next restart will re-index the file (safe, just redundant).
+
+### Partial-write safety
+
+The existing chokidar config uses `awaitWriteFinish: { stabilityThreshold: 500 }`, which delays events until the file has been stable for 500ms. This prevents hashing a partially-written file. This setting must be preserved — without it, a `change` event on a half-written file could produce a hash that differs from the final content, causing a spurious delete+reindex cycle on the next event.
 
 ### Concurrency
 
@@ -125,7 +140,7 @@ File events can fire rapidly (startup walk, bulk promotions). Index calls are se
 
 ## 5. Testing
 
-- **`computeDocId` unit test:** Verify output matches LightRAG's Python `md5(content.strip())` for various inputs (ASCII, UTF-8, trailing whitespace)
+- **`computeDocId` unit test:** Verify output matches LightRAG's Python `md5(content.strip())` for various inputs (ASCII, UTF-8, trailing whitespace, non-breaking spaces U+00A0 at boundaries)
 - **Indexer logic unit tests:** Mock `RagClient` + DB helpers, verify correct behavior for each scenario:
   - New file -> index + track
   - Unchanged file -> skip
