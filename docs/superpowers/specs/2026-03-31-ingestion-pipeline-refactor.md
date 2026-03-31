@@ -13,7 +13,7 @@ The ingestion pipeline was built for bulk upload of mixed file types across univ
 - **No pre-generation check** — even when valid drafts exist from a prior run, the pipeline spawns a new agent container instead of skipping to promotion.
 - **File watcher accepts 14 file types** including Word temp files (`~$*.docx`) that immediately fail extraction.
 - **Attachment copy is redundant** — the original PDF is preserved in `upload/processed/`, but also copied to `vault/attachments/_unsorted/`.
-- **Dead code** in `db.ts` (`updateIngestionJobStatus`, duplicate `getIngestionJobs`).
+- **Dead code** in `db.ts` (`updateIngestionJobStatus`, `getStaleJobs` after recovery rewrite).
 - **Legacy filesystem clutter** — `upload/.processed/` (103 files), `vault/attachments/_unsorted/` (130+ files), empty vault subdirectories, 100+ stale extraction directories.
 
 ## Design
@@ -54,11 +54,31 @@ export function getCompletedJobByHash(hash: string): { id: string } | undefined 
 }
 ```
 
-Schema migration (in `runMigrations`):
+Update `createIngestionJob()` to accept and store the hash:
 
 ```ts
-database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN content_hash TEXT`);
-database.exec(`CREATE INDEX idx_ingestion_jobs_hash ON ingestion_jobs(content_hash)`);
+export function createIngestionJob(
+  id: string,
+  sourcePath: string,
+  sourceFilename: string,
+  contentHash: string,
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO ingestion_jobs (id, source_path, source_filename, content_hash)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(id, sourcePath, sourceFilename, contentHash);
+}
+```
+
+Schema migration (in `runMigrations`, wrapped in try/catch like existing migrations):
+
+```ts
+try {
+  database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN content_hash TEXT`);
+  database.exec(`CREATE INDEX idx_ingestion_jobs_hash ON ingestion_jobs(content_hash)`);
+} catch { /* column/index already exists */ }
 ```
 
 ### 3. Recovery — mark failed, no auto-retry
@@ -154,11 +174,11 @@ if (result.figures.length > 0) {
 
 | File | Fix |
 |------|-----|
-| `src/ingestion/index.ts:254` | Remove dynamic `import('fs')`, use top-level `unlinkSync` (already available via other imports in the file) |
+| `src/ingestion/index.ts:254` | Remove dynamic `import('fs')`, add `import { unlinkSync } from 'node:fs'` at top of file |
 | `src/ingestion/promoter.ts` | Add `mkdirSync(join(vaultDir, destFolder), { recursive: true })` before `renameSync` |
 | `src/db.ts:726-735` | Delete `updateIngestionJobStatus()` — dead code, superseded by `updateIngestionJob()` |
-| `src/db.ts:737-748` | Delete `getIngestionJobs()` — duplicate of `getJobsByStatus()`. Update any callers (dashboard API) to use `getJobsByStatus()` or `getRecentlyCompletedJobs()` |
-| `src/config.ts:131-133` | Change `SENTINEL_TIMEOUT` to use `parseInt(..., 10)` consistent with other timeouts |
+| `src/db.ts:758-767` | Delete `getStaleJobs()` — dead code after recovery rewrite (no callers outside tests) |
+| `src/config.ts:131-133` | Change `SENTINEL_TIMEOUT` to use `parseInt(..., 10)` for consistency (cosmetic, not a bug) |
 
 ### 8. One-time filesystem cleanup
 
