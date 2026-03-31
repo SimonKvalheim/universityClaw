@@ -17,7 +17,11 @@ const execFileAsync = promisify(execFile);
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendVoice?: (jid: string, filePath: string, caption?: string) => Promise<void>;
+  sendVoice?: (
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -141,15 +145,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
                       try {
                         // Convert WAV to OGG Opus for Telegram voice bubbles
-                        await execFileAsync('ffmpeg', [
-                          '-y',
-                          '-i', wavPath,
-                          '-c:a', 'libopus',
-                          '-b:a', '48k',
-                          '-vbr', 'on',
-                          '-application', 'voip',
-                          oggPath,
-                        ], { timeout: 30_000 });
+                        await execFileAsync(
+                          'ffmpeg',
+                          [
+                            '-y',
+                            '-i',
+                            wavPath,
+                            '-c:a',
+                            'libopus',
+                            '-b:a',
+                            '48k',
+                            '-vbr',
+                            'on',
+                            '-application',
+                            'voip',
+                            oggPath,
+                          ],
+                          { timeout: 30_000 },
+                        );
 
                         await deps.sendVoice(
                           data.chatJid,

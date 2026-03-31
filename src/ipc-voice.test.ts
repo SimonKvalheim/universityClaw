@@ -23,7 +23,11 @@ const OTHER_GROUP: RegisteredGroup = {
 
 describe('IPC voice dispatch', () => {
   let groups: Record<string, RegisteredGroup>;
-  let sendVoiceMock: (jid: string, filePath: string, caption?: string) => Promise<void>;
+  let sendVoiceMock: (
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ) => Promise<void>;
   let deps: IpcDeps;
 
   beforeEach(() => {

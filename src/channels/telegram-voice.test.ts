@@ -35,7 +35,9 @@ describe('Telegram voice transcription', () => {
     it('formats successful transcription with [Voice] prefix', () => {
       const stdout = ' Hei, dette er en test. ';
       const text = stdout.trim();
-      const result = text ? `[Voice]: ${text}` : '[Voice message (transcription failed)]';
+      const result = text
+        ? `[Voice]: ${text}`
+        : '[Voice message (transcription failed)]';
       expect(result).toBe('[Voice]: Hei, dette er en test.');
     });
   });
