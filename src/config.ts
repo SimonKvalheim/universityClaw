@@ -138,7 +138,7 @@ export const WHISPER_BIN_PATH =
   process.env.WHISPER_BIN_PATH || '/opt/homebrew/bin/whisper-cli';
 export const WHISPER_MODEL_PATH =
   process.env.WHISPER_MODEL_PATH ||
-  path.join(HOME_DIR, '.cache', 'whisper', 'nb-whisper-large-q5_0.bin');
+  path.join(HOME_DIR, '.cache', 'whisper', 'ggml-large-v3-turbo-q5_0.bin');
 
 // Voice: local TTS (Voxtral via MLX)
 export const VOXTRAL_TTS_PORT = parseInt(

@@ -11,7 +11,7 @@ describe('Telegram voice transcription', () => {
 
     it('WHISPER_MODEL_PATH has a sensible default', () => {
       expect(WHISPER_MODEL_PATH).toBeTruthy();
-      expect(WHISPER_MODEL_PATH).toMatch(/nb-whisper/);
+      expect(WHISPER_MODEL_PATH).toMatch(/whisper/);
     });
   });
 

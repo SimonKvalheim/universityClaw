@@ -348,14 +348,14 @@ export class TelegramChannel implements Channel {
             { timeout: 15_000 },
           );
 
-          // Transcribe with NB-Whisper
+          // Transcribe with Whisper (auto-detect language)
           const { stdout } = await execFileAsync(
             WHISPER_BIN_PATH,
             [
               '-m',
               WHISPER_MODEL_PATH,
               '-l',
-              'no',
+              'auto',
               '-f',
               wavPath,
               '--no-timestamps',
