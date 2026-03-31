@@ -2,10 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-import {
-  _initTestDatabase,
-  setRegisteredGroup,
-} from './db.js';
+import { _initTestDatabase, setRegisteredGroup } from './db.js';
 import { IpcDeps } from './ipc.js';
 import { RegisteredGroup } from './types.js';
 
@@ -41,7 +38,6 @@ describe('IPC voice dispatch', () => {
     sendVoiceMock = vi.fn().mockResolvedValue(undefined);
     deps = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
-      // @ts-expect-error sendVoice will be added in Task 5
       sendVoice: sendVoiceMock,
       registeredGroups: () => groups,
       registerGroup: () => {},
@@ -77,11 +73,19 @@ describe('IPC voice dispatch', () => {
 
   describe('voice IPC message validation', () => {
     it('requires type, chatJid, and file fields', () => {
-      const valid = { type: 'voice', chatJid: 'tg:-100main', file: '/workspace/group/audio/test.wav' };
-      expect(valid.type === 'voice' && valid.chatJid && valid.file).toBeTruthy();
+      const valid = {
+        type: 'voice',
+        chatJid: 'tg:-100main',
+        file: '/workspace/group/audio/test.wav',
+      };
+      expect(
+        valid.type === 'voice' && valid.chatJid && valid.file,
+      ).toBeTruthy();
 
       const noFile = { type: 'voice', chatJid: 'tg:-100main' } as any;
-      expect(noFile.type === 'voice' && noFile.chatJid && noFile.file).toBeFalsy();
+      expect(
+        noFile.type === 'voice' && noFile.chatJid && noFile.file,
+      ).toBeFalsy();
     });
   });
 
@@ -91,7 +95,8 @@ describe('IPC voice dispatch', () => {
       const isMain = true;
       const targetJid = 'tg:-100other';
       const targetGroup = groups[targetJid];
-      const authorized = isMain || (targetGroup && targetGroup.folder === sourceGroup);
+      const authorized =
+        isMain || (targetGroup && targetGroup.folder === sourceGroup);
       expect(authorized).toBe(true);
     });
 
@@ -102,12 +107,16 @@ describe('IPC voice dispatch', () => {
       // Own chat — authorized
       const ownJid = 'tg:-100other';
       const ownTarget = groups[ownJid];
-      expect(isMain || (ownTarget && ownTarget.folder === sourceGroup)).toBe(true);
+      expect(isMain || (ownTarget && ownTarget.folder === sourceGroup)).toBe(
+        true,
+      );
 
       // Other chat — unauthorized
       const otherJid = 'tg:-100main';
       const otherTarget = groups[otherJid];
-      expect(isMain || (otherTarget && otherTarget.folder === sourceGroup)).toBe(false);
+      expect(
+        isMain || (otherTarget && otherTarget.folder === sourceGroup),
+      ).toBe(false);
     });
   });
 
