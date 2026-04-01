@@ -181,6 +181,9 @@ function createSchema(database: Database.Database): void {
     database.exec(
       `ALTER TABLE ingestion_jobs ADD COLUMN retry_count INTEGER DEFAULT 0`,
     );
+    database.exec(
+      `UPDATE ingestion_jobs SET retry_count = 0 WHERE retry_count IS NULL`,
+    );
   } catch {
     /* column already exists */
   }
