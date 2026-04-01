@@ -650,6 +650,7 @@ async function main(): Promise<void> {
     uploadDir: UPLOAD_DIR,
     vaultDir: VAULT_DIR,
     reviewAgentGroup: registeredGroups[REVIEW_AGENT_JID],
+    maxGenerationConcurrent: 2,
   });
   await pipeline.start();
 

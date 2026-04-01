@@ -14,6 +14,7 @@ import {
   sendIpcClose,
   sendIpcMessage,
   cleanupSentinel,
+  cleanupDraftBundle,
 } from './sentinel.js';
 import { validateDrafts, formatValidationMessage } from './draft-validator.js';
 import {
@@ -27,6 +28,7 @@ import {
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
 import {
+  DATA_DIR,
   MAX_EXTRACTION_CONCURRENT,
   EXTRACTIONS_DIR,
   SENTINEL_TIMEOUT,
@@ -80,7 +82,8 @@ export class IngestionPipeline {
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
       maxGenerationConcurrent: () => {
-        const val = getSetting('maxGenerationConcurrent', '1');
+        const fallback = String(opts.maxGenerationConcurrent ?? 1);
+        const val = getSetting('maxGenerationConcurrent', fallback);
         return Math.max(1, Math.min(5, parseInt(val, 10) || 1));
       },
       pollIntervalMs: 5000,
@@ -228,7 +231,6 @@ export class IngestionPipeline {
       throw new Error(`No extraction path for job ${job.id}`);
     }
 
-    const dataDir = process.cwd();
     const sentinelPath = join(draftsDir, `${job.id}-complete`);
 
     // Shared abort controller — either side can signal the other to stop.
@@ -256,7 +258,7 @@ export class IngestionPipeline {
             { jobId: job.id },
             'Sentinel timeout — sending IPC close',
           );
-          sendIpcClose(job.id, dataDir);
+          sendIpcClose(job.id, DATA_DIR);
           throw new Error('Agent did not complete within sentinel timeout');
         }
 
@@ -273,12 +275,12 @@ export class IngestionPipeline {
           // Tell the agent validation passed, then close the session
           sendIpcMessage(
             job.id,
-            dataDir,
+            DATA_DIR,
             'Output validation passed. Your work is complete. Shutting down.',
           );
           // Small delay so the agent receives the message before _close
           await new Promise((r) => setTimeout(r, 500));
-          sendIpcClose(job.id, dataDir);
+          sendIpcClose(job.id, DATA_DIR);
           return;
         }
 
@@ -295,11 +297,11 @@ export class IngestionPipeline {
           );
           sendIpcMessage(
             job.id,
-            dataDir,
+            DATA_DIR,
             `Validation failed after ${maxAttempts} attempts. Shutting down.\n\n${formatValidationMessage(validation)}`,
           );
           await new Promise((r) => setTimeout(r, 500));
-          sendIpcClose(job.id, dataDir);
+          sendIpcClose(job.id, DATA_DIR);
           // Signal the container to stop waiting
           ac.abort();
           throw new Error(
@@ -315,7 +317,7 @@ export class IngestionPipeline {
         }
 
         // Send corrections to agent via IPC — agent fixes and writes new sentinel
-        sendIpcMessage(job.id, dataDir, formatValidationMessage(validation));
+        sendIpcMessage(job.id, DATA_DIR, formatValidationMessage(validation));
       }
     };
 
@@ -442,8 +444,9 @@ export class IngestionPipeline {
       logger.warn({ jobId: job.id }, 'Failed to move source to processed/');
     }
 
-    // Cleanup
+    // Cleanup — sentinel, manifest, any remaining draft files, extraction artifacts
     cleanupSentinel(draftsDir, job.id);
+    cleanupDraftBundle(draftsDir, job.id);
     await this.extractor.cleanup(job.id);
     await this.pruneEmptyDirs(dirname(job.source_path));
 

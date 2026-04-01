@@ -46,7 +46,14 @@ describe('FileWatcher', () => {
   });
 
   it('ignores non-PDF file types', async () => {
-    const files = ['file.docx', 'file.pptx', 'file.txt', 'file.md', 'file.png', 'file.csv'];
+    const files = [
+      'file.docx',
+      'file.pptx',
+      'file.txt',
+      'file.md',
+      'file.png',
+      'file.csv',
+    ];
     for (const name of files) {
       await writeFile(join(tmpDir, name), 'content');
     }
