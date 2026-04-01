@@ -32,7 +32,17 @@ describe('TTS validation', () => {
 
   describe('validateTtsLanguage', () => {
     it('accepts all supported languages', () => {
-      for (const lang of ['en', 'de', 'it', 'fr', 'es', 'pt', 'nl', 'ar', 'hi']) {
+      for (const lang of [
+        'en',
+        'de',
+        'it',
+        'fr',
+        'es',
+        'pt',
+        'nl',
+        'ar',
+        'hi',
+      ]) {
         expect(validateTtsLanguage(lang)).toBeNull();
       }
     });

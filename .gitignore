@@ -22,6 +22,7 @@ dist/
 store/
 data/
 logs/
+ipc/
 
 # ------ Groups ------
 # Only track base structure and specific CLAUDE.md files

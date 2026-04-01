@@ -98,7 +98,7 @@ This is a fork of NanoClaw customized as a personal university teaching assistan
 - `scripts/docling-extract.py` — Python document extraction script
 - `store/messages.db` — SQLite database (messages, tasks, ingestion jobs, RAG tracker)
 - `data/` — IPC files, extraction artifacts
-- `onecli/` — OneCLI credential gateway Docker Compose config
+- `onecli/` — OneCLI credential gateway config (containers already built; for new installs, run `/init-onecli`)
 
 ### Testing
 
@@ -114,18 +114,18 @@ universityClaw runs as a stack of 4 services. All must be running for full funct
 | Service | What it does | How to start | How to stop | Port |
 |---------|-------------|--------------|-------------|------|
 | **NanoClaw** | Main orchestrator (Node.js) | `npm run dev` | Ctrl+C or `kill <pid>` | — |
-| **LightRAG** | RAG server (Python) | `python3 -m lightrag.api.lightrag_server` | `kill <pid>` | 9621 |
-| **OneCLI** | Credential proxy (Docker) | `docker compose -f onecli/docker-compose.yml up -d` | `docker compose -f onecli/docker-compose.yml down` | 10254 |
+| **LightRAG** | RAG server (Python, venv) | `.venv/bin/python3 -m lightrag.api.lightrag_server --port 9621 --working-dir ./data/lightrag` | `pkill -f lightrag` | 9621 |
+| **OneCLI** | Credential proxy (Docker) | `docker restart onecli-app-1 onecli-postgres-1` | `docker stop onecli-app-1 onecli-postgres-1` | 10254 |
 | **Dashboard** | Web UI (Next.js) | `cd dashboard && npm run dev` | Ctrl+C or `kill <pid>` | 3100 |
 
 ### Start Everything
 
 ```bash
-# 1. OneCLI (credential proxy — Docker)
-docker compose -f onecli/docker-compose.yml up -d
+# 1. OneCLI (credential proxy — restart existing containers)
+docker restart onecli-app-1 onecli-postgres-1
 
-# 2. LightRAG (RAG server — background)
-python3 -m lightrag.api.lightrag_server &
+# 2. LightRAG (RAG server — uses .venv, reads config from .env)
+.venv/bin/python3 -m lightrag.api.lightrag_server --port 9621 --working-dir ./data/lightrag &
 
 # 3. Dashboard (web UI — background)
 cd dashboard && npm run dev &
@@ -144,7 +144,7 @@ pkill -f "tsx src/index.ts"
 pkill -f "next dev.*dashboard"
 
 # Stop OneCLI containers
-docker compose -f onecli/docker-compose.yml down
+docker stop onecli-app-1 onecli-postgres-1
 ```
 
 ### Verify Status
@@ -172,6 +172,10 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 | `MAX_CONCURRENT_CONTAINERS` | `5` | Parallel container limit |
 | `EXTRACTION_TIMEOUT` | `600000` (10min) | Docling per-document timeout |
 | `DASHBOARD_PORT` | `3100` | Dashboard web UI port |
+| `LLM_BINDING` | `ollama` | LightRAG LLM provider (entity extraction) |
+| `LLM_MODEL` | `qwen2.5:3b` | LightRAG LLM model |
+| `EMBEDDING_BINDING` | `ollama` | LightRAG embedding provider |
+| `EMBEDDING_MODEL` | `bge-m3:latest` | LightRAG embedding model |
 | `TZ` | auto-detected | Timezone for scheduling |
 
 ## Container Build Cache

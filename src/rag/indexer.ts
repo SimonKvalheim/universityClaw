@@ -7,7 +7,14 @@ import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
 import { computeDocId } from './doc-id.js';
 
-/** Paths relative to vaultDir that should be indexed. */
+/**
+ * Paths relative to vaultDir that should be indexed into LightRAG.
+ * Only sources/, concepts/, and profile/archive/ are indexed.
+ * profile/ top-level docs (student profile, knowledge map, study log) are
+ * working documents read in full by the agent — not suitable for RAG retrieval.
+ * Explicitly excluded: drafts/ (working area for ingestion pipeline),
+ * attachments/ (binary figures), and any other top-level directories.
+ */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
 
 export class RagIndexer {

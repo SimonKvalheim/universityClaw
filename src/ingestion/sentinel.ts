@@ -1,4 +1,10 @@
-import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import {
+  existsSync,
+  writeFileSync,
+  unlinkSync,
+  mkdirSync,
+  readdirSync,
+} from 'fs';
 import { join } from 'path';
 import { logger } from '../logger.js';
 
@@ -72,6 +78,31 @@ export function cleanupSentinel(draftsDir: string, jobId: string): void {
       unlinkSync(f);
     } catch {
       // Already deleted or never existed
+    }
+  }
+}
+
+/**
+ * Removes all remaining files belonging to a draft bundle ({jobId}-*).
+ * Called after promotion to clean up any leftover draft .md files.
+ * promoteNote() moves promoted drafts via renameSync, but files may remain
+ * if the manifest had concept_notes: [] or promotion partially failed.
+ */
+export function cleanupDraftBundle(draftsDir: string, jobId: string): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(draftsDir);
+  } catch {
+    return;
+  }
+  const prefix = `${jobId}-`;
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    try {
+      unlinkSync(join(draftsDir, entry));
+      logger.info({ jobId, file: entry }, 'Cleaned up leftover draft file');
+    } catch {
+      // Already deleted
     }
   }
 }
