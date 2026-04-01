@@ -120,14 +120,14 @@ export function deleteCitationEdges(sourceSlug: string): void {
 
 export function getCites(sourceSlug: string): string[] {
   const rows = db
-    .prepare('SELECT target_slug FROM citation_edges WHERE source_slug = ?')
+    .prepare('SELECT target_slug FROM citation_edges WHERE source_slug = ? ORDER BY target_slug')
     .all(sourceSlug) as { target_slug: string }[];
   return rows.map((r) => r.target_slug);
 }
 
 export function getCitedBy(targetSlug: string): string[] {
   const rows = db
-    .prepare('SELECT source_slug FROM citation_edges WHERE target_slug = ?')
+    .prepare('SELECT source_slug FROM citation_edges WHERE target_slug = ? ORDER BY source_slug')
     .all(targetSlug) as { source_slug: string }[];
   return rows.map((r) => r.source_slug);
 }
@@ -495,12 +495,6 @@ In `handleGeneration()`, after the line `const extractionPath = job.extraction_p
 Update the `this.agentProcessor.process()` call (~line 308) to pass the manifest:
 
 ```typescript
-      const output = await runContainerAgent(
-```
-
-Wait — the manifest needs to go through `AgentProcessor.process()`. Update the call on ~line 308:
-
-```typescript
     const containerPromise = this.agentProcessor
       .process(extractionPath, fileName, job.id, this.reviewAgentGroup, vaultManifest)
       .finally(() => ac.abort());
@@ -528,7 +522,7 @@ git commit -m "feat: wire vault manifest into ingestion pipeline generation step
 
 - [ ] **Step 1: Write failing tests for bibliography detection and parsing**
 
-Create `src/ingestion/citation-linker.test.ts`:
+Create `src/ingestion/citation-linker.test.ts` (these imports will be expanded in Task 6):
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -745,16 +739,20 @@ export function extractBibliography(content: string): BibEntry[] {
 
   if (listItems.length < 3) return [];
 
-  // Find the largest contiguous cluster (allowing up to 2 non-list_item lines gap)
-  // scanning from the end of the document
+  // Find the largest contiguous cluster (allowing up to 2 non-marker, non-empty
+  // lines between items) scanning from the end of the document
   let clusterEnd = listItems.length - 1;
   let clusterStart = clusterEnd;
 
   for (let i = listItems.length - 2; i >= 0; i--) {
-    // Check gap: count non-list_item lines between this item and the next
-    const gap = listItems[i + 1].lineIndex - listItems[i].lineIndex;
-    // A "gap" of more than ~4 lines (marker + text + blank + marker) means they're separate
-    if (gap > 6) break;
+    // Count non-marker, non-empty lines between consecutive list_item blocks
+    let nonMarkerLines = 0;
+    for (let ln = listItems[i].lineIndex + 1; ln < listItems[i + 1].lineIndex; ln++) {
+      const line = lines[ln].trim();
+      if (line === '' || /<!-- page:\d+/.test(line)) continue;
+      nonMarkerLines++;
+    }
+    if (nonMarkerLines > 2) break;
     clusterStart = i;
   }
 
@@ -798,9 +796,10 @@ git commit -m "feat: add bibliography parsing and author name normalization"
 
 - [ ] **Step 1: Write failing tests for source matching and frontmatter updates**
 
-Add to `src/ingestion/citation-linker.test.ts`:
+Add to `src/ingestion/citation-linker.test.ts`. First, update the imports at the top of the file to include everything needed for Tasks 5 and 6:
 
 ```typescript
+import { describe, it, expect, beforeEach } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -810,10 +809,15 @@ import {
   buildSourceIndex,
   linkCitations,
   filterDeadReferences,
+  BibEntry,
 } from './citation-linker.js';
+import { parseFrontmatter } from '../vault/frontmatter.js';
+import { _initTestDatabase, getCites, deleteCitationEdges } from '../db.js';
+```
 
-// Add after existing describe blocks:
+Then add after the existing describe blocks from Task 5:
 
+```typescript
 const TMP = join(import.meta.dirname, '../../.test-tmp/citation-linker');
 const VAULT = join(TMP, 'vault');
 const SOURCES = join(VAULT, 'sources');
@@ -875,6 +879,7 @@ describe('buildSourceIndex', () => {
 
 describe('linkCitations', () => {
   beforeEach(() => {
+    _initTestDatabase();
     rmSync(TMP, { recursive: true, force: true });
     mkdirSync(SOURCES, { recursive: true });
   });
@@ -972,6 +977,42 @@ describe('linkCitations', () => {
     const { data: fm } = parseFrontmatter(readFileSync(newSourcePath, 'utf-8'));
     expect(fm.cites).toBeUndefined();
   });
+
+  it('re-ingestion: deleteCitationEdges clears old edges before rebuild', () => {
+    // Simulate first ingestion: mayer-2005 cites kirschner-2002
+    writeFileSync(
+      join(SOURCES, 'kirschner-2002.md'),
+      '---\ntitle: "CLT"\ntype: source\nauthors:\n  - "Paul A. Kirschner"\npublished: 2002\n---\nContent',
+    );
+    writeFileSync(
+      join(SOURCES, 'sweller-1999.md'),
+      '---\ntitle: "Instructional Design"\ntype: source\nauthors:\n  - "John Sweller"\npublished: 1999\n---\nContent',
+    );
+
+    const newSourcePath = join(SOURCES, 'mayer-2005.md');
+    writeFileSync(
+      newSourcePath,
+      '---\ntitle: "Multimedia"\ntype: source\nauthors:\n  - "Richard E. Mayer"\npublished: 2005\n---\nContent',
+    );
+
+    // First ingestion: cites kirschner
+    linkCitations([{ lastName: 'kirschner', year: '2002' }], newSourcePath, SOURCES);
+
+    expect(getCites('mayer-2005')).toEqual(['kirschner-2002']);
+
+    // Re-ingestion: clear old edges, now cites sweller instead
+    deleteCitationEdges('mayer-2005');
+
+    // Rewrite the source file fresh (simulating re-promotion)
+    writeFileSync(
+      newSourcePath,
+      '---\ntitle: "Multimedia"\ntype: source\nauthors:\n  - "Richard E. Mayer"\npublished: 2005\n---\nContent',
+    );
+
+    linkCitations([{ lastName: 'sweller', year: '1999' }], newSourcePath, SOURCES);
+
+    expect(getCites('mayer-2005')).toEqual(['sweller-1999']);
+  });
 });
 
 describe('filterDeadReferences', () => {
@@ -1003,7 +1044,7 @@ describe('filterDeadReferences', () => {
 });
 ```
 
-Add `beforeEach` import at the top if not already present. Also add imports for `parseFrontmatter` from `../vault/frontmatter.js` and `BibEntry`.
+The import block at the top of the file was already updated above to include `beforeEach`, `parseFrontmatter`, `_initTestDatabase`, and `BibEntry`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1139,7 +1180,7 @@ export function filterDeadReferences(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run src/ingestion/citation-linker.test.ts --reporter=verbose 2>&1 | tail -20`
-Expected: PASS (note: `linkCitations` tests that call `insertCitationEdge` will need the DB initialized — if they fail because the DB isn't set up in the test environment, mock the DB calls or wrap them in try/catch in the test. The frontmatter tests should pass regardless.)
+Expected: PASS
 
 - [ ] **Step 5: Commit**
 
@@ -1163,7 +1204,7 @@ At the top of `src/ingestion/index.ts`, add:
 import { extractBibliography, linkCitations } from './citation-linker.js';
 ```
 
-And add `deleteCitationEdges` to the existing `../db.js` import:
+And add `deleteCitationEdges` to the existing `../db.js` import (which currently imports `createIngestionJob`, `getIngestionJobByPath`, `getCompletedJobByHash`, `updateIngestionJob`, `getSetting`, `getIngestionJobs`):
 
 ```typescript
 import {
@@ -1171,6 +1212,8 @@ import {
   getIngestionJobByPath,
   getCompletedJobByHash,
   updateIngestionJob,
+  getSetting,
+  getIngestionJobs,
   deleteCitationEdges,
 } from '../db.js';
 ```
