@@ -8,6 +8,7 @@ import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
 import { markInterruptedJobsFailed } from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
+import { buildVaultManifest } from './vault-manifest.js';
 import { promoteNote } from './promoter.js';
 import {
   waitForSentinel,
@@ -231,6 +232,13 @@ export class IngestionPipeline {
       throw new Error(`No extraction path for job ${job.id}`);
     }
 
+    let vaultManifest: string | undefined;
+    try {
+      vaultManifest = buildVaultManifest(this.vaultDir);
+    } catch (err) {
+      logger.warn({ jobId: job.id, err }, 'Failed to build vault manifest — proceeding without it');
+    }
+
     const sentinelPath = join(draftsDir, `${job.id}-complete`);
 
     // Shared abort controller — either side can signal the other to stop.
@@ -325,7 +333,7 @@ export class IngestionPipeline {
     // When the container exits (success or error), abort the validation loop.
     // When validation fails terminally, it aborts before throwing.
     const containerPromise = this.agentProcessor
-      .process(extractionPath, fileName, job.id, this.reviewAgentGroup)
+      .process(extractionPath, fileName, job.id, this.reviewAgentGroup, vaultManifest)
       .finally(() => ac.abort());
 
     const validationPromise = validationLoop();
