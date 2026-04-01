@@ -200,6 +200,16 @@ function createSchema(database: Database.Database): void {
     )
   `);
 
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS citation_edges (
+      source_slug TEXT NOT NULL,
+      target_slug TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      PRIMARY KEY (source_slug, target_slug)
+    );
+    CREATE INDEX IF NOT EXISTS idx_citation_target ON citation_edges(target_slug);
+  `);
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -918,6 +928,38 @@ export function deleteTrackedDoc(vaultPath: string): void {
   db.prepare('DELETE FROM rag_index_tracker WHERE vault_path = ?').run(
     vaultPath,
   );
+}
+
+// --- Citation edges ---
+
+export function insertCitationEdge(
+  sourceSlug: string,
+  targetSlug: string,
+): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO citation_edges (source_slug, target_slug, created_at)
+     VALUES (?, ?, ?)`,
+  ).run(sourceSlug, targetSlug, new Date().toISOString());
+}
+
+export function deleteCitationEdges(sourceSlug: string): void {
+  db.prepare('DELETE FROM citation_edges WHERE source_slug = ?').run(
+    sourceSlug,
+  );
+}
+
+export function getCites(sourceSlug: string): string[] {
+  const rows = db
+    .prepare('SELECT target_slug FROM citation_edges WHERE source_slug = ? ORDER BY target_slug')
+    .all(sourceSlug) as { target_slug: string }[];
+  return rows.map((r) => r.target_slug);
+}
+
+export function getCitedBy(targetSlug: string): string[] {
+  const rows = db
+    .prepare('SELECT source_slug FROM citation_edges WHERE target_slug = ? ORDER BY source_slug')
+    .all(targetSlug) as { source_slug: string }[];
+  return rows.map((r) => r.source_slug);
 }
 
 // --- JSON migration ---

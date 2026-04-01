@@ -21,6 +21,10 @@ import {
   getIngestionJobs,
   getSetting,
   setSetting,
+  insertCitationEdge,
+  deleteCitationEdges,
+  getCites,
+  getCitedBy,
 } from './db.js';
 
 beforeEach(() => {
@@ -546,7 +550,10 @@ describe('updateIngestionJob retry/promoted fields', () => {
 
   it('stores and retrieves promoted_paths via updateIngestionJob', () => {
     createIngestionJob('job-r3', '/upload/file.pdf', 'file.pdf');
-    const paths = JSON.stringify(['vault/concepts/foo.md', 'vault/sources/bar.md']);
+    const paths = JSON.stringify([
+      'vault/concepts/foo.md',
+      'vault/sources/bar.md',
+    ]);
     updateIngestionJob('job-r3', { promoted_paths: paths });
     const jobs = getIngestionJobs() as Array<Record<string, unknown>>;
     const job = jobs.find((j) => j['id'] === 'job-r3');
@@ -586,5 +593,40 @@ describe('getSetting and setSetting', () => {
     setSetting('key.b', 'beta');
     expect(getSetting('key.a', '')).toBe('alpha');
     expect(getSetting('key.b', '')).toBe('beta');
+  });
+});
+
+describe('citation edges', () => {
+  it('inserts and retrieves citation edges', () => {
+    insertCitationEdge('source-a', 'source-b');
+    insertCitationEdge('source-a', 'source-c');
+
+    expect(getCites('source-a')).toEqual(['source-b', 'source-c']);
+    expect(getCitedBy('source-b')).toEqual(['source-a']);
+    expect(getCitedBy('source-c')).toEqual(['source-a']);
+  });
+
+  it('ignores duplicate edges', () => {
+    insertCitationEdge('source-a', 'source-b');
+    insertCitationEdge('source-a', 'source-b');
+
+    expect(getCites('source-a')).toEqual(['source-b']);
+  });
+
+  it('deletes all edges for a source (re-ingestion rebuild)', () => {
+    insertCitationEdge('source-a', 'source-b');
+    insertCitationEdge('source-a', 'source-c');
+    insertCitationEdge('source-d', 'source-a');
+
+    deleteCitationEdges('source-a');
+
+    expect(getCites('source-a')).toEqual([]);
+    // Edges where source-a is the target are untouched
+    expect(getCitedBy('source-a')).toEqual(['source-d']);
+  });
+
+  it('returns empty arrays for unknown slugs', () => {
+    expect(getCites('nonexistent')).toEqual([]);
+    expect(getCitedBy('nonexistent')).toEqual([]);
   });
 });
