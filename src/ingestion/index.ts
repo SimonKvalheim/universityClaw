@@ -477,10 +477,16 @@ export class IngestionPipeline {
             'Citation linking completed',
           );
         } else {
-          logger.info({ jobId: job.id }, 'No bibliography entries found — skipping citation linking');
+          logger.info(
+            { jobId: job.id },
+            'No bibliography entries found — skipping citation linking',
+          );
         }
       } catch (err) {
-        logger.warn({ jobId: job.id, err }, 'Citation linking failed — continuing without it');
+        logger.warn(
+          { jobId: job.id, err },
+          'Citation linking failed — continuing without it',
+        );
       }
     }
 

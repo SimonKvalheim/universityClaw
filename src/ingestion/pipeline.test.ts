@@ -155,7 +155,11 @@ describe('PipelineDrainer', () => {
     it('skips jobs whose retry_after is in the future', () => {
       const futureDate = new Date(Date.now() + 600_000).toISOString();
 
-      createIngestionJob('rl-future', '/uploads/rl-future.pdf', 'rl-future.pdf');
+      createIngestionJob(
+        'rl-future',
+        '/uploads/rl-future.pdf',
+        'rl-future.pdf',
+      );
       updateIngestionJob('rl-future', {
         status: 'rate_limited',
         error: 'generating:rate limit',

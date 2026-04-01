@@ -92,7 +92,13 @@ Process this document following your ingestion workflow.`;
       }
     }
 
-    const prompt = this.buildPrompt(extractedContent, fileName, jobId, figures, vaultManifest);
+    const prompt = this.buildPrompt(
+      extractedContent,
+      fileName,
+      jobId,
+      figures,
+      vaultManifest,
+    );
 
     logger.info(
       { fileName, jobId, figures: figures.length },

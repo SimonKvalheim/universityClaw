@@ -220,7 +220,9 @@ describe('linkCitations', () => {
     const bibEntries: BibEntry[] = [{ lastName: 'kirschner', year: '2002' }];
     linkCitations(bibEntries, newSourcePath, SOURCES);
 
-    const { data: newFm } = parseFrontmatter(readFileSync(newSourcePath, 'utf-8'));
+    const { data: newFm } = parseFrontmatter(
+      readFileSync(newSourcePath, 'utf-8'),
+    );
     expect(newFm.cites).toEqual(['kirschner-2002']);
 
     const { data: existingFm } = parseFrontmatter(
@@ -244,7 +246,9 @@ describe('linkCitations', () => {
     const bibEntries: BibEntry[] = [{ lastName: 'kirschner', year: '2002' }];
     linkCitations(bibEntries, newSourcePath, SOURCES);
 
-    const { data: newFm } = parseFrontmatter(readFileSync(newSourcePath, 'utf-8'));
+    const { data: newFm } = parseFrontmatter(
+      readFileSync(newSourcePath, 'utf-8'),
+    );
     expect(newFm.cites).toEqual(['other-source', 'kirschner-2002']);
 
     const { data: existingFm } = parseFrontmatter(
@@ -268,7 +272,9 @@ describe('linkCitations', () => {
     const bibEntries: BibEntry[] = [{ lastName: 'kirschner', year: '2002' }];
     linkCitations(bibEntries, newSourcePath, SOURCES);
 
-    const { data: newFm } = parseFrontmatter(readFileSync(newSourcePath, 'utf-8'));
+    const { data: newFm } = parseFrontmatter(
+      readFileSync(newSourcePath, 'utf-8'),
+    );
     expect(newFm.cites).toEqual(['kirschner-2002']);
 
     const { data: existingFm } = parseFrontmatter(
@@ -308,7 +314,11 @@ describe('linkCitations', () => {
     );
 
     // First ingestion: cites kirschner
-    linkCitations([{ lastName: 'kirschner', year: '2002' }], newSourcePath, SOURCES);
+    linkCitations(
+      [{ lastName: 'kirschner', year: '2002' }],
+      newSourcePath,
+      SOURCES,
+    );
     expect(getCites('mayer-2005')).toEqual(['kirschner-2002']);
 
     // Re-ingestion: clear old edges, now cites sweller instead
@@ -320,7 +330,11 @@ describe('linkCitations', () => {
       '---\ntitle: "Multimedia"\ntype: source\nauthors:\n  - "Richard E. Mayer"\npublished: 2005\n---\nContent',
     );
 
-    linkCitations([{ lastName: 'sweller', year: '1999' }], newSourcePath, SOURCES);
+    linkCitations(
+      [{ lastName: 'sweller', year: '1999' }],
+      newSourcePath,
+      SOURCES,
+    );
     expect(getCites('mayer-2005')).toEqual(['sweller-1999']);
   });
 });
@@ -332,7 +346,10 @@ describe('filterDeadReferences', () => {
   });
 
   it('filters out slugs that do not have corresponding files', () => {
-    writeFileSync(join(SOURCES, 'exists.md'), '---\ntitle: Exists\n---\nContent');
+    writeFileSync(
+      join(SOURCES, 'exists.md'),
+      '---\ntitle: Exists\n---\nContent',
+    );
     const result = filterDeadReferences(['exists', 'gone'], SOURCES);
     expect(result).toEqual(['exists']);
   });
