@@ -6,7 +6,7 @@ import { logger } from '../logger.js';
  * No auto-retry — failures surface in the dashboard for manual re-upload.
  */
 export function markInterruptedJobsFailed(): number {
-  const inProgressStatuses = ['extracting', 'generating', 'promoting'];
+  const inProgressStatuses = ['extracting', 'generating', 'promoting', 'rate_limited'];
   let count = 0;
 
   for (const status of inProgressStatuses) {

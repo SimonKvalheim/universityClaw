@@ -21,6 +21,8 @@ import {
   getIngestionJobByPath,
   getCompletedJobByHash,
   updateIngestionJob,
+  getSetting,
+  getIngestionJobs,
 } from '../db.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
@@ -30,6 +32,14 @@ import {
   SENTINEL_TIMEOUT,
   PROCESSED_DIR,
 } from '../config.js';
+
+const RATE_LIMIT_PATTERNS = [
+  /rate.?limit/i, /session.?limit/i, /overloaded/i,
+  /429/, /529/, /too many requests/i, /capacity/i,
+];
+function isRateLimitError(msg: string): boolean {
+  return RATE_LIMIT_PATTERNS.some((re) => re.test(msg));
+}
 
 export interface IngestionPipelineOpts {
   uploadDir: string;
@@ -64,7 +74,10 @@ export class IngestionPipeline {
       onGenerate: (job) => this.handleGeneration(job),
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
-      maxGenerationConcurrent: opts.maxGenerationConcurrent ?? 1,
+      maxGenerationConcurrent: () => {
+        const val = getSetting('maxGenerationConcurrent', '1');
+        return Math.max(1, Math.min(5, parseInt(val, 10) || 1));
+      },
       pollIntervalMs: 5000,
     });
   }
@@ -316,19 +329,47 @@ export class IngestionPipeline {
       validationPromise,
     ]);
 
-    // If the container errored, that takes priority.
+    // Collect the error (if any) from either promise.
+    let error: Error | undefined;
     if (containerSettled.status === 'rejected') {
-      throw containerSettled.reason;
+      error = containerSettled.reason instanceof Error
+        ? containerSettled.reason
+        : new Error(String(containerSettled.reason));
+    } else if (validationSettled.status === 'rejected') {
+      error = validationSettled.reason instanceof Error
+        ? validationSettled.reason
+        : new Error(String(validationSettled.reason));
+    } else {
+      const result = containerSettled.value;
+      if (result.status === 'error') {
+        error = new Error(result.error || 'Agent processing failed');
+      }
     }
 
-    // If validation errored (and the container didn't), surface that.
-    if (validationSettled.status === 'rejected') {
-      throw validationSettled.reason;
-    }
+    if (error) {
+      const msg = error.message;
+      if (isRateLimitError(msg)) {
+        // Look up current retry_count from DB
+        const allJobs = getIngestionJobs('generating') as JobRow[];
+        const current = allJobs.find((j) => j.id === job.id);
+        const retryCount = current?.retry_count ?? 0;
+        const delays = [5 * 60_000, 15 * 60_000, 60 * 60_000]; // 5min, 15min, 60min
+        const delay = delays[Math.min(retryCount, delays.length - 1)];
+        const retryAfter = new Date(Date.now() + delay).toISOString();
 
-    const result = containerSettled.value;
-    if (result.status === 'error') {
-      throw new Error(result.error || 'Agent processing failed');
+        updateIngestionJob(job.id, {
+          status: 'rate_limited',
+          error: `generating:${msg}`,
+          retry_after: retryAfter,
+          retry_count: retryCount + 1,
+        });
+        logger.warn(
+          { jobId: job.id, retryAfter, retryCount: retryCount + 1 },
+          `ingestion: Rate limited, will retry after ${retryAfter}`,
+        );
+        return; // Do NOT re-throw — prevent drainer catch from overriding to 'failed'
+      }
+      throw error;
     }
 
     updateIngestionJob(job.id, { status: 'generated' });
@@ -400,7 +441,10 @@ export class IngestionPipeline {
     await this.extractor.cleanup(job.id);
     await this.pruneEmptyDirs(dirname(job.source_path));
 
-    updateIngestionJob(job.id, { status: 'completed' });
+    updateIngestionJob(job.id, {
+      status: 'completed',
+      promoted_paths: JSON.stringify(promotedPaths),
+    });
 
     logger.info(
       { jobId: job.id, relativePath, notes: promotedPaths.length },
