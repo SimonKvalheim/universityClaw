@@ -15,6 +15,13 @@ import {
   updateTask,
 } from './db.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from './db.js';
+import {
+  createIngestionJob,
+  updateIngestionJob,
+  getIngestionJobs,
+  getSetting,
+  setSetting,
+} from './db.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -514,5 +521,70 @@ describe('rag_index_tracker', () => {
 
   it('deleteTrackedDoc is safe for nonexistent path', () => {
     expect(() => deleteTrackedDoc('nope.md')).not.toThrow();
+  });
+});
+
+// --- updateIngestionJob: retry_after, retry_count, promoted_paths ---
+
+describe('updateIngestionJob retry/promoted fields', () => {
+  it('stores and retrieves retry_after via updateIngestionJob', () => {
+    createIngestionJob('job-r1', '/upload/file.pdf', 'file.pdf');
+    updateIngestionJob('job-r1', { retry_after: '2026-04-01T12:00:00.000Z' });
+    const jobs = getIngestionJobs() as Array<Record<string, unknown>>;
+    const job = jobs.find((j) => j['id'] === 'job-r1');
+    expect(job).toBeDefined();
+    expect(job!['retry_after']).toBe('2026-04-01T12:00:00.000Z');
+  });
+
+  it('stores and retrieves retry_count via updateIngestionJob', () => {
+    createIngestionJob('job-r2', '/upload/file.pdf', 'file.pdf');
+    updateIngestionJob('job-r2', { retry_count: 3 });
+    const jobs = getIngestionJobs() as Array<Record<string, unknown>>;
+    const job = jobs.find((j) => j['id'] === 'job-r2');
+    expect(job!['retry_count']).toBe(3);
+  });
+
+  it('stores and retrieves promoted_paths via updateIngestionJob', () => {
+    createIngestionJob('job-r3', '/upload/file.pdf', 'file.pdf');
+    const paths = JSON.stringify(['vault/concepts/foo.md', 'vault/sources/bar.md']);
+    updateIngestionJob('job-r3', { promoted_paths: paths });
+    const jobs = getIngestionJobs() as Array<Record<string, unknown>>;
+    const job = jobs.find((j) => j['id'] === 'job-r3');
+    expect(job!['promoted_paths']).toBe(paths);
+  });
+
+  it('clears retry_after by setting null', () => {
+    createIngestionJob('job-r4', '/upload/file.pdf', 'file.pdf');
+    updateIngestionJob('job-r4', { retry_after: '2026-04-01T12:00:00.000Z' });
+    updateIngestionJob('job-r4', { retry_after: null });
+    const jobs = getIngestionJobs() as Array<Record<string, unknown>>;
+    const job = jobs.find((j) => j['id'] === 'job-r4');
+    expect(job!['retry_after']).toBeNull();
+  });
+});
+
+// --- getSetting / setSetting ---
+
+describe('getSetting and setSetting', () => {
+  it('getSetting returns defaultValue when key does not exist', () => {
+    expect(getSetting('nonexistent.key', 'default-val')).toBe('default-val');
+  });
+
+  it('setSetting stores a value and getSetting retrieves it', () => {
+    setSetting('ingestion.max_retries', '5');
+    expect(getSetting('ingestion.max_retries', '0')).toBe('5');
+  });
+
+  it('setSetting overwrites an existing value', () => {
+    setSetting('ingestion.mode', 'auto');
+    setSetting('ingestion.mode', 'manual');
+    expect(getSetting('ingestion.mode', 'auto')).toBe('manual');
+  });
+
+  it('setSetting handles multiple independent keys', () => {
+    setSetting('key.a', 'alpha');
+    setSetting('key.b', 'beta');
+    expect(getSetting('key.a', '')).toBe('alpha');
+    expect(getSetting('key.b', '')).toBe('beta');
   });
 });

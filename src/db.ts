@@ -172,6 +172,30 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column/index already exists */
   }
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN retry_after TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE ingestion_jobs ADD COLUMN retry_count INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN promoted_paths TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
@@ -778,6 +802,9 @@ export function updateIngestionJob(
     extraction_path?: string | null;
     error?: string | null;
     content_hash?: string;
+    retry_after?: string | null;
+    retry_count?: number;
+    promoted_paths?: string | null;
   },
 ): void {
   const setClauses: string[] = ["updated_at = datetime('now')"];
@@ -802,6 +829,18 @@ export function updateIngestionJob(
     setClauses.push('content_hash = ?');
     values.push(updates.content_hash);
   }
+  if (updates.retry_after !== undefined) {
+    setClauses.push('retry_after = ?');
+    values.push(updates.retry_after);
+  }
+  if (updates.retry_count !== undefined) {
+    setClauses.push('retry_count = ?');
+    values.push(updates.retry_count);
+  }
+  if (updates.promoted_paths !== undefined) {
+    setClauses.push('promoted_paths = ?');
+    values.push(updates.promoted_paths);
+  }
 
   values.push(id);
   getDb()
@@ -815,6 +854,25 @@ export function getRecentlyCompletedJobs(limit: number = 10): unknown[] {
       `SELECT * FROM ingestion_jobs WHERE status = 'completed' ORDER BY completed_at DESC LIMIT ?`,
     )
     .all(limit);
+}
+
+// --- Settings ---
+
+export function getSetting(key: string, defaultValue: string): string {
+  const row = getDb()
+    .prepare('SELECT value FROM settings WHERE key = ?')
+    .get(key) as { value: string } | undefined;
+  return row !== undefined ? row.value : defaultValue;
+}
+
+export function setSetting(key: string, value: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO settings (key, value, updated_at)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .run(key, value);
 }
 
 // --- RAG index tracker ---
