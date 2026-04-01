@@ -29,7 +29,9 @@ export function normalizeName(name: string): string {
  */
 export function parseBibEntry(text: string): BibEntry | null {
   // Match: starts with word chars (author last name), comma, then somewhere a (YYYY) year
-  const match = text.match(/^([A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'\-.\s]*?),\s.*?\((\d{4})[a-z]?\)/);
+  const match = text.match(
+    /^([A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'\-.\s]*?),\s.*?\((\d{4})[a-z]?\)/,
+  );
   if (!match) return null;
 
   const lastName = normalizeName(match[1]);
@@ -78,7 +80,11 @@ export function extractBibliography(content: string): BibEntry[] {
   for (let i = listItems.length - 2; i >= 0; i--) {
     // Count non-marker, non-empty lines between consecutive list_item blocks
     let nonMarkerLines = 0;
-    for (let ln = listItems[i].lineIndex + 1; ln < listItems[i + 1].lineIndex; ln++) {
+    for (
+      let ln = listItems[i].lineIndex + 1;
+      ln < listItems[i + 1].lineIndex;
+      ln++
+    ) {
       const line = lines[ln].trim();
       if (line === '' || /<!-- page:\d+/.test(line)) continue;
       nonMarkerLines++;
@@ -102,4 +108,124 @@ export function extractBibliography(content: string): BibEntry[] {
   }
 
   return entries;
+}
+
+interface SourceInfo {
+  slug: string;
+  filePath: string;
+}
+
+/**
+ * Build an index of existing source notes keyed by normalized "lastname:year".
+ * Each author in the source's authors array gets their own key.
+ */
+export function buildSourceIndex(
+  sourcesDir: string,
+): Map<string, SourceInfo[]> {
+  const index = new Map<string, SourceInfo[]>();
+
+  let files: string[];
+  try {
+    files = readdirSync(sourcesDir).filter((f) => f.endsWith('.md'));
+  } catch {
+    return index;
+  }
+
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(sourcesDir, file), 'utf-8');
+      const { data: fm } = parseFrontmatter(content);
+
+      const authors = fm.authors as string[] | undefined;
+      const published = fm.published as number | undefined;
+      if (!Array.isArray(authors) || !published) continue;
+
+      const slug = file.replace(/\.md$/, '');
+      const info: SourceInfo = { slug, filePath: join(sourcesDir, file) };
+
+      for (const author of authors) {
+        const parts = author.trim().split(/\s+/);
+        const lastName = normalizeName(parts[parts.length - 1]);
+        const key = `${lastName}:${published}`;
+
+        const existing = index.get(key) ?? [];
+        existing.push(info);
+        index.set(key, existing);
+      }
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  return index;
+}
+
+/**
+ * Append a value to an array frontmatter field, avoiding duplicates.
+ * Reads the file, updates, writes back.
+ */
+function appendFrontmatterArray(
+  filePath: string,
+  field: string,
+  value: string,
+): void {
+  const content = readFileSync(filePath, 'utf-8');
+  const { data: fm } = parseFrontmatter(content);
+  const existing = Array.isArray(fm[field]) ? (fm[field] as string[]) : [];
+  if (existing.includes(value)) return;
+  const updated = updateFrontmatter(content, {
+    [field]: [...existing, value],
+  });
+  writeFileSync(filePath, updated);
+}
+
+/**
+ * Link bibliography entries to existing vault sources.
+ * Writes cites/cited_by frontmatter and SQLite edges.
+ */
+export function linkCitations(
+  bibEntries: BibEntry[],
+  newSourcePath: string,
+  sourcesDir: string,
+): void {
+  const index = buildSourceIndex(sourcesDir);
+  const newSlug = basename(newSourcePath).replace(/\.md$/, '');
+  const matched = new Set<string>();
+
+  for (const entry of bibEntries) {
+    const key = `${entry.lastName}:${entry.year}`;
+    const sources = index.get(key);
+    if (!sources) continue;
+
+    for (const source of sources) {
+      // Don't self-cite
+      if (source.slug === newSlug) continue;
+      if (matched.has(source.slug)) continue;
+      matched.add(source.slug);
+
+      // SQLite edge
+      try {
+        insertCitationEdge(newSlug, source.slug);
+      } catch (err) {
+        logger.warn({ err, newSlug, targetSlug: source.slug }, 'Failed to insert citation edge');
+      }
+
+      // Frontmatter: cites on new source
+      appendFrontmatterArray(newSourcePath, 'cites', source.slug);
+
+      // Frontmatter: cited_by on matched source
+      appendFrontmatterArray(source.filePath, 'cited_by', newSlug);
+    }
+  }
+}
+
+/**
+ * Filter out slugs that don't correspond to existing files.
+ * Safety net for stale references.
+ */
+export function filterDeadReferences(
+  slugs: string[],
+  sourcesDir: string,
+): string[] {
+  return slugs.filter((slug) => existsSync(join(sourcesDir, `${slug}.md`)));
 }
