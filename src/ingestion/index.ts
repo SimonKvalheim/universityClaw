@@ -18,6 +18,7 @@ import {
   cleanupDraftBundle,
 } from './sentinel.js';
 import { validateDrafts, formatValidationMessage } from './draft-validator.js';
+import { extractBibliography, linkCitations } from './citation-linker.js';
 import {
   createIngestionJob,
   getIngestionJobByPath,
@@ -25,6 +26,7 @@ import {
   updateIngestionJob,
   getSetting,
   getIngestionJobs,
+  deleteCitationEdges,
 } from '../db.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
@@ -236,7 +238,10 @@ export class IngestionPipeline {
     try {
       vaultManifest = buildVaultManifest(this.vaultDir);
     } catch (err) {
-      logger.warn({ jobId: job.id, err }, 'Failed to build vault manifest — proceeding without it');
+      logger.warn(
+        { jobId: job.id, err },
+        'Failed to build vault manifest — proceeding without it',
+      );
     }
 
     const sentinelPath = join(draftsDir, `${job.id}-complete`);
@@ -333,7 +338,13 @@ export class IngestionPipeline {
     // When the container exits (success or error), abort the validation loop.
     // When validation fails terminally, it aborts before throwing.
     const containerPromise = this.agentProcessor
-      .process(extractionPath, fileName, job.id, this.reviewAgentGroup, vaultManifest)
+      .process(
+        extractionPath,
+        fileName,
+        job.id,
+        this.reviewAgentGroup,
+        vaultManifest,
+      )
       .finally(() => ac.abort());
 
     const validationPromise = validationLoop();
@@ -410,6 +421,8 @@ export class IngestionPipeline {
     const manifest =
       readManifest(draftsDir, job.id) ?? inferManifest(draftsDir, job.id);
 
+    let promotedSourcePath: string | undefined;
+
     // Promote source note
     const promotedPaths: string[] = [];
     if (manifest.source_note) {
@@ -417,6 +430,7 @@ export class IngestionPipeline {
       try {
         const promoted = promoteNote(sourceDraftPath, this.vaultDir, job.id);
         promotedPaths.push(promoted);
+        promotedSourcePath = join(this.vaultDir, promoted);
         logger.info({ jobId: job.id, promoted }, 'Promoted source note');
       } catch (err) {
         logger.warn(
@@ -438,6 +452,35 @@ export class IngestionPipeline {
           { jobId: job.id, file: conceptFile, err },
           'Failed to promote concept note',
         );
+      }
+    }
+
+    // --- Citation linking (non-blocking enrichment) ---
+    if (promotedSourcePath && job.extraction_path) {
+      try {
+        const newSlug = promotedSourcePath
+          .split('/')
+          .pop()!
+          .replace(/\.md$/, '');
+
+        // Re-ingestion: clear old edges before rebuilding
+        deleteCitationEdges(newSlug);
+
+        const contentPath = join(job.extraction_path, 'content.md');
+        const extractedContent = readFileSync(contentPath, 'utf-8');
+        const bibEntries = extractBibliography(extractedContent);
+        if (bibEntries.length > 0) {
+          const sourcesDir = join(this.vaultDir, 'sources');
+          linkCitations(bibEntries, promotedSourcePath, sourcesDir);
+          logger.info(
+            { jobId: job.id, bibEntries: bibEntries.length },
+            'Citation linking completed',
+          );
+        } else {
+          logger.info({ jobId: job.id }, 'No bibliography entries found — skipping citation linking');
+        }
+      } catch (err) {
+        logger.warn({ jobId: job.id, err }, 'Citation linking failed — continuing without it');
       }
     }
 
