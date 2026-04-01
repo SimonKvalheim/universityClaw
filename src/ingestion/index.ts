@@ -82,7 +82,8 @@ export class IngestionPipeline {
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
       maxGenerationConcurrent: () => {
-        const val = getSetting('maxGenerationConcurrent', '1');
+        const fallback = String(opts.maxGenerationConcurrent ?? 1);
+        const val = getSetting('maxGenerationConcurrent', fallback);
         return Math.max(1, Math.min(5, parseInt(val, 10) || 1));
       },
       pollIntervalMs: 5000,
