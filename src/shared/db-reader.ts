@@ -1,4 +1,5 @@
 import {
+  getIngestionJobById,
   getIngestionJobs,
   getSetting,
   setSetting,
@@ -51,8 +52,7 @@ export function getRecentJobs(status?: string): JobSummary[] {
  * Parses the promoted_paths JSON string into a string array.
  */
 export function getJobDetail(id: string): JobDetail | null {
-  const rows = getIngestionJobs() as DbRow[];
-  const row = rows.find((r) => r.id === id);
+  const row = getIngestionJobById(id) as DbRow | undefined;
   if (!row) return null;
 
   const summary = rowToSummary(row);
@@ -72,8 +72,7 @@ export function getJobDetail(id: string): JobDetail | null {
  * Returns the source_path for a job (used by retry endpoint to check file exists).
  */
 export function getJobSourcePath(id: string): string | null {
-  const rows = getIngestionJobs() as DbRow[];
-  const row = rows.find((r) => r.id === id);
+  const row = getIngestionJobById(id) as DbRow | undefined;
   return row ? (row.source_path as string) : null;
 }
 
@@ -90,15 +89,17 @@ const STAGE_MAP: Record<string, string> = {
 export function retryJob(
   id: string,
 ): { ok: true } | { ok: false; error: string } {
-  const rows = getIngestionJobs() as DbRow[];
-  const row = rows.find((r) => r.id === id);
+  const row = getIngestionJobById(id) as DbRow | undefined;
 
   if (!row) {
     return { ok: false, error: 'Job not found' };
   }
 
-  if (row.status !== 'failed') {
-    return { ok: false, error: `Job is not in failed state (status: ${row.status})` };
+  if (row.status !== 'failed' && row.status !== 'rate_limited') {
+    return {
+      ok: false,
+      error: `Job is not in a retryable state (status: ${row.status})`,
+    };
   }
 
   const errorStr = (row.error as string | null) ?? '';

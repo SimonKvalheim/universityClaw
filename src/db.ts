@@ -777,6 +777,10 @@ export function createIngestionJob(
     .run(id, sourcePath, sourceFilename, contentHash ?? null);
 }
 
+export function getIngestionJobById(id: string): unknown | undefined {
+  return getDb().prepare('SELECT * FROM ingestion_jobs WHERE id = ?').get(id);
+}
+
 export function getIngestionJobs(status?: string): unknown[] {
   if (status !== undefined) {
     return db

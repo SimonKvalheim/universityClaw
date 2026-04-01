@@ -76,7 +76,10 @@ describe('getJobDetail', () => {
     createIngestionJob('detail-1', '/upload/d1.pdf', 'd1.pdf');
     updateIngestionJob('detail-1', {
       status: 'completed',
-      promoted_paths: JSON.stringify(['vault/sources/d1.md', 'vault/concepts/topic.md']),
+      promoted_paths: JSON.stringify([
+        'vault/sources/d1.md',
+        'vault/concepts/topic.md',
+      ]),
     });
 
     const detail = getJobDetail('detail-1');
@@ -177,13 +180,17 @@ describe('retryJob', () => {
 
     const result = retryJob('retry-5');
     expect(result.ok).toBe(false);
-    expect((result as { ok: false; error: string }).error).toMatch(/not in failed/i);
+    expect((result as { ok: false; error: string }).error).toMatch(
+      /not in a retryable state/i,
+    );
   });
 
   it('returns error for a non-existent job', () => {
     const result = retryJob('no-such-job');
     expect(result.ok).toBe(false);
-    expect((result as { ok: false; error: string }).error).toMatch(/not found/i);
+    expect((result as { ok: false; error: string }).error).toMatch(
+      /not found/i,
+    );
   });
 });
 

@@ -34,8 +34,13 @@ import {
 } from '../config.js';
 
 const RATE_LIMIT_PATTERNS = [
-  /rate.?limit/i, /session.?limit/i, /overloaded/i,
-  /429/, /529/, /too many requests/i, /capacity/i,
+  /rate.?limit/i,
+  /session.?limit/i,
+  /overloaded/i,
+  /429/,
+  /529/,
+  /too many requests/i,
+  /capacity/i,
 ];
 function isRateLimitError(msg: string): boolean {
   return RATE_LIMIT_PATTERNS.some((re) => re.test(msg));
@@ -332,13 +337,15 @@ export class IngestionPipeline {
     // Collect the error (if any) from either promise.
     let error: Error | undefined;
     if (containerSettled.status === 'rejected') {
-      error = containerSettled.reason instanceof Error
-        ? containerSettled.reason
-        : new Error(String(containerSettled.reason));
+      error =
+        containerSettled.reason instanceof Error
+          ? containerSettled.reason
+          : new Error(String(containerSettled.reason));
     } else if (validationSettled.status === 'rejected') {
-      error = validationSettled.reason instanceof Error
-        ? validationSettled.reason
-        : new Error(String(validationSettled.reason));
+      error =
+        validationSettled.reason instanceof Error
+          ? validationSettled.reason
+          : new Error(String(validationSettled.reason));
     } else {
       const result = containerSettled.value;
       if (result.status === 'error') {
@@ -361,7 +368,6 @@ export class IngestionPipeline {
           status: 'rate_limited',
           error: `generating:${msg}`,
           retry_after: retryAfter,
-          retry_count: retryCount + 1,
         });
         logger.warn(
           { jobId: job.id, retryAfter, retryCount: retryCount + 1 },
