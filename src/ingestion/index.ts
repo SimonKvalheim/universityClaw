@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
@@ -56,6 +56,7 @@ export interface IngestionPipelineOpts {
   vaultDir: string;
   reviewAgentGroup: RegisteredGroup;
   maxGenerationConcurrent?: number;
+  notify?: (message: string) => void;
 }
 
 export class IngestionPipeline {
@@ -66,11 +67,13 @@ export class IngestionPipeline {
   private vaultDir: string;
   private reviewAgentGroup: RegisteredGroup;
   private drainer: PipelineDrainer;
+  private notify: ((message: string) => void) | undefined;
 
   constructor(opts: IngestionPipelineOpts) {
     this.uploadDir = opts.uploadDir;
     this.vaultDir = opts.vaultDir;
     this.reviewAgentGroup = opts.reviewAgentGroup;
+    this.notify = opts.notify;
     this.agentProcessor = new AgentProcessor({
       vaultDir: opts.vaultDir,
       uploadDir: opts.uploadDir,
@@ -122,23 +125,26 @@ export class IngestionPipeline {
     // Path-based dedup: skip if same path is already in-flight
     const existing = getIngestionJobByPath(filePath);
     if (existing) {
-      if (
+      // dismissed = terminal, allow re-enqueue
+      if (existing.status === 'dismissed') {
+        // Fall through to create a new job
+      } else if (
         existing.status === 'completed' ||
         existing.status === 'extracting' ||
         existing.status === 'generating' ||
-        existing.status === 'promoting'
+        existing.status === 'promoting' ||
+        existing.status === 'oversized' ||
+        existing.status === 'rate_limited'
       ) {
         logger.info(
           `ingestion: Skipping (already ${existing.status}): ${relativePath}`,
         );
         return;
-      }
-      if (existing.status === 'failed') {
+      } else if (existing.status === 'failed') {
         updateIngestionJob(existing.id, { status: 'pending', error: null });
         logger.info(`ingestion: Retrying failed job: ${relativePath}`);
         return;
-      }
-      if (
+      } else if (
         existing.status === 'pending' ||
         existing.status === 'extracted' ||
         existing.status === 'generated'
@@ -232,6 +238,39 @@ export class IngestionPipeline {
     const extractionPath = job.extraction_path;
     if (!extractionPath) {
       throw new Error(`No extraction path for job ${job.id}`);
+    }
+
+    // Token budget gate — park oversized documents before spawning agent
+    const TOKEN_BUDGET = 80_000;
+    const cleanContentPath = join(extractionPath, 'content.clean.md');
+    const rawContentPath = join(extractionPath, 'content.md');
+    const contentForBudget = existsSync(cleanContentPath)
+      ? cleanContentPath
+      : rawContentPath;
+    let contentChars: number;
+    try {
+      contentChars = readFileSync(contentForBudget, 'utf-8').length;
+    } catch {
+      contentChars = 0;
+    }
+    const estimatedTokens = Math.ceil(contentChars / 4);
+
+    if (estimatedTokens > TOKEN_BUDGET) {
+      const tokensK = Math.round(estimatedTokens / 1000);
+      updateIngestionJob(job.id, {
+        status: 'oversized',
+        error: `oversized:~${tokensK}K tokens after cleanup`,
+      });
+      logger.warn(
+        { jobId: job.id, estimatedTokens, budget: TOKEN_BUDGET },
+        `ingestion: Document oversized (~${tokensK}K tokens), parking job`,
+      );
+      if (this.notify) {
+        this.notify(
+          `Document '${fileName}' is too large for single-pass processing (~${tokensK}K tokens after cleanup). Retry or dismiss it from the dashboard.`,
+        );
+      }
+      return; // Do NOT throw — prevent drainer catch from overriding status
     }
 
     let vaultManifest: string | undefined;
