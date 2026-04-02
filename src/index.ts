@@ -646,11 +646,26 @@ async function main(): Promise<void> {
 
   restoreRemoteControl();
 
+  // Find the main group JID for notifications
+  const mainGroupJid = Object.entries(registeredGroups).find(
+    ([, g]) => g.isMain,
+  )?.[0];
+
   const pipeline = new IngestionPipeline({
     uploadDir: UPLOAD_DIR,
     vaultDir: VAULT_DIR,
     reviewAgentGroup: registeredGroups[REVIEW_AGENT_JID],
     maxGenerationConcurrent: 2,
+    notify: mainGroupJid
+      ? (message: string) => {
+          const channel = findChannel(channels, mainGroupJid);
+          if (channel?.isConnected()) {
+            channel.sendMessage(mainGroupJid, message).catch((err) => {
+              logger.warn({ err }, 'Failed to send ingestion notification');
+            });
+          }
+        }
+      : undefined,
   });
   await pipeline.start();
 
