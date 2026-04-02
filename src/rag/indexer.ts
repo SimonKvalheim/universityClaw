@@ -5,6 +5,7 @@ import { logger } from '../logger.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
+import { extractWikilinks } from '../vault/wikilinks.js';
 import { computeDocId } from './doc-id.js';
 
 /**
@@ -16,6 +17,13 @@ import { computeDocId } from './doc-id.js';
  * attachments/ (binary figures), and any other top-level directories.
  */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
+
+/** Convert a slug like "working-memory-architecture" to "Working Memory Architecture". */
+function slugToTitle(slug: string): string {
+  return slug
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export class RagIndexer {
   private vaultDir: string;
@@ -118,6 +126,50 @@ export class RagIndexer {
     }
 
     upsertTrackedDoc(relPath, docId, hash);
+
+    // Inject wikilinks as explicit graph relationships (non-fatal)
+    await this.injectWikilinks(content, fm);
+  }
+
+  /**
+   * Parse wikilinks from note content and inject each as a graph relationship
+   * in LightRAG. Only targets that resolve to allowed indexing paths and already
+   * exist as entities in the graph are injected. Failures are logged but never
+   * block indexing.
+   */
+  async injectWikilinks(
+    content: string,
+    frontmatter: Record<string, unknown>,
+  ): Promise<void> {
+    const links = extractWikilinks(content);
+    if (links.length === 0) return;
+
+    const sourceTitle = String(frontmatter.title || '');
+    if (!sourceTitle) return;
+
+    for (const link of links) {
+      const targetTitle = slugToTitle(link.target);
+
+      try {
+        // Only create relation if both entities exist in the graph
+        const [sourceExists, targetExists] = await Promise.all([
+          this.ragClient.entityExists(sourceTitle),
+          this.ragClient.entityExists(targetTitle),
+        ]);
+        if (!sourceExists || !targetExists) continue;
+
+        await this.ragClient.createRelation(sourceTitle, targetTitle, {
+          description: `Explicitly linked in vault: [[${sourceTitle}]] references [[${targetTitle}]]`,
+          keywords: 'references, wikilink',
+          weight: 1.0,
+        });
+      } catch (err) {
+        logger.warn(
+          { err, source: sourceTitle, target: targetTitle },
+          'Failed to inject wikilink relation',
+        );
+      }
+    }
   }
 
   async handleUnlink(filePath: string): Promise<void> {

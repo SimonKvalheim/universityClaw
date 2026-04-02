@@ -136,4 +136,61 @@ describe('RagClient HTTP', () => {
       'LightRAG delete failed',
     );
   });
+
+  it('entityExists returns true when entity is found', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ exists: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    expect(await client.entityExists('Self-Attention')).toBe(true);
+
+    const [url] = fetchSpy.mock.calls[0];
+    expect(url).toBe(
+      'http://localhost:9621/graph/entity/exists?name=Self-Attention',
+    );
+  });
+
+  it('entityExists returns false when entity not found', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ exists: false }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    expect(await client.entityExists('Nonexistent')).toBe(false);
+  });
+
+  it('entityExists returns false on network error', async () => {
+    fetchSpy.mockRejectedValue(new Error('ECONNREFUSED'));
+    expect(await client.entityExists('Whatever')).toBe(false);
+  });
+
+  it('createRelation posts to /graph/relation/create', async () => {
+    fetchSpy.mockResolvedValue(new Response('OK', { status: 200 }));
+
+    await client.createRelation('Self-Attention', 'Transformers', {
+      description: 'Test relation',
+      keywords: 'references, wikilink',
+      weight: 1.0,
+    });
+
+    const [url, opts] = fetchSpy.mock.calls[0];
+    expect(url).toBe('http://localhost:9621/graph/relation/create');
+    expect(opts?.method).toBe('POST');
+    const body = JSON.parse(opts?.body as string);
+    expect(body.source_entity).toBe('Self-Attention');
+    expect(body.target_entity).toBe('Transformers');
+    expect(body.relation_data.keywords).toBe('references, wikilink');
+  });
+
+  it('createRelation throws on non-ok response', async () => {
+    fetchSpy.mockResolvedValue(new Response('Bad', { status: 400 }));
+    await expect(
+      client.createRelation('A', 'B', { description: 'test' }),
+    ).rejects.toThrow('LightRAG create relation failed');
+  });
 });

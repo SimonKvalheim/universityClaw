@@ -92,6 +92,42 @@ export class RagClient {
     }
   }
 
+  async entityExists(name: string): Promise<boolean> {
+    try {
+      const url = `${this.serverUrl}/graph/entity/exists?name=${encodeURIComponent(name)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) return false;
+      const data: unknown = await res.json();
+      // API returns { exists: true/false }
+      return (data as Record<string, unknown>).exists === true;
+    } catch {
+      return false;
+    }
+  }
+
+  async createRelation(
+    sourceEntity: string,
+    targetEntity: string,
+    relationData: Record<string, unknown>,
+  ): Promise<void> {
+    const res = await fetch(`${this.serverUrl}/graph/relation/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_entity: sourceEntity,
+        target_entity: targetEntity,
+        relation_data: relationData,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(
+        `LightRAG create relation failed (${res.status}): ${body}`,
+      );
+    }
+  }
+
   async healthy(): Promise<boolean> {
     try {
       const res = await fetch(`${this.serverUrl}/health`, {
