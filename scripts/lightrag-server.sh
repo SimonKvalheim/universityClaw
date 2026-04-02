@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start the LightRAG API server for vault semantic search.
-# Default: Ollama with nomic-embed-text + qwen2.5:3b on port 9621.
+# Default: OpenAI with text-embedding-3-small + gpt-4o-mini on port 9621.
 #
 # Usage:
 #   ./scripts/lightrag-server.sh              # foreground
@@ -9,24 +9,23 @@
 #
 # Environment overrides (set in .env or shell):
 #   LIGHTRAG_PORT               (default: 9621)
-#   LIGHTRAG_LLM_MODEL          (default: qwen2.5:3b)
-#   LIGHTRAG_EMBED_MODEL        (default: nomic-embed-text)
-#   LIGHTRAG_LLM_BINDING        (default: ollama)
-#   LIGHTRAG_EMBED_BINDING      (default: ollama)
+#   LIGHTRAG_LLM_MODEL          (default: gpt-4o-mini)
+#   LIGHTRAG_EMBED_MODEL        (default: text-embedding-3-small)
+#   LIGHTRAG_LLM_BINDING        (default: openai)
+#   LIGHTRAG_EMBED_BINDING      (default: openai)
 #   LIGHTRAG_OLLAMA_HOST        (default: http://localhost:11434)
 #
 # Parallelism — these control two independent axes of concurrency:
 #
 #   LLM (entity extraction):
-#     LIGHTRAG_MAX_ASYNC          (default: 4)  — concurrent LLM calls
-#     LIGHTRAG_MAX_PARALLEL_INSERT (default: 2)  — concurrent document pipelines
-#     Safe to increase when LLM uses a remote API (Claude, OpenAI).
+#     LIGHTRAG_MAX_ASYNC          (default: 16) — concurrent LLM calls
+#     LIGHTRAG_MAX_PARALLEL_INSERT (default: 8)  — concurrent document pipelines
+#     Reduce to 4/2 if using local Ollama instead of a remote API.
 #
 #   Embeddings (vector indexing):
-#     LIGHTRAG_EMBED_MAX_ASYNC    (default: 1)  — concurrent embedding calls
-#     LIGHTRAG_EMBED_BATCH_NUM    (default: 4)  — texts per embedding batch
-#     Keep low when embeddings run on local Ollama to avoid OOM/timeouts.
-#     Increase if using a remote embedding API.
+#     LIGHTRAG_EMBED_MAX_ASYNC    (default: 16) — concurrent embedding calls
+#     LIGHTRAG_EMBED_BATCH_NUM    (default: 32) — texts per embedding batch
+#     Reduce to 1/4 if using local Ollama instead of a remote API.
 
 set -euo pipefail
 
@@ -54,21 +53,21 @@ export WORKING_DIR="$RAG_DIR"
 export INPUT_DIR="$PROJECT_ROOT/vault"
 export HOST="0.0.0.0"
 export PORT="${LIGHTRAG_PORT:-9621}"
-export LLM_BINDING="${LIGHTRAG_LLM_BINDING:-ollama}"
-export LLM_MODEL="${LIGHTRAG_LLM_MODEL:-qwen2.5:3b}"
+export LLM_BINDING="${LIGHTRAG_LLM_BINDING:-openai}"
+export LLM_MODEL="${LIGHTRAG_LLM_MODEL:-gpt-4o-mini}"
 export LLM_BINDING_HOST="${LIGHTRAG_OLLAMA_HOST:-http://localhost:11434}"
-export EMBEDDING_BINDING="${LIGHTRAG_EMBED_BINDING:-ollama}"
-export EMBEDDING_MODEL="${LIGHTRAG_EMBED_MODEL:-nomic-embed-text}"
+export EMBEDDING_BINDING="${LIGHTRAG_EMBED_BINDING:-openai}"
+export EMBEDDING_MODEL="${LIGHTRAG_EMBED_MODEL:-text-embedding-3-small}"
 export EMBEDDING_BINDING_HOST="${LIGHTRAG_OLLAMA_HOST:-http://localhost:11434}"
-export EMBEDDING_DIM="${LIGHTRAG_EMBED_DIM:-768}"
+export EMBEDDING_DIM="${LIGHTRAG_EMBED_DIM:-1536}"
 # --- Parallelism ---
-# LLM concurrency: safe to raise for remote APIs (Claude, OpenAI)
-export MAX_ASYNC="${LIGHTRAG_MAX_ASYNC:-4}"
-export MAX_PARALLEL_INSERT="${LIGHTRAG_MAX_PARALLEL_INSERT:-2}"
+# Defaults tuned for remote APIs (OpenAI). Reduce if using local Ollama.
+export MAX_ASYNC="${LIGHTRAG_MAX_ASYNC:-16}"
+export MAX_PARALLEL_INSERT="${LIGHTRAG_MAX_PARALLEL_INSERT:-8}"
 
-# Embedding concurrency: keep at 1 for local Ollama, raise for remote APIs
-export EMBEDDING_FUNC_MAX_ASYNC="${LIGHTRAG_EMBED_MAX_ASYNC:-1}"
-export EMBEDDING_BATCH_NUM="${LIGHTRAG_EMBED_BATCH_NUM:-4}"
+# Embedding concurrency: reduce to 1/4 for local Ollama
+export EMBEDDING_FUNC_MAX_ASYNC="${LIGHTRAG_EMBED_MAX_ASYNC:-16}"
+export EMBEDDING_BATCH_NUM="${LIGHTRAG_EMBED_BATCH_NUM:-32}"
 
 # Disable auth for local use (container accesses via host.docker.internal)
 export LIGHTRAG_API_KEY=""
