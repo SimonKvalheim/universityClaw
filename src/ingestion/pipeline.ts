@@ -111,7 +111,10 @@ export class PipelineDrainer {
         .onExtract(job)
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          updateIngestionJob(job.id, { status: 'failed', error: `extracting:${msg}` });
+          updateIngestionJob(job.id, {
+            status: 'failed',
+            error: `extracting:${msg}`,
+          });
         })
         .finally(() => {
           this.activeExtractions--;
@@ -137,7 +140,10 @@ export class PipelineDrainer {
         .onGenerate(job)
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          updateIngestionJob(job.id, { status: 'failed', error: `generating:${msg}` });
+          updateIngestionJob(job.id, {
+            status: 'failed',
+            error: `generating:${msg}`,
+          });
         })
         .finally(() => {
           this.activeGenerations--;
@@ -155,7 +161,10 @@ export class PipelineDrainer {
         await this.opts.onPromote(job);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        updateIngestionJob(job.id, { status: 'failed', error: `promoting:${msg}` });
+        updateIngestionJob(job.id, {
+          status: 'failed',
+          error: `promoting:${msg}`,
+        });
       }
     }
   }

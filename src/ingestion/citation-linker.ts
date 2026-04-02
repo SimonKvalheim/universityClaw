@@ -207,7 +207,10 @@ export function linkCitations(
       try {
         insertCitationEdge(newSlug, source.slug);
       } catch (err) {
-        logger.warn({ err, newSlug, targetSlug: source.slug }, 'Failed to insert citation edge');
+        logger.warn(
+          { err, newSlug, targetSlug: source.slug },
+          'Failed to insert citation edge',
+        );
       }
 
       // Frontmatter: cites on new source

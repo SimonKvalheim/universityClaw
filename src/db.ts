@@ -950,14 +950,18 @@ export function deleteCitationEdges(sourceSlug: string): void {
 
 export function getCites(sourceSlug: string): string[] {
   const rows = db
-    .prepare('SELECT target_slug FROM citation_edges WHERE source_slug = ? ORDER BY target_slug')
+    .prepare(
+      'SELECT target_slug FROM citation_edges WHERE source_slug = ? ORDER BY target_slug',
+    )
     .all(sourceSlug) as { target_slug: string }[];
   return rows.map((r) => r.target_slug);
 }
 
 export function getCitedBy(targetSlug: string): string[] {
   const rows = db
-    .prepare('SELECT source_slug FROM citation_edges WHERE target_slug = ? ORDER BY source_slug')
+    .prepare(
+      'SELECT source_slug FROM citation_edges WHERE target_slug = ? ORDER BY source_slug',
+    )
     .all(targetSlug) as { source_slug: string }[];
   return rows.map((r) => r.source_slug);
 }

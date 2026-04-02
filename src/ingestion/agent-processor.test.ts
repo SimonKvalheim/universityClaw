@@ -80,12 +80,7 @@ describe('AgentProcessor prompt', () => {
   });
 
   it('omits manifest section when not provided', () => {
-    const prompt = processor.buildPrompt(
-      'Content',
-      'paper.pdf',
-      'job-123',
-      [],
-    );
+    const prompt = processor.buildPrompt('Content', 'paper.pdf', 'job-123', []);
 
     expect(prompt).not.toContain('<existing_vault_notes>');
   });
