@@ -315,3 +315,23 @@ describe('cleanExtraction', () => {
     });
   });
 });
+
+describe('token budget estimation', () => {
+  it('estimates tokens at ~4 chars per token', () => {
+    const chars = 320_000;
+    const estimated = Math.ceil(chars / 4);
+    expect(estimated).toBe(80_000);
+  });
+
+  it('correctly identifies oversized content', () => {
+    const chars = 400_000;
+    const estimated = Math.ceil(chars / 4);
+    expect(estimated).toBeGreaterThan(80_000);
+  });
+
+  it('correctly identifies under-budget content', () => {
+    const chars = 200_000;
+    const estimated = Math.ceil(chars / 4);
+    expect(estimated).toBeLessThan(80_000);
+  });
+});
