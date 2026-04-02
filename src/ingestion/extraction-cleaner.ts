@@ -10,7 +10,12 @@ const MARKER_RE = /^<!--\s*page:(\d+)\s+label:(\S+)\s*-->$/;
 function parseBlocks(markdown: string): Block[] {
   const lines = markdown.split('\n');
   const blocks: Block[] = [];
-  let current: { marker: string; page: number; label: string; lines: string[] } | null = null;
+  let current: {
+    marker: string;
+    page: number;
+    label: string;
+    lines: string[];
+  } | null = null;
 
   for (const line of lines) {
     const m = MARKER_RE.exec(line);
@@ -23,7 +28,12 @@ function parseBlocks(markdown: string): Block[] {
           content: current.lines.join('\n').trim(),
         });
       }
-      current = { marker: line, page: parseInt(m[1], 10), label: m[2], lines: [] };
+      current = {
+        marker: line,
+        page: parseInt(m[1], 10),
+        label: m[2],
+        lines: [],
+      };
     } else if (current) {
       current.lines.push(line);
     }
@@ -71,8 +81,7 @@ function collapseNoise(blocks: Block[]): Block[] {
   }
 
   for (const block of blocks) {
-    const isShortText =
-      block.label === 'text' && block.content.length <= 10;
+    const isShortText = block.label === 'text' && block.content.length < 50;
 
     if (isShortText) {
       if (run.length > 0 && run[0].page !== block.page) {

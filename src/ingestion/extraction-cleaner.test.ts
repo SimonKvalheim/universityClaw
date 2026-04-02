@@ -6,23 +6,23 @@ describe('cleanExtraction', () => {
     it('removes consecutive identical blocks on the same page', () => {
       const input = [
         '<!-- page:1 label:text -->',
-        'Hello world',
+        'This paragraph has enough content to exceed the fifty character noise threshold easily.',
         '',
         '<!-- page:1 label:text -->',
-        'Hello world',
+        'This paragraph has enough content to exceed the fifty character noise threshold easily.',
         '',
         '<!-- page:1 label:text -->',
-        'Different content',
+        'A different paragraph that also exceeds the fifty character noise threshold for testing.',
       ].join('\n');
 
       const result = cleanExtraction(input);
       expect(result).toBe(
         [
           '<!-- page:1 label:text -->',
-          'Hello world',
+          'This paragraph has enough content to exceed the fifty character noise threshold easily.',
           '',
           '<!-- page:1 label:text -->',
-          'Different content',
+          'A different paragraph that also exceeds the fifty character noise threshold for testing.',
         ].join('\n'),
       );
     });
@@ -30,10 +30,10 @@ describe('cleanExtraction', () => {
     it('preserves identical blocks on different pages', () => {
       const input = [
         '<!-- page:1 label:text -->',
-        'Hello world',
+        'This paragraph has enough content to exceed the fifty character noise threshold easily.',
         '',
         '<!-- page:2 label:text -->',
-        'Hello world',
+        'This paragraph has enough content to exceed the fifty character noise threshold easily.',
       ].join('\n');
 
       const result = cleanExtraction(input);
@@ -43,10 +43,10 @@ describe('cleanExtraction', () => {
     it('preserves blocks with different content', () => {
       const input = [
         '<!-- page:1 label:text -->',
-        'First block',
+        'First block has enough content to exceed the fifty character noise threshold easily.',
         '',
         '<!-- page:1 label:text -->',
-        'Second block',
+        'Second block also has enough content to exceed the fifty character noise threshold.',
       ].join('\n');
 
       const result = cleanExtraction(input);
@@ -87,7 +87,8 @@ describe('cleanExtraction', () => {
     });
 
     it('preserves text blocks over 50 chars', () => {
-      const longText = 'This is a long text block that exceeds fifty characters in total length.';
+      const longText =
+        'This is a long text block that exceeds fifty characters in total length.';
       const input = [
         '<!-- page:1 label:text -->',
         'Short',
