@@ -9,6 +9,7 @@ import { FileFlavor, hydrateFiles } from '@grammyjs/files';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   TRIGGER_PATTERN,
   WHISPER_BIN_PATH,
   WHISPER_MODEL_PATH,
@@ -311,7 +312,59 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const msgId = ctx.message.message_id.toString();
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const threadId = ctx.message.message_thread_id;
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+
+      let content = `[Photo]${caption}`;
+
+      try {
+        const file = await ctx.getFile();
+        const attachDir = path.join(DATA_DIR, 'attachments', group.folder);
+        fs.mkdirSync(attachDir, { recursive: true });
+        const destPath = path.join(attachDir, `${msgId}-photo.jpg`);
+        await file.download(destPath);
+        content = `[Photo](__attachment__:${destPath})${caption}`;
+        logger.debug({ chatJid, destPath }, 'Photo downloaded');
+      } catch (err) {
+        logger.warn(
+          { chatJid, err },
+          'Photo download failed, using placeholder',
+        );
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+        thread_id: threadId ? threadId.toString() : undefined,
+      });
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
@@ -382,9 +435,63 @@ export class TelegramChannel implements Channel {
       storeNonText(ctx, transcribedText);
     });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    this.bot.on('message:document', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const fileName = ctx.message.document?.file_name || 'file';
+      const msgId = ctx.message.message_id.toString();
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const threadId = ctx.message.message_thread_id;
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+
+      let content = `[Document: ${fileName}]${caption}`;
+
+      try {
+        const file = await ctx.getFile();
+        const attachDir = path.join(
+          DATA_DIR,
+          'attachments',
+          group.folder,
+        );
+        fs.mkdirSync(attachDir, { recursive: true });
+        const destPath = path.join(attachDir, `${msgId}-${fileName}`);
+        await file.download(destPath);
+        content = `[Document: ${fileName}](__attachment__:${destPath})${caption}`;
+        logger.debug({ chatJid, fileName, destPath }, 'Document downloaded');
+      } catch (err) {
+        logger.warn(
+          { chatJid, fileName, err },
+          'Document download failed, using placeholder',
+        );
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+        thread_id: threadId ? threadId.toString() : undefined,
+      });
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
