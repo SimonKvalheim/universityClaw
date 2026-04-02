@@ -23,6 +23,7 @@ export class AgentProcessor {
     fileName: string,
     jobId: string,
     figures: string[],
+    vaultManifest?: string,
   ): string {
     const draftsPath = `/workspace/extra/vault/drafts`;
 
@@ -30,6 +31,8 @@ export class AgentProcessor {
       figures.length > 0
         ? `\n<figures>\n${figures.map((f) => `- ${f}`).join('\n')}\n</figures>\n\nReference these figures in your notes with descriptive captions.`
         : '';
+
+    const manifestSection = vaultManifest ? `\n${vaultManifest}\n` : '';
 
     // Document content first (top of prompt) for better attention quality,
     // then slim task parameters. Workflow instructions live in CLAUDE.md.
@@ -40,8 +43,7 @@ export class AgentProcessor {
 ${extractedContent}
 </document_content>
 </document>
-${figuresSection}
-
+${figuresSection}${manifestSection}
 ## Job Parameters
 
 - **Job ID:** ${jobId}
@@ -64,6 +66,7 @@ Process this document following your ingestion workflow.`;
     fileName: string,
     jobId: string,
     reviewAgentGroup: RegisteredGroup,
+    vaultManifest?: string,
   ): Promise<{ status: 'success' | 'error'; error?: string }> {
     const contentFile = join(extractionPath, 'content.md');
     let extractedContent: string;
@@ -89,7 +92,7 @@ Process this document following your ingestion workflow.`;
       }
     }
 
-    const prompt = this.buildPrompt(extractedContent, fileName, jobId, figures);
+    const prompt = this.buildPrompt(extractedContent, fileName, jobId, figures, vaultManifest);
 
     logger.info(
       { fileName, jobId, figures: figures.length },

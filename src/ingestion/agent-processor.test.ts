@@ -56,4 +56,37 @@ describe('AgentProcessor prompt', () => {
     expect(prompt).toContain('figure_0_0.png');
     expect(prompt).toContain('figure_1_0.png');
   });
+
+  it('includes vault manifest when provided', () => {
+    const manifest =
+      '<existing_vault_notes>\n## Sources\n- paper-a | "Paper A"\n</existing_vault_notes>';
+    const prompt = processor.buildPrompt(
+      'Content',
+      'paper.pdf',
+      'job-123',
+      [],
+      manifest,
+    );
+
+    expect(prompt).toContain('<existing_vault_notes>');
+    expect(prompt).toContain('paper-a');
+
+    // Manifest should be between document content and job parameters
+    const manifestIdx = prompt.indexOf('<existing_vault_notes>');
+    const docEnd = prompt.indexOf('</document>');
+    const jobParams = prompt.indexOf('## Job Parameters');
+    expect(manifestIdx).toBeGreaterThan(docEnd);
+    expect(manifestIdx).toBeLessThan(jobParams);
+  });
+
+  it('omits manifest section when not provided', () => {
+    const prompt = processor.buildPrompt(
+      'Content',
+      'paper.pdf',
+      'job-123',
+      [],
+    );
+
+    expect(prompt).not.toContain('<existing_vault_notes>');
+  });
 });
