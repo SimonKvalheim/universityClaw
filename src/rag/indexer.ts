@@ -147,16 +147,16 @@ export class RagIndexer {
     const sourceTitle = String(frontmatter.title || '');
     if (!sourceTitle) return;
 
+    // Check source entity once — same for every link in this note
+    const sourceExists = await this.ragClient.entityExists(sourceTitle);
+    if (!sourceExists) return;
+
     for (const link of links) {
       const targetTitle = slugToTitle(link.target);
 
       try {
-        // Only create relation if both entities exist in the graph
-        const [sourceExists, targetExists] = await Promise.all([
-          this.ragClient.entityExists(sourceTitle),
-          this.ragClient.entityExists(targetTitle),
-        ]);
-        if (!sourceExists || !targetExists) continue;
+        const targetExists = await this.ragClient.entityExists(targetTitle);
+        if (!targetExists) continue;
 
         await this.ragClient.createRelation(sourceTitle, targetTitle, {
           description: `Explicitly linked in vault: [[${sourceTitle}]] references [[${targetTitle}]]`,
