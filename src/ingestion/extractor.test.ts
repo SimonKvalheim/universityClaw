@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -47,13 +48,60 @@ describe('hasArtifacts', () => {
     expect(result).toBe(false);
   });
 
-  it('returns true when both content.md and metadata.json exist', async () => {
+  it('returns false when content.clean.md is missing', async () => {
+    const jobDir = join(baseDir, 'partial-job3');
+    mkdirSync(jobDir, { recursive: true });
+    writeFileSync(join(jobDir, 'content.md'), 'raw content');
+    writeFileSync(join(jobDir, 'metadata.json'), '{}');
+    const result = await extractor.hasArtifacts('partial-job3');
+    expect(result).toBe(false);
+  });
+
+  it('returns true when content.md, content.clean.md, and metadata.json exist', async () => {
     const jobDir = join(baseDir, 'complete-job');
-    await mkdir(jobDir, { recursive: true });
-    await writeFile(join(jobDir, 'content.md'), '# hello');
-    await writeFile(join(jobDir, 'metadata.json'), '{}');
+    mkdirSync(jobDir, { recursive: true });
+    writeFileSync(join(jobDir, 'content.md'), '# hello');
+    writeFileSync(join(jobDir, 'content.clean.md'), '# hello');
+    writeFileSync(join(jobDir, 'metadata.json'), '{}');
     const result = await extractor.hasArtifacts('complete-job');
     expect(result).toBe(true);
+  });
+});
+
+describe('cleanAndWrite', () => {
+  it('writes content.clean.md alongside content.md', () => {
+    const jobId = 'cleanwrite-job-1';
+    const dir = join(baseDir, jobId);
+    mkdirSync(dir, { recursive: true });
+    const rawContent = [
+      '<!-- page:1 label:text -->',
+      'EEG',
+      '',
+      '<!-- page:1 label:text -->',
+      'EEG',
+      '',
+      '<!-- page:1 label:text -->',
+      'Real content that is long enough to not be considered noise by the cleaner rules.',
+    ].join('\n');
+    writeFileSync(join(dir, 'content.md'), rawContent);
+
+    extractor.cleanAndWrite(jobId);
+
+    const cleanPath = join(dir, 'content.clean.md');
+    expect(existsSync(cleanPath)).toBe(true);
+    const cleaned = readFileSync(cleanPath, 'utf-8');
+    expect(cleaned.match(/EEG/g)?.length).toBe(1);
+    expect(cleaned).toContain('Real content');
+  });
+
+  it('returns the clean content path', () => {
+    const jobId = 'cleanwrite-job-2';
+    const dir = join(baseDir, jobId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'content.md'), '<!-- page:1 label:text -->\nHello');
+
+    const cleanPath = extractor.cleanAndWrite(jobId);
+    expect(cleanPath).toBe(join(dir, 'content.clean.md'));
   });
 });
 

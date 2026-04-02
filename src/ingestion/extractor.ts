@@ -1,14 +1,18 @@
 import { execFile } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { access, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { EXTRACTION_TIMEOUT, EXTRACTIONS_DIR } from '../config.js';
+import { cleanExtraction } from './extraction-cleaner.js';
+import { logger } from '../logger.js';
 
 const execFileAsync = promisify(execFile);
 
 export interface ExtractionResult {
   contentPath: string;
+  cleanContentPath: string;
   figuresDir: string;
   figures: string[];
   metadataPath: string;
@@ -39,11 +43,40 @@ export class Extractor {
     return join(this.extractionsDir, jobId);
   }
 
-  /** Returns true if content.md and metadata.json already exist for this job. */
+  /**
+   * Runs cleanExtraction on content.md and writes the result to content.clean.md.
+   * Returns the path to content.clean.md.
+   */
+  cleanAndWrite(jobId: string): string {
+    const dir = this.getExtractionDir(jobId);
+    const rawPath = join(dir, 'content.md');
+    const cleanPath = join(dir, 'content.clean.md');
+
+    const raw = readFileSync(rawPath, 'utf-8');
+    const cleaned = cleanExtraction(raw);
+    writeFileSync(cleanPath, cleaned);
+
+    const ratio =
+      raw.length > 0 ? Math.round((1 - cleaned.length / raw.length) * 100) : 0;
+    logger.info(
+      {
+        jobId,
+        originalSize: raw.length,
+        cleanedSize: cleaned.length,
+        ratio: `${ratio}%`,
+      },
+      `Extraction cleanup: ${raw.length} → ${cleaned.length} chars (${ratio}% reduction)`,
+    );
+
+    return cleanPath;
+  }
+
+  /** Returns true if content.md, content.clean.md and metadata.json already exist for this job. */
   async hasArtifacts(jobId: string): Promise<boolean> {
     const dir = this.getExtractionDir(jobId);
     try {
       await access(join(dir, 'content.md'));
+      await access(join(dir, 'content.clean.md'));
       await access(join(dir, 'metadata.json'));
       return true;
     } catch {
@@ -101,8 +134,11 @@ export class Extractor {
       previewPdfPath = null;
     }
 
+    const cleanContentPath = this.cleanAndWrite(jobId);
+
     return {
       contentPath,
+      cleanContentPath,
       figuresDir,
       figures,
       metadataPath,

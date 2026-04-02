@@ -68,7 +68,11 @@ Process this document following your ingestion workflow.`;
     reviewAgentGroup: RegisteredGroup,
     vaultManifest?: string,
   ): Promise<{ status: 'success' | 'error'; error?: string }> {
-    const contentFile = join(extractionPath, 'content.md');
+    const cleanContentFile = join(extractionPath, 'content.clean.md');
+    const rawContentFile = join(extractionPath, 'content.md');
+    const contentFile = existsSync(cleanContentFile)
+      ? cleanContentFile
+      : rawContentFile;
     let extractedContent: string;
     try {
       extractedContent = readFileSync(contentFile, 'utf-8');
