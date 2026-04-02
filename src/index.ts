@@ -6,6 +6,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
@@ -70,6 +71,10 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import {
+  prepareAttachments,
+  cleanupAttachments,
+} from './attachments.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -299,6 +304,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const reviewContext = chatJid.startsWith(WEB_REVIEW_PREFIX)
     ? buildReviewContext(chatJid)
     : '';
+  const attachmentPaths = prepareAttachments(
+    missedMessages,
+    group.folder,
+    GROUPS_DIR,
+  );
   const prompt = reviewContext + formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -360,6 +370,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
+
+  // Clean up staged attachment files
+  cleanupAttachments(group.folder, attachmentPaths, GROUPS_DIR);
 
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -544,6 +557,7 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          prepareAttachments(messagesToSend, group.folder, GROUPS_DIR);
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -596,11 +610,51 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+/** Remove attachment files older than 24 hours from data/attachments/. */
+function purgeStaleAttachments(): void {
+  const attachmentsDir = path.join(DATA_DIR, 'attachments');
+  if (!fs.existsSync(attachmentsDir)) return;
+
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+  const now = Date.now();
+  let purged = 0;
+
+  try {
+    for (const folder of fs.readdirSync(attachmentsDir)) {
+      const folderPath = path.join(attachmentsDir, folder);
+      if (!fs.statSync(folderPath).isDirectory()) continue;
+
+      for (const file of fs.readdirSync(folderPath)) {
+        const filePath = path.join(folderPath, file);
+        const stat = fs.statSync(filePath);
+        if (now - stat.mtimeMs > maxAge) {
+          fs.unlinkSync(filePath);
+          purged++;
+        }
+      }
+
+      // Remove folder if empty
+      try {
+        fs.rmdirSync(folderPath);
+      } catch {
+        // Not empty or already removed — fine
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Error purging stale attachments');
+  }
+
+  if (purged > 0) {
+    logger.info({ purged }, 'Purged stale attachment files');
+  }
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  purgeStaleAttachments();
 
   // Ensure review agent group exists
   if (!registeredGroups[REVIEW_AGENT_JID]) {
