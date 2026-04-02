@@ -97,6 +97,31 @@ function collapseNoise(blocks: Block[]): Block[] {
   return result;
 }
 
+const REFERENCES_RE = /^##\s+(References|Bibliography|Works Cited)\s*$/i;
+const SUPPLEMENTARY_RE = /^##\s+(Appendix|Supplementary|Supporting Information)\s*$/i;
+
+function stripTail(
+  blocks: Block[],
+  headingPattern: RegExp,
+  threshold: number,
+): Block[] {
+  const total = blocks.length;
+  if (total === 0) return blocks;
+
+  for (let i = 0; i < total; i++) {
+    if (
+      blocks[i].label === 'section_header' &&
+      headingPattern.test(blocks[i].content)
+    ) {
+      const position = i / total;
+      if (position >= threshold) {
+        return blocks.slice(0, i);
+      }
+    }
+  }
+  return blocks;
+}
+
 function renderBlocks(blocks: Block[]): string {
   return blocks
     .map((b) => (b.content ? `${b.marker}\n${b.content}` : b.marker))
@@ -109,5 +134,7 @@ export function cleanExtraction(markdown: string): string {
   let blocks = parseBlocks(markdown);
   blocks = deduplicateAdjacent(blocks);
   blocks = collapseNoise(blocks);
+  blocks = stripTail(blocks, REFERENCES_RE, 0.6);
+  blocks = stripTail(blocks, SUPPLEMENTARY_RE, 0.7);
   return renderBlocks(blocks);
 }
