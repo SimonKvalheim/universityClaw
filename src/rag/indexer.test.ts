@@ -45,6 +45,8 @@ describe('RagIndexer', () => {
     mockRagClient = {
       index: vi.fn().mockResolvedValue(undefined),
       deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
     };
     mockGetTrackedDoc.mockReturnValue(null);
     indexer = new RagIndexer('/vault', mockRagClient);
@@ -233,5 +235,102 @@ Draft content.`);
 
     expect(mockRagClient.index).not.toHaveBeenCalled();
     expect(mockUpsertTrackedDoc).not.toHaveBeenCalled();
+  });
+
+  // --- Wikilink injection tests ---
+
+  it('injects wikilink relations after successful indexing', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Self-Attention
+type: concept
+---
+
+Self-attention is a key component of [[transformers]].`);
+    mockRagClient.entityExists.mockResolvedValue(true);
+    mockRagClient.createRelation.mockResolvedValue(undefined);
+
+    await indexer.indexFile('/vault/concepts/self-attention.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'Self-Attention',
+      'Transformers',
+      expect.objectContaining({
+        keywords: 'references, wikilink',
+        weight: 1.0,
+      }),
+    );
+  });
+
+  it('skips wikilink injection when target entity does not exist', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Self-Attention
+type: concept
+---
+
+See [[nonexistent-concept]].`);
+    mockRagClient.entityExists.mockImplementation(async (name: string) =>
+      name === 'Self-Attention' ? true : false,
+    );
+
+    await indexer.indexFile('/vault/concepts/self-attention.md');
+
+    expect(mockRagClient.createRelation).not.toHaveBeenCalled();
+  });
+
+  it('skips wikilink injection when note has no title', async () => {
+    mockReadFile.mockReturnValue(`---
+type: concept
+---
+
+Content with [[some-link]].`);
+
+    await indexer.indexFile('/vault/concepts/untitled.md');
+
+    expect(mockRagClient.entityExists).not.toHaveBeenCalled();
+    expect(mockRagClient.createRelation).not.toHaveBeenCalled();
+  });
+
+  it('wikilink injection failure does not block indexing', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Attention
+type: concept
+---
+
+See [[transformers]].`);
+    mockRagClient.entityExists.mockResolvedValue(true);
+    mockRagClient.createRelation.mockRejectedValue(
+      new Error('LightRAG down'),
+    );
+
+    await indexer.indexFile('/vault/concepts/attention.md');
+
+    // Indexing itself should still succeed
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    expect(mockUpsertTrackedDoc).toHaveBeenCalledOnce();
+  });
+
+  it('injects multiple wikilinks from the same note', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Transformer Architecture
+type: concept
+---
+
+Uses [[self-attention]] and [[feed-forward-networks]].`);
+    mockRagClient.entityExists.mockResolvedValue(true);
+    mockRagClient.createRelation.mockResolvedValue(undefined);
+
+    await indexer.indexFile('/vault/concepts/transformer-architecture.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledTimes(2);
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'Transformer Architecture',
+      'Self Attention',
+      expect.objectContaining({ keywords: 'references, wikilink' }),
+    );
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'Transformer Architecture',
+      'Feed Forward Networks',
+      expect.objectContaining({ keywords: 'references, wikilink' }),
+    );
   });
 });
