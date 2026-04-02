@@ -1053,9 +1053,7 @@ describe('TelegramChannel', () => {
           message_thread_id: 42,
         },
       });
-      (ctx as any).getFile = vi
-        .fn()
-        .mockRejectedValue(new Error('fail'));
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('fail'));
 
       await triggerMediaMessage('message:document', ctx);
 
@@ -1107,9 +1105,7 @@ describe('TelegramChannel', () => {
           photo: [{ file_id: 'fail', width: 100, height: 100 }],
         },
       });
-      (ctx as any).getFile = vi
-        .fn()
-        .mockRejectedValue(new Error('fail'));
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('fail'));
 
       await triggerMediaMessage('message:photo', ctx);
 
@@ -1156,9 +1152,7 @@ describe('TelegramChannel', () => {
           message_thread_id: 55,
         },
       });
-      (ctx as any).getFile = vi
-        .fn()
-        .mockRejectedValue(new Error('fail'));
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('fail'));
 
       await triggerMediaMessage('message:photo', ctx);
 
