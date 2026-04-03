@@ -1,3 +1,5 @@
+> **Superseded** by `plans/2026-04-03-mistral-cloud-speech.md` — local speech stack replaced with Mistral cloud APIs.
+
 # Local TTS & STT Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

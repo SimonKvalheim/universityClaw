@@ -1,3 +1,5 @@
+> **Superseded** by `2026-04-03-mistral-cloud-speech-design.md` — local TTS replaced with Mistral cloud API.
+
 # Local TTS & STT Integration (Voxtral + NB-Whisper)
 
 ## Overview
