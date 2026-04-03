@@ -2,17 +2,10 @@ import fs from 'fs';
 import https from 'https';
 import os from 'os';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { Api, Bot, Context, InputFile } from 'grammy';
 import { FileFlavor, hydrateFiles } from '@grammyjs/files';
 
-import {
-  ASSISTANT_NAME,
-  TRIGGER_PATTERN,
-  WHISPER_BIN_PATH,
-  WHISPER_MODEL_PATH,
-} from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -24,7 +17,6 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
-const execFileAsync = promisify(execFile);
 type FilesContext = FileFlavor<Context>;
 
 export interface TelegramChannelOpts {
@@ -154,10 +146,16 @@ export class TelegramChannel implements Channel {
   private bot: Bot<FilesContext> | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private mistralApiKey: string;
 
-  constructor(botToken: string, opts: TelegramChannelOpts) {
+  constructor(
+    botToken: string,
+    opts: TelegramChannelOpts,
+    mistralApiKey: string = '',
+  ) {
     this.botToken = botToken;
     this.opts = opts;
+    this.mistralApiKey = mistralApiKey;
   }
 
   async connect(): Promise<void> {
@@ -311,7 +309,59 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const msgId = ctx.message.message_id.toString();
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const threadId = ctx.message.message_thread_id;
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+
+      let content = `[Photo]${caption}`;
+
+      try {
+        const file = await ctx.getFile();
+        const attachDir = path.join(DATA_DIR, 'attachments', group.folder);
+        fs.mkdirSync(attachDir, { recursive: true });
+        const destPath = path.join(attachDir, `${msgId}-photo.jpg`);
+        await file.download(destPath);
+        content = `[Photo](__attachment__:${destPath})${caption}`;
+        logger.debug({ chatJid, destPath }, 'Photo downloaded');
+      } catch (err) {
+        logger.warn(
+          { chatJid, err },
+          'Photo download failed, using placeholder',
+        );
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+        thread_id: threadId ? threadId.toString() : undefined,
+      });
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
@@ -327,49 +377,48 @@ export class TelegramChannel implements Channel {
           `voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.oga`,
         );
         await file.download(localPath);
-        const wavPath = localPath.replace(/\.oga$/, '.wav');
 
         try {
-          // Convert OGG Opus to WAV (whisper.cpp needs WAV input)
-          await execFileAsync(
-            'ffmpeg',
-            [
-              '-y',
-              '-i',
-              localPath,
-              '-ar',
-              '16000',
-              '-ac',
-              '1',
-              '-f',
-              'wav',
-              wavPath,
-            ],
-            { timeout: 15_000 },
-          );
+          if (!this.mistralApiKey) {
+            logger.warn('Skipping transcription — no MISTRAL_API_KEY');
+          } else {
+            const audioData = fs.readFileSync(localPath);
+            const formData = new FormData();
+            formData.append('model', 'voxtral-mini-latest');
+            formData.append(
+              'file',
+              new Blob([audioData], { type: 'audio/ogg' }),
+              'voice.oga',
+            );
 
-          // Transcribe with Whisper (auto-detect language)
-          const { stdout } = await execFileAsync(
-            WHISPER_BIN_PATH,
-            [
-              '-m',
-              WHISPER_MODEL_PATH,
-              '-l',
-              'auto',
-              '-f',
-              wavPath,
-              '--no-timestamps',
-            ],
-            { timeout: 60_000 },
-          );
+            const response = await fetch(
+              'https://api.mistral.ai/v1/audio/transcriptions',
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${this.mistralApiKey}`,
+                },
+                body: formData,
+                signal: AbortSignal.timeout(60_000),
+              },
+            );
 
-          const text = stdout.trim();
-          if (text) {
-            transcribedText = `[Voice]: ${text}`;
+            if (response.ok) {
+              const result = (await response.json()) as { text?: string };
+              const text = result.text?.trim();
+              if (text) {
+                transcribedText = `[Voice]: ${text}`;
+              }
+            } else {
+              const errText = await response.text().catch(() => '');
+              logger.error(
+                { status: response.status, body: errText },
+                'Mistral STT request failed',
+              );
+            }
           }
         } finally {
           fs.unlink(localPath, () => {});
-          fs.unlink(wavPath, () => {});
         }
       } catch (err) {
         logger.error(
@@ -378,13 +427,63 @@ export class TelegramChannel implements Channel {
         );
       }
 
-      // Store the transcribed (or fallback) text as a normal message
       storeNonText(ctx, transcribedText);
     });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    this.bot.on('message:document', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const rawName = ctx.message.document?.file_name || 'file';
+      const fileName = path.basename(rawName).replace(/[^\w.\-]/g, '_');
+      const msgId = ctx.message.message_id.toString();
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const threadId = ctx.message.message_thread_id;
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+
+      let content = `[Document: ${fileName}]${caption}`;
+
+      try {
+        const file = await ctx.getFile();
+        const attachDir = path.join(DATA_DIR, 'attachments', group.folder);
+        fs.mkdirSync(attachDir, { recursive: true });
+        const destPath = path.join(attachDir, `${msgId}-${fileName}`);
+        await file.download(destPath);
+        content = `[Document: ${fileName}](__attachment__:${destPath})${caption}`;
+        logger.debug({ chatJid, fileName, destPath }, 'Document downloaded');
+      } catch (err) {
+        logger.warn(
+          { chatJid, fileName, err },
+          'Document download failed, using placeholder',
+        );
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+        thread_id: threadId ? threadId.toString() : undefined,
+      });
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
@@ -504,12 +603,16 @@ export class TelegramChannel implements Channel {
 }
 
 registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
+  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN', 'MISTRAL_API_KEY']);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
     logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
-  return new TelegramChannel(token, opts);
+  const mistralApiKey = process.env.MISTRAL_API_KEY || envVars.MISTRAL_API_KEY || '';
+  if (!mistralApiKey) {
+    logger.warn('Telegram: MISTRAL_API_KEY not set — voice transcription disabled');
+  }
+  return new TelegramChannel(token, opts, mistralApiKey);
 });

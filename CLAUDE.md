@@ -172,10 +172,11 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 | `MAX_CONCURRENT_CONTAINERS` | `5` | Parallel container limit |
 | `EXTRACTION_TIMEOUT` | `600000` (10min) | Docling per-document timeout |
 | `DASHBOARD_PORT` | `3100` | Dashboard web UI port |
-| `LLM_BINDING` | `ollama` | LightRAG LLM provider (entity extraction) |
-| `LLM_MODEL` | `qwen2.5:3b` | LightRAG LLM model |
-| `EMBEDDING_BINDING` | `ollama` | LightRAG embedding provider |
-| `EMBEDDING_MODEL` | `bge-m3:latest` | LightRAG embedding model |
+| `MISTRAL_API_KEY` | — | Mistral API key (TTS + STT) |
+| `LIGHTRAG_LLM_BINDING` | `openai` | LightRAG LLM provider |
+| `LIGHTRAG_LLM_MODEL` | `gpt-4o-mini` | LightRAG LLM model |
+| `LIGHTRAG_EMBED_BINDING` | `openai` | LightRAG embedding provider |
+| `LIGHTRAG_EMBED_MODEL` | `text-embedding-3-small` | LightRAG embedding model |
 | `TZ` | auto-detected | Timezone for scheduling |
 
 ## Container Build Cache

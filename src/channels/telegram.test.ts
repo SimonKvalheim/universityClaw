@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 
 // --- Mocks ---
 
@@ -12,8 +14,7 @@ vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
-  WHISPER_BIN_PATH: '/opt/homebrew/bin/whisper-cpp',
-  WHISPER_MODEL_PATH: '/tmp/test-model.bin',
+  DATA_DIR: '/tmp/nanoclaw-test-data',
 }));
 
 // Mock logger
@@ -957,6 +958,204 @@ describe('TelegramChannel', () => {
     it('has name "telegram"', () => {
       const channel = new TelegramChannel('test-token', createTestOpts());
       expect(channel.name).toBe('telegram');
+    });
+  });
+
+  // --- Document attachment download ---
+
+  describe('document attachment download', () => {
+    it('downloads document and includes attachment marker', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 456,
+        extra: {
+          document: { file_name: 'report.pdf', file_id: 'abc123' },
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockResolvedValue({
+        download: vi.fn().mockImplementation(async (dest: string) => {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest, 'fake pdf content');
+        }),
+      });
+
+      await triggerMediaMessage('message:document', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.content).toContain('[Document: report.pdf]');
+      expect(msg.content).toContain('(__attachment__:');
+    });
+
+    it('falls back to placeholder on download failure', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 789,
+        extra: {
+          document: { file_name: 'report.pdf', file_id: 'abc123' },
+        },
+      });
+      (ctx as any).getFile = vi
+        .fn()
+        .mockRejectedValue(new Error('Download failed'));
+
+      await triggerMediaMessage('message:document', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.content).toBe('[Document: report.pdf]');
+      expect(msg.content).not.toContain('(__attachment__:');
+    });
+
+    it('preserves caption alongside attachment marker', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 800,
+        caption: 'Please review',
+        extra: {
+          document: { file_name: 'draft.pdf', file_id: 'cap123' },
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockResolvedValue({
+        download: vi.fn().mockImplementation(async (dest: string) => {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest, 'fake pdf');
+        }),
+      });
+
+      await triggerMediaMessage('message:document', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.content).toContain('[Document: draft.pdf]');
+      expect(msg.content).toContain('(__attachment__:');
+      expect(msg.content).toContain('Please review');
+    });
+
+    it('passes thread_id through', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 100,
+        extra: {
+          document: { file_name: 'doc.txt', file_id: 'xyz' },
+          message_thread_id: 42,
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('fail'));
+
+      await triggerMediaMessage('message:document', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.thread_id).toBe('42');
+    });
+  });
+
+  // --- Photo attachment download ---
+
+  describe('photo attachment download', () => {
+    it('downloads photo and includes marker', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 501,
+        extra: {
+          photo: [
+            { file_id: 'small', width: 100, height: 100 },
+            { file_id: 'large', width: 800, height: 800 },
+          ],
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockResolvedValue({
+        download: vi.fn().mockImplementation(async (dest: string) => {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest, 'fake jpg');
+        }),
+      });
+
+      await triggerMediaMessage('message:photo', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.content).toContain('[Photo]');
+      expect(msg.content).toContain('(__attachment__:');
+      expect(msg.content).toContain('501-photo.jpg');
+    });
+
+    it('falls back to placeholder on failure', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 502,
+        extra: {
+          photo: [{ file_id: 'fail', width: 100, height: 100 }],
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('fail'));
+
+      await triggerMediaMessage('message:photo', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.content).toBe('[Photo]');
+    });
+
+    it('includes caption with photo marker', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 503,
+        caption: 'Check this out',
+        extra: {
+          photo: [{ file_id: 'cap', width: 200, height: 200 }],
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockResolvedValue({
+        download: vi.fn().mockImplementation(async (dest: string) => {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest, 'fake jpg');
+        }),
+      });
+
+      await triggerMediaMessage('message:photo', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.content).toContain('[Photo]');
+      expect(msg.content).toContain('Check this out');
+      expect(msg.content).toContain('(__attachment__:');
+    });
+
+    it('passes thread_id through', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        messageId: 504,
+        extra: {
+          photo: [{ file_id: 'thread', width: 100, height: 100 }],
+          message_thread_id: 55,
+        },
+      });
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('fail'));
+
+      await triggerMediaMessage('message:photo', ctx);
+
+      const msg = (opts.onMessage as any).mock.calls[0][1];
+      expect(msg.thread_id).toBe('55');
     });
   });
 });

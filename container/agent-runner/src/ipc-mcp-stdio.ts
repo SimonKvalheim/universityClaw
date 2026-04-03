@@ -338,36 +338,16 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 );
 
 const AUDIO_DIR = '/workspace/group/audio';
-// Validation constants duplicated from src/voice-validation.ts
-// (container agent-runner has a separate build and cannot import from host src/)
 const TTS_MAX_TEXT_LENGTH = 5000;
-
-// Language → Voxtral voice preset mapping.
-// Voxtral encodes language in the voice preset name, not as a separate parameter.
-const LANGUAGE_VOICE_MAP: Record<string, string> = {
-  en: 'casual_male',
-  de: 'de_male',
-  it: 'it_male',
-  fr: 'fr_male',
-  es: 'es_male',
-  pt: 'pt_male',
-  nl: 'nl_male',
-  ar: 'ar_male',
-  hi: 'hi_male',
-};
+const MISTRAL_TTS_URL = 'https://api.mistral.ai/v1/audio/speech';
 
 server.tool(
   'synthesize_speech',
-  'Convert text to speech audio using the local Voxtral TTS service. Returns a file path to the generated WAV audio. Use send_voice to deliver it to the user as a Telegram voice message.',
+  'Convert text to speech audio using the Mistral Voxtral TTS API. Returns a file path to the generated WAV audio. Use send_voice to deliver it to the user as a Telegram voice message.',
   {
     text: z.string().describe('Text to synthesize (max 5000 characters)'),
-    language: z
-      .enum(['en', 'de', 'it', 'fr', 'es', 'pt', 'nl', 'ar', 'hi'])
-      .default('en')
-      .describe('Language for synthesis — determines the voice accent automatically'),
   },
   async (args) => {
-    // Validate text
     if (!args.text || args.text.trim().length === 0) {
       return {
         content: [{ type: 'text' as const, text: 'Error: text cannot be empty.' }],
@@ -386,27 +366,16 @@ server.tool(
       };
     }
 
-    const ttsUrl = process.env.VOXTRAL_TTS_URL;
-    if (!ttsUrl) {
-      return {
-        content: [
-          { type: 'text' as const, text: 'Error: TTS service not configured (VOXTRAL_TTS_URL not set).' },
-        ],
-        isError: true,
-      };
-    }
-
     try {
-      const response = await fetch(`${ttsUrl}/v1/audio/speech`, {
+      const response = await fetch(MISTRAL_TTS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: process.env.VOXTRAL_TTS_MODEL || 'mlx-community/Voxtral-4B-TTS-2603-mlx-4bit',
+          model: 'voxtral-mini-tts-2603',
           input: args.text,
-          voice: LANGUAGE_VOICE_MAP[args.language] || 'casual_male',
           response_format: 'wav',
         }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!response.ok) {
@@ -424,7 +393,6 @@ server.tool(
 
       const audioBuffer = Buffer.from(await response.arrayBuffer());
 
-      // Save to group audio directory
       fs.mkdirSync(AUDIO_DIR, { recursive: true });
       const random = Math.random().toString(36).slice(2, 6);
       const filename = `tts-${Date.now()}-${random}.wav`;
@@ -441,14 +409,12 @@ server.tool(
             text: JSON.stringify({
               path: filepath,
               duration_seconds: durationSeconds,
-              language: args.language,
             }),
           },
         ],
       };
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err);
       return {
         content: [
           { type: 'text' as const, text: `Error: TTS request failed: ${message}` },

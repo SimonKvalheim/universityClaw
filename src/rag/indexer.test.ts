@@ -298,9 +298,7 @@ type: concept
 
 See [[transformers]].`);
     mockRagClient.entityExists.mockResolvedValue(true);
-    mockRagClient.createRelation.mockRejectedValue(
-      new Error('LightRAG down'),
-    );
+    mockRagClient.createRelation.mockRejectedValue(new Error('LightRAG down'));
 
     await indexer.indexFile('/vault/concepts/attention.md');
 

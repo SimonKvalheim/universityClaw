@@ -375,3 +375,11 @@ Read from and update these files:
 - `/workspace/extra/vault/profile/student-profile.md` — Course roster, program info
 - `/workspace/extra/vault/profile/study-log.md` — Append after each study interaction
 - `/workspace/extra/vault/profile/knowledge-map.md` — Update after quizzes
+
+---
+
+## Simon's Preferences
+
+- *Acknowledge long tasks immediately* — for anything that takes more than a few seconds (e.g. creating a podcast, running a long search), send a quick acknowledgement first, then message when done.
+- *Never send voice/audio messages unprompted* — only send audio when explicitly asked, or as part of a scheduled routine. Default to text for all responses.
+- *Persist important instructions* — when Simon gives a preference or instruction, save it here immediately rather than relying on conversation context.

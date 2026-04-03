@@ -18,7 +18,11 @@ export class FileWatcher {
       ignoreInitial: false,
       awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 },
       depth: 10,
-      ignored: [/[\\/]\.processed[\\/]/, /[\\/]processed[\\/]/],
+      ignored: [
+        /[\\/]\.processed[\\/]/,
+        /[\\/]processed[\\/]/,
+        /[\\/]dismissed[\\/]/,
+      ],
     });
     this.watcher.on('add', (filePath: string) => {
       const fileName = filePath.split('/').pop() || '';

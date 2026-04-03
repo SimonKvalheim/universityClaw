@@ -20,9 +20,7 @@ const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
 
 /** Convert a slug like "working-memory-architecture" to "Working Memory Architecture". */
 function slugToTitle(slug: string): string {
-  return slug
-    .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return slug.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export class RagIndexer {
