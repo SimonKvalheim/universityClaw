@@ -610,9 +610,12 @@ registerChannel('telegram', (opts: ChannelOpts) => {
     logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
-  const mistralApiKey = process.env.MISTRAL_API_KEY || envVars.MISTRAL_API_KEY || '';
+  const mistralApiKey =
+    process.env.MISTRAL_API_KEY || envVars.MISTRAL_API_KEY || '';
   if (!mistralApiKey) {
-    logger.warn('Telegram: MISTRAL_API_KEY not set — voice transcription disabled');
+    logger.warn(
+      'Telegram: MISTRAL_API_KEY not set — voice transcription disabled',
+    );
   }
   return new TelegramChannel(token, opts, mistralApiKey);
 });
