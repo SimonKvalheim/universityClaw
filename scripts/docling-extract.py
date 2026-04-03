@@ -9,7 +9,9 @@ from pathlib import Path
 
 
 def extract(input_file: str, output_dir: str) -> dict:
-    from docling.document_converter import DocumentConverter
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
 
     input_path = Path(input_file)
     output_path = Path(output_dir)
@@ -18,7 +20,19 @@ def extract(input_file: str, output_dir: str) -> dict:
     figures_dir = output_path / "figures"
     figures_dir.mkdir(exist_ok=True)
 
-    converter = DocumentConverter()
+    pipeline_options = PdfPipelineOptions(
+        generate_picture_images=True,
+        generate_page_images=True,
+        images_scale=2.0,
+    )
+
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=pipeline_options,
+            ),
+        }
+    )
     result = converter.convert(str(input_path))
     doc = result.document
 
@@ -50,20 +64,24 @@ def extract(input_file: str, output_dir: str) -> dict:
 
         # Handle figures separately
         if element_type in ("PictureItem", "FigureItem"):
-            for img_idx, image in enumerate(getattr(element, "images", []) or []):
-                try:
-                    ext = "png"
-                    fname = f"figure_{idx}_{img_idx}.{ext}"
+            try:
+                pil_img = element.get_image(doc)
+                if pil_img is not None:
+                    fname = f"figure_{idx}.png"
                     fpath = figures_dir / fname
-                    if hasattr(image, "save"):
-                        image.save(str(fpath))
-                    elif hasattr(image, "pil_image") and image.pil_image is not None:
-                        image.pil_image.save(str(fpath))
-                    else:
-                        continue
+                    pil_img.save(str(fpath))
                     figure_filenames.append(fname)
-                except Exception:
-                    pass
+
+                    # Include figure reference in markdown
+                    caption = ""
+                    if hasattr(element, "caption_text"):
+                        caption = element.caption_text(doc) or ""
+                    alt = caption or f"Figure {len(figure_filenames)}"
+                    markdown_parts.append(
+                        f"{marker}![{alt}](figures/{fname})\n"
+                    )
+            except Exception as e:
+                print(f"Warning: failed to extract figure at index {idx}: {e}", file=sys.stderr)
             continue
 
         # Get text content

@@ -135,4 +135,3 @@ export const SENTINEL_TIMEOUT = parseInt(
   10,
 ); // 10min default
 export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
-
