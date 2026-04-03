@@ -2,6 +2,7 @@
 
 **Date:** 2026-04-03
 **Status:** Approved
+**Supersedes:** `2026-03-30-voxtral-tts-design.md`, `plans/2026-03-31-voxtral-tts-whisper-stt.md`
 
 ## Summary
 
@@ -29,7 +30,7 @@ Agent calls synthesize_speech
 ```
 Agent calls synthesize_speech
   → HTTPS POST to https://api.mistral.ai/v1/audio/speech
-  → OneCLI intercepts and injects MISTRAL_API_KEY
+  → OneCLI intercepts and injects MISTRAL_API_KEY (container-side)
   → Mistral returns WAV audio
   → WAV saved to /workspace/group/audio/
   → Agent calls send_voice → IPC → host converts WAV→OGG → Telegram (unchanged)
@@ -49,6 +50,10 @@ Agent calls synthesize_speech
 - Remove `VOXTRAL_TTS_URL` env var dependency — hardcode API URL
 - Keep text length validation (5000 chars) inline
 - Update tool description to say "Mistral" not "local Voxtral"
+- Increase timeout from 30s to 60s for cloud API latency
+
+### Authentication (Container → Mistral API)
+OneCLI's HTTPS-intercepting proxy injects the `MISTRAL_API_KEY` for container requests to `https://api.mistral.ai`. If the Mistral domain is not yet registered in OneCLI, that's a one-time config fix outside this spec's scope.
 
 ### Voice Selection
 Default voice initially (no `voice_id` parameter). Can add voice cloning later by uploading a reference audio sample and storing the returned `voice_id` in `.env`.
@@ -78,15 +83,16 @@ Telegram voice .oga
 ### API Request
 Multipart form data:
 - `model`: `voxtral-mini-latest`
-- `file`: the .oga file directly (no ffmpeg conversion needed)
+- `file`: the .oga file (try directly first; fall back to ffmpeg WAV conversion if Mistral rejects the format)
 
-### Authentication
-`MISTRAL_API_KEY` read from `.env` on the host side (not in container — STT runs in the Telegram channel handler before the agent is invoked).
+### Authentication (Host-Side)
+STT runs on the host in `telegram.ts`, outside OneCLI's container proxy. Read `MISTRAL_API_KEY` via `readEnvFile()` in the Telegram channel module (same pattern as `TELEGRAM_BOT_TOKEN`). Pass as `Authorization: Bearer ${key}` header on the fetch call.
 
 ### Changes
-- Remove ffmpeg OGG→WAV conversion step for STT
 - Remove `WHISPER_BIN_PATH` and `WHISPER_MODEL_PATH` imports
 - Replace `execFileAsync(WHISPER_BIN_PATH, ...)` with `fetch()` to Mistral API
+- Remove ffmpeg OGG→WAV conversion step for STT (keep as fallback if .oga is rejected)
+- Add `MISTRAL_API_KEY` to the channel's `readEnvFile()` call
 - Keep the same error handling pattern (fallback to `[Voice message (transcription failed)]`)
 
 ## Dead Code Removal
@@ -95,7 +101,13 @@ Multipart form data:
 | File | Reason |
 |------|--------|
 | `src/voice-validation.ts` | Language enum no longer needed; text length check stays inline in MCP tool |
+| `src/voice-validation.test.ts` | Tests for deleted module |
 | `services/com.nanoclaw.voxtral-tts.plist` | Local mlx-audio launchd service template |
+
+### Skills to Delete or Archive
+| Skill | Reason |
+|-------|--------|
+| `.claude/skills/use-local-whisper/SKILL.md` | Documents local whisper-cli workflow; no longer applicable |
 
 ### Config Removals (`src/config.ts`)
 | Constant | Reason |
@@ -118,9 +130,9 @@ Multipart form data:
 - Remove `WHISPER_BIN_PATH`, `WHISPER_MODEL_PATH` imports
 - Remove ffmpeg OGG→WAV conversion in voice handler
 - Replace whisper-cli subprocess with Mistral API fetch call
-- Add `MISTRAL_API_KEY` to env config reader
+- Add `MISTRAL_API_KEY` to `readEnvFile()` call
 
-### Environment (`env.example`)
+### Environment (`.env.example`)
 - Remove `LIGHTRAG_OLLAMA_HOST` and Ollama comments
 - Remove Ollama tuning comments from parallelism section
 - Add `MISTRAL_API_KEY=`
@@ -131,13 +143,14 @@ Multipart form data:
 - Remove `LIGHTRAG_OLLAMA_HOST` reference
 
 ### Tests
-- Update `src/channels/telegram.test.ts` — remove `WHISPER_BIN_PATH`/`WHISPER_MODEL_PATH` mocks
+- Update `src/channels/telegram.test.ts` — remove `WHISPER_BIN_PATH`/`WHISPER_MODEL_PATH` mocks, add `fetch()` mocks for STT
 - Remove or update `src/channels/telegram-voice.test.ts` — whisper config tests no longer relevant
-- Update `src/container-runner.test.ts` — remove Voxtral URL injection assertions if present
+- Update `src/container-runner.test.ts` — remove `VOXTRAL_TTS_PORT` mock and Voxtral URL injection assertions
 
 ### Documentation
 - Update `docs/speech.md` to reflect cloud API architecture
-- CLAUDE.md service stack table: remove reference to Voxtral TTS as a separate service
+- CLAUDE.md: remove Voxtral TTS from service stack table, add `MISTRAL_API_KEY` to env vars table
+- Mark `2026-03-30-voxtral-tts-design.md` and `plans/2026-03-31-voxtral-tts-whisper-stt.md` as superseded
 
 ## What Stays Unchanged
 
@@ -152,3 +165,5 @@ Multipart form data:
 |---------|------|--------------|
 | TTS | $0.016/1k chars | ~$0.01 per voice response |
 | STT | $0.003/min | ~$0.001 per voice message |
+
+Net savings: ~3GB RAM freed (no resident mlx-audio server), no local model files needed.
