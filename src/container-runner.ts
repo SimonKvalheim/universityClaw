@@ -15,7 +15,6 @@ import {
   IDLE_TIMEOUT,
   ONECLI_URL,
   TIMEZONE,
-  VOXTRAL_TTS_PORT,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -247,16 +246,6 @@ async function buildContainerArgs(
     .replace('localhost', 'host.docker.internal')
     .replace('127.0.0.1', 'host.docker.internal');
   args.push('-e', `LIGHTRAG_URL=${containerLightragUrl}`);
-
-  // Voxtral TTS server URL — same host gateway pattern as LightRAG
-  const voxtralUrl = `http://localhost:${VOXTRAL_TTS_PORT}`;
-  const containerVoxtralUrl = voxtralUrl
-    .replace('localhost', 'host.docker.internal')
-    .replace('127.0.0.1', 'host.docker.internal');
-  args.push('-e', `VOXTRAL_TTS_URL=${containerVoxtralUrl}`);
-  if (process.env.VOXTRAL_TTS_MODEL) {
-    args.push('-e', `VOXTRAL_TTS_MODEL=${process.env.VOXTRAL_TTS_MODEL}`);
-  }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
