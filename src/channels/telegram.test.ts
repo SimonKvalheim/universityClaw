@@ -14,8 +14,6 @@ vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
-  WHISPER_BIN_PATH: '/opt/homebrew/bin/whisper-cpp',
-  WHISPER_MODEL_PATH: '/tmp/test-model.bin',
   DATA_DIR: '/tmp/nanoclaw-test-data',
 }));
 

@@ -11,8 +11,6 @@ import {
   ASSISTANT_NAME,
   DATA_DIR,
   TRIGGER_PATTERN,
-  WHISPER_BIN_PATH,
-  WHISPER_MODEL_PATH,
 } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -383,46 +381,11 @@ export class TelegramChannel implements Channel {
         const wavPath = localPath.replace(/\.oga$/, '.wav');
 
         try {
-          // Convert OGG Opus to WAV (whisper.cpp needs WAV input)
-          await execFileAsync(
-            'ffmpeg',
-            [
-              '-y',
-              '-i',
-              localPath,
-              '-ar',
-              '16000',
-              '-ac',
-              '1',
-              '-f',
-              'wav',
-              wavPath,
-            ],
-            { timeout: 15_000 },
-          );
-
-          // Transcribe with Whisper (auto-detect language)
-          const { stdout } = await execFileAsync(
-            WHISPER_BIN_PATH,
-            [
-              '-m',
-              WHISPER_MODEL_PATH,
-              '-l',
-              'auto',
-              '-f',
-              wavPath,
-              '--no-timestamps',
-            ],
-            { timeout: 60_000 },
-          );
-
-          const text = stdout.trim();
-          if (text) {
-            transcribedText = `[Voice]: ${text}`;
-          }
+          // TODO(Task 5): Transcribe via Mistral API
+          // Local whisper-cli removed; STT rewrite pending.
+          void wavPath; // will be used by Mistral STT in Task 5
         } finally {
           fs.unlink(localPath, () => {});
-          fs.unlink(wavPath, () => {});
         }
       } catch (err) {
         logger.error(
