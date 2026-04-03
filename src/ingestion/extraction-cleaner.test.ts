@@ -137,10 +137,12 @@ describe('cleanExtraction', () => {
 
   describe('strip references tail', () => {
     it('strips ## References at 80% through document', () => {
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 1} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 1} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
       const refBlocks = [
         `<!-- page:9 label:section_header -->`,
         `## References`,
@@ -167,10 +169,12 @@ describe('cleanExtraction', () => {
         `<!-- page:1 label:text -->`,
         `This section references prior work and should be preserved in the output.`,
       ].join('\n');
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 2} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 2} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
 
       const input = [earlyRef, ...bodyBlocks].join('\n\n');
       const result = cleanExtraction(input);
@@ -179,10 +183,12 @@ describe('cleanExtraction', () => {
     });
 
     it('handles ## Bibliography heading', () => {
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 1} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 1} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
       const bibBlock = [
         `<!-- page:9 label:section_header -->`,
         `## Bibliography`,
@@ -197,10 +203,12 @@ describe('cleanExtraction', () => {
     });
 
     it('handles ## Works Cited heading', () => {
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 1} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 1} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
       const citedBlock = [
         `<!-- page:9 label:section_header -->`,
         `## Works Cited`,
@@ -217,10 +225,12 @@ describe('cleanExtraction', () => {
 
   describe('strip supplementary tail', () => {
     it('strips ## Appendix at 80% through document', () => {
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 1} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 1} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
       const appendixBlock = [
         `<!-- page:9 label:section_header -->`,
         `## Appendix`,
@@ -242,10 +252,12 @@ describe('cleanExtraction', () => {
         `<!-- page:1 label:text -->`,
         `Early appendix reference that appears before the threshold and should stay.`,
       ].join('\n');
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 2} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 2} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
 
       const input = [earlyAppendix, ...bodyBlocks].join('\n\n');
       const result = cleanExtraction(input);
@@ -253,10 +265,12 @@ describe('cleanExtraction', () => {
     });
 
     it('handles ## Supplementary heading', () => {
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 1} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 1} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
       const suppBlock = [
         `<!-- page:9 label:section_header -->`,
         `## Supplementary`,
@@ -271,10 +285,12 @@ describe('cleanExtraction', () => {
     });
 
     it('handles ## Supporting Information heading', () => {
-      const bodyBlocks = Array.from({ length: 8 }, (_, i) => [
-        `<!-- page:${i + 1} label:text -->`,
-        `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
-      ].join('\n'));
+      const bodyBlocks = Array.from({ length: 8 }, (_, i) =>
+        [
+          `<!-- page:${i + 1} label:text -->`,
+          `Body paragraph ${i + 1} with enough text content to be meaningful and not noise.`,
+        ].join('\n'),
+      );
       const siBlock = [
         `<!-- page:9 label:section_header -->`,
         `## Supporting Information`,
@@ -292,17 +308,38 @@ describe('cleanExtraction', () => {
   describe('composition', () => {
     it('applies all rules together', () => {
       const input = [
-        '<!-- page:1 label:text -->', 'EEG', '',
-        '<!-- page:1 label:text -->', 'EEG', '',
-        '<!-- page:1 label:text -->', 'Alpha', '',
-        '<!-- page:1 label:text -->', 'Band', '',
-        '<!-- page:2 label:section_header -->', '## Methods', '',
-        '<!-- page:2 label:text -->', 'We used electroencephalography to record brain activity during the essay writing task.', '',
-        '<!-- page:3 label:text -->', 'Additional methodology details that contribute to the body of the paper content.', '',
-        '<!-- page:4 label:text -->', 'Results section with important findings that should be preserved in the output.', '',
-        '<!-- page:5 label:text -->', 'Discussion of the implications of our findings for educational technology use.', '',
-        '<!-- page:6 label:section_header -->', '## References', '',
-        '<!-- page:6 label:text -->', '[1] Should be stripped from the output.',
+        '<!-- page:1 label:text -->',
+        'EEG',
+        '',
+        '<!-- page:1 label:text -->',
+        'EEG',
+        '',
+        '<!-- page:1 label:text -->',
+        'Alpha',
+        '',
+        '<!-- page:1 label:text -->',
+        'Band',
+        '',
+        '<!-- page:2 label:section_header -->',
+        '## Methods',
+        '',
+        '<!-- page:2 label:text -->',
+        'We used electroencephalography to record brain activity during the essay writing task.',
+        '',
+        '<!-- page:3 label:text -->',
+        'Additional methodology details that contribute to the body of the paper content.',
+        '',
+        '<!-- page:4 label:text -->',
+        'Results section with important findings that should be preserved in the output.',
+        '',
+        '<!-- page:5 label:text -->',
+        'Discussion of the implications of our findings for educational technology use.',
+        '',
+        '<!-- page:6 label:section_header -->',
+        '## References',
+        '',
+        '<!-- page:6 label:text -->',
+        '[1] Should be stripped from the output.',
       ].join('\n');
 
       const result = cleanExtraction(input);

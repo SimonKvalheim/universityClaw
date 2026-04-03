@@ -55,10 +55,16 @@ export HOST="0.0.0.0"
 export PORT="${LIGHTRAG_PORT:-9621}"
 export LLM_BINDING="${LIGHTRAG_LLM_BINDING:-openai}"
 export LLM_MODEL="${LIGHTRAG_LLM_MODEL:-gpt-4o-mini}"
-export LLM_BINDING_HOST="${LIGHTRAG_OLLAMA_HOST:-http://localhost:11434}"
 export EMBEDDING_BINDING="${LIGHTRAG_EMBED_BINDING:-openai}"
 export EMBEDDING_MODEL="${LIGHTRAG_EMBED_MODEL:-text-embedding-3-small}"
-export EMBEDDING_BINDING_HOST="${LIGHTRAG_OLLAMA_HOST:-http://localhost:11434}"
+
+# Only set binding hosts for Ollama — OpenAI uses its own default (https://api.openai.com/v1)
+if [[ "$LLM_BINDING" == "ollama" ]]; then
+  export LLM_BINDING_HOST="${LIGHTRAG_OLLAMA_HOST:-http://localhost:11434}"
+fi
+if [[ "$EMBEDDING_BINDING" == "ollama" ]]; then
+  export EMBEDDING_BINDING_HOST="${LIGHTRAG_OLLAMA_HOST:-http://localhost:11434}"
+fi
 export EMBEDDING_DIM="${LIGHTRAG_EMBED_DIM:-1536}"
 # --- Parallelism ---
 # Defaults tuned for remote APIs (OpenAI). Reduce if using local Ollama.

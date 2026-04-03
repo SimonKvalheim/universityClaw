@@ -98,7 +98,8 @@ function collapseNoise(blocks: Block[]): Block[] {
 }
 
 const REFERENCES_RE = /^##\s+(References|Bibliography|Works Cited)\s*$/i;
-const SUPPLEMENTARY_RE = /^##\s+(Appendix|Supplementary|Supporting Information)\s*$/i;
+const SUPPLEMENTARY_RE =
+  /^##\s+(Appendix|Supplementary|Supporting Information)\s*$/i;
 
 function stripTail(
   blocks: Block[],
