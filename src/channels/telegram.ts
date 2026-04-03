@@ -2,16 +2,10 @@ import fs from 'fs';
 import https from 'https';
 import os from 'os';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { Api, Bot, Context, InputFile } from 'grammy';
 import { FileFlavor, hydrateFiles } from '@grammyjs/files';
 
-import {
-  ASSISTANT_NAME,
-  DATA_DIR,
-  TRIGGER_PATTERN,
-} from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -23,7 +17,6 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
-const execFileAsync = promisify(execFile);
 type FilesContext = FileFlavor<Context>;
 
 export interface TelegramChannelOpts {
@@ -153,10 +146,16 @@ export class TelegramChannel implements Channel {
   private bot: Bot<FilesContext> | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private mistralApiKey: string;
 
-  constructor(botToken: string, opts: TelegramChannelOpts) {
+  constructor(
+    botToken: string,
+    opts: TelegramChannelOpts,
+    mistralApiKey: string = '',
+  ) {
     this.botToken = botToken;
     this.opts = opts;
+    this.mistralApiKey = mistralApiKey;
   }
 
   async connect(): Promise<void> {
@@ -378,12 +377,46 @@ export class TelegramChannel implements Channel {
           `voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.oga`,
         );
         await file.download(localPath);
-        const wavPath = localPath.replace(/\.oga$/, '.wav');
 
         try {
-          // TODO(Task 5): Transcribe via Mistral API
-          // Local whisper-cli removed; STT rewrite pending.
-          void wavPath; // will be used by Mistral STT in Task 5
+          if (!this.mistralApiKey) {
+            logger.warn('Skipping transcription — no MISTRAL_API_KEY');
+          } else {
+            const audioData = fs.readFileSync(localPath);
+            const formData = new FormData();
+            formData.append('model', 'voxtral-mini-latest');
+            formData.append(
+              'file',
+              new Blob([audioData], { type: 'audio/ogg' }),
+              'voice.oga',
+            );
+
+            const response = await fetch(
+              'https://api.mistral.ai/v1/audio/transcriptions',
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${this.mistralApiKey}`,
+                },
+                body: formData,
+                signal: AbortSignal.timeout(60_000),
+              },
+            );
+
+            if (response.ok) {
+              const result = (await response.json()) as { text?: string };
+              const text = result.text?.trim();
+              if (text) {
+                transcribedText = `[Voice]: ${text}`;
+              }
+            } else {
+              const errText = await response.text().catch(() => '');
+              logger.error(
+                { status: response.status, body: errText },
+                'Mistral STT request failed',
+              );
+            }
+          }
         } finally {
           fs.unlink(localPath, () => {});
         }
@@ -394,7 +427,6 @@ export class TelegramChannel implements Channel {
         );
       }
 
-      // Store the transcribed (or fallback) text as a normal message
       storeNonText(ctx, transcribedText);
     });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
@@ -571,12 +603,16 @@ export class TelegramChannel implements Channel {
 }
 
 registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
+  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN', 'MISTRAL_API_KEY']);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
     logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
-  return new TelegramChannel(token, opts);
+  const mistralApiKey = process.env.MISTRAL_API_KEY || envVars.MISTRAL_API_KEY || '';
+  if (!mistralApiKey) {
+    logger.warn('Telegram: MISTRAL_API_KEY not set — voice transcription disabled');
+  }
+  return new TelegramChannel(token, opts, mistralApiKey);
 });
