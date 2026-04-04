@@ -435,6 +435,11 @@ export class IngestionPipeline {
         job.id,
         this.reviewAgentGroup,
         vaultManifest,
+        {
+          source_type: job.source_type,
+          zotero_key: job.zotero_key,
+          zotero_metadata: job.zotero_metadata,
+        },
       )
       .finally(() => ac.abort());
 
@@ -608,8 +613,14 @@ export class IngestionPipeline {
     });
 
     // Zotero write-back: post summary note + tag
-    if (job.source_type === 'zotero' && job.zotero_key && this.zoteroWriteBack) {
-      const sourceNotePath = promotedPaths.find((p) => p.startsWith('sources/'));
+    if (
+      job.source_type === 'zotero' &&
+      job.zotero_key &&
+      this.zoteroWriteBack
+    ) {
+      const sourceNotePath = promotedPaths.find((p) =>
+        p.startsWith('sources/'),
+      );
       if (sourceNotePath) {
         try {
           const fullPath = join(this.vaultDir, sourceNotePath);

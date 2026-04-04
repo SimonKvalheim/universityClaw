@@ -24,6 +24,11 @@ export class AgentProcessor {
     jobId: string,
     figures: string[],
     vaultManifest?: string,
+    jobMeta?: {
+      source_type?: string;
+      zotero_key?: string | null;
+      zotero_metadata?: string | null;
+    },
   ): string {
     const draftsPath = `/workspace/extra/vault/drafts`;
 
@@ -34,6 +39,45 @@ export class AgentProcessor {
 
     const manifestSection = vaultManifest ? `\n${vaultManifest}\n` : '';
 
+    const isZotero = jobMeta?.source_type === 'zotero';
+
+    let metadataSection = '';
+    if (isZotero && jobMeta?.zotero_metadata) {
+      try {
+        const meta = JSON.parse(jobMeta.zotero_metadata);
+        const creators = (meta.creators || [])
+          .map(
+            (c: { lastName: string; firstName: string }) =>
+              `${c.lastName}, ${c.firstName?.[0] || ''}.`,
+          )
+          .join('; ');
+        const tags = (meta.tags || []).join(', ');
+
+        const lines = ['## Source Document Metadata (from Zotero)'];
+        if (meta.title) lines.push(`- Title: ${meta.title}`);
+        if (creators) lines.push(`- Authors: ${creators}`);
+        if (meta.date) lines.push(`- Date: ${meta.date}`);
+        if (meta.publicationTitle) lines.push(`- Publication: ${meta.publicationTitle}`);
+        if (meta.DOI) lines.push(`- DOI: ${meta.DOI}`);
+        if (tags) lines.push(`- Tags: ${tags}`);
+        if (meta.abstractNote) lines.push(`- Abstract: ${meta.abstractNote}`);
+
+        metadataSection = '\n' + lines.join('\n') + '\n';
+      } catch {
+        // Non-fatal: skip metadata if JSON is malformed
+      }
+    }
+
+    const sourceFileValue =
+      isZotero && jobMeta?.zotero_key
+        ? `zotero://select/items/${jobMeta.zotero_key}`
+        : `upload/processed/${jobId}-${fileName}`;
+
+    const zoteroKeyLine =
+      isZotero && jobMeta?.zotero_key
+        ? `\n- **zotero_key for frontmatter:** ${jobMeta.zotero_key}`
+        : '';
+
     // Document content first (top of prompt) for better attention quality,
     // then slim task parameters. Workflow instructions live in CLAUDE.md.
     // See docs/research/2026-03-30-agent-prompt-architecture.md
@@ -43,13 +87,13 @@ export class AgentProcessor {
 ${extractedContent}
 </document_content>
 </document>
-${figuresSection}${manifestSection}
+${figuresSection}${metadataSection}${manifestSection}
 ## Job Parameters
 
 - **Job ID:** ${jobId}
 - **Source filename:** ${fileName}
 - **Drafts path:** ${draftsPath}
-- **source_file value for frontmatter:** upload/processed/${jobId}-${fileName}
+- **source_file value for frontmatter:** ${sourceFileValue}${zoteroKeyLine}
 - **Source note filename:** ${draftsPath}/${jobId}-source.md
 - **Concept note pattern:** ${draftsPath}/${jobId}-concept-NNN.md
 - **Manifest path:** ${draftsPath}/${jobId}-manifest.json
@@ -67,6 +111,11 @@ Process this document following your ingestion workflow.`;
     jobId: string,
     reviewAgentGroup: RegisteredGroup,
     vaultManifest?: string,
+    jobMeta?: {
+      source_type?: string;
+      zotero_key?: string | null;
+      zotero_metadata?: string | null;
+    },
   ): Promise<{ status: 'success' | 'error'; error?: string }> {
     const cleanContentFile = join(extractionPath, 'content.clean.md');
     const rawContentFile = join(extractionPath, 'content.md');
@@ -102,6 +151,7 @@ Process this document following your ingestion workflow.`;
       jobId,
       figures,
       vaultManifest,
+      jobMeta,
     );
 
     logger.info(

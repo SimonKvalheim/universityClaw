@@ -85,3 +85,49 @@ describe('AgentProcessor prompt', () => {
     expect(prompt).not.toContain('<existing_vault_notes>');
   });
 });
+
+describe('AgentProcessor.buildPrompt', () => {
+  const processor = new AgentProcessor({
+    vaultDir: '/vault',
+    uploadDir: '/upload',
+  });
+
+  it('includes Zotero metadata preamble when provided', () => {
+    const metadata = JSON.stringify({
+      title: 'Test Paper',
+      creators: [
+        { firstName: 'Jane', lastName: 'Doe', creatorType: 'author' },
+        { firstName: 'John', lastName: 'Smith', creatorType: 'author' },
+      ],
+      date: '2025-06-15',
+      DOI: '10.1234/test',
+      publicationTitle: 'Journal of Testing',
+      tags: ['AI', 'Education'],
+      abstractNote: 'This paper examines...',
+      itemType: 'journalArticle',
+    });
+
+    const prompt = processor.buildPrompt('content', 'file.pdf', 'job-1', [], undefined, {
+      source_type: 'zotero',
+      zotero_key: 'ABCD1234',
+      zotero_metadata: metadata,
+    });
+
+    expect(prompt).toContain('## Source Document Metadata (from Zotero)');
+    expect(prompt).toContain('Doe, J.');
+    expect(prompt).toContain('Smith, J.');
+    expect(prompt).toContain('2025-06-15');
+    expect(prompt).toContain('10.1234/test');
+    expect(prompt).toContain('Journal of Testing');
+    expect(prompt).toContain('AI, Education');
+    expect(prompt).toContain('zotero://select/items/ABCD1234');
+    expect(prompt).toContain('zotero_key');
+  });
+
+  it('omits metadata preamble for upload-sourced jobs', () => {
+    const prompt = processor.buildPrompt('content', 'file.pdf', 'job-2', []);
+
+    expect(prompt).not.toContain('Source Document Metadata');
+    expect(prompt).toContain('upload/processed/job-2-file.pdf');
+  });
+});
