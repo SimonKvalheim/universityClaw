@@ -11,6 +11,12 @@ const envConfig = readEnvFile([
   'ONECLI_URL',
   'TELEGRAM_BOT_POOL',
   'TZ',
+  'ZOTERO_ENABLED',
+  'ZOTERO_API_KEY',
+  'ZOTERO_USER_ID',
+  'ZOTERO_POLL_INTERVAL',
+  'ZOTERO_EXCLUDE_COLLECTION',
+  'ZOTERO_LOCAL_URL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -137,14 +143,24 @@ export const SENTINEL_TIMEOUT = parseInt(
 export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
 
 export const ZOTERO_ENABLED =
-  (process.env.ZOTERO_ENABLED || '').toLowerCase() === 'true';
-export const ZOTERO_API_KEY = process.env.ZOTERO_API_KEY || '';
-export const ZOTERO_USER_ID = process.env.ZOTERO_USER_ID || '';
+  (
+    process.env.ZOTERO_ENABLED ||
+    envConfig.ZOTERO_ENABLED ||
+    ''
+  ).toLowerCase() === 'true';
+export const ZOTERO_API_KEY =
+  process.env.ZOTERO_API_KEY || envConfig.ZOTERO_API_KEY || '';
+export const ZOTERO_USER_ID =
+  process.env.ZOTERO_USER_ID || envConfig.ZOTERO_USER_ID || '';
 export const ZOTERO_POLL_INTERVAL = parseInt(
-  process.env.ZOTERO_POLL_INTERVAL || '60000',
+  process.env.ZOTERO_POLL_INTERVAL || envConfig.ZOTERO_POLL_INTERVAL || '60000',
   10,
 );
 export const ZOTERO_EXCLUDE_COLLECTION =
-  process.env.ZOTERO_EXCLUDE_COLLECTION || '';
+  process.env.ZOTERO_EXCLUDE_COLLECTION ||
+  envConfig.ZOTERO_EXCLUDE_COLLECTION ||
+  '';
 export const ZOTERO_LOCAL_URL =
-  process.env.ZOTERO_LOCAL_URL || 'http://localhost:23119';
+  process.env.ZOTERO_LOCAL_URL ||
+  envConfig.ZOTERO_LOCAL_URL ||
+  'http://localhost:23119';
