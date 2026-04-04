@@ -340,10 +340,12 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 const AUDIO_DIR = '/workspace/group/audio';
 const TTS_MAX_TEXT_LENGTH = 5000;
 const MISTRAL_TTS_URL = 'https://api.mistral.ai/v1/audio/speech';
+// Default voice: "Paul - Neutral" (en_us, male, casual)
+const MISTRAL_DEFAULT_VOICE_ID = 'c69964a6-ab8b-4f8a-9465-ec0925096ec8';
 
 server.tool(
   'synthesize_speech',
-  'Convert text to speech audio using the Mistral Voxtral TTS API. Returns a file path to the generated WAV audio. Use send_voice to deliver it to the user as a Telegram voice message.',
+  'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
   {
     text: z.string().describe('Text to synthesize (max 5000 characters)'),
   },
@@ -366,13 +368,27 @@ server.tool(
       };
     }
 
+    const apiKey = process.env.MISTRAL_API_KEY;
+    if (!apiKey) {
+      return {
+        content: [
+          { type: 'text' as const, text: 'Error: MISTRAL_API_KEY is not set in the container environment.' },
+        ],
+        isError: true,
+      };
+    }
+
     try {
       const response = await fetch(MISTRAL_TTS_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
         body: JSON.stringify({
           model: 'voxtral-mini-tts-2603',
           input: args.text,
+          voice_id: MISTRAL_DEFAULT_VOICE_ID,
           response_format: 'wav',
         }),
         signal: AbortSignal.timeout(60_000),
@@ -391,7 +407,17 @@ server.tool(
         };
       }
 
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      // Mistral returns JSON with base64-encoded audio_data
+      const responseJson = await response.json() as { audio_data?: string };
+      if (!responseJson.audio_data) {
+        return {
+          content: [
+            { type: 'text' as const, text: 'Error: TTS response missing audio_data field.' },
+          ],
+          isError: true,
+        };
+      }
+      const audioBuffer = Buffer.from(responseJson.audio_data, 'base64');
 
       fs.mkdirSync(AUDIO_DIR, { recursive: true });
       const random = Math.random().toString(36).slice(2, 6);
