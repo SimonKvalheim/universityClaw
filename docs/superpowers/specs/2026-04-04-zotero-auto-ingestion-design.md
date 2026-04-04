@@ -87,8 +87,9 @@ Polls the Zotero local API for new items and enqueues them for processing.
 - Optional — if unset, all items with PDFs are ingested
 
 **PDF resolution:**
-- For each new item, fetch children to find the PDF attachment
-- Get local file path from the attachment's `enclosure` link (`file:///...`)
+- For each new item, fetch children to find PDF attachments
+- If multiple PDFs, pick the largest (most likely the full text, not a supplement)
+- Resolve local file path via `GET /api/users/0/items/{attachmentKey}/file/view/url` which returns a `file:///` URL pointing to the PDF on disk
 - Items without a PDF attachment are skipped (logged as "no PDF available")
 
 **Metadata extraction:**
@@ -107,14 +108,14 @@ Thin client wrapping both Zotero APIs.
 - `getItems(since?)` — fetch items modified since version
 - `getCollections()` — list all collections
 - `getChildren(itemKey)` — get child items (attachments, notes)
-- `getFileUrl(attachmentKey)` — resolve local PDF path from enclosure link
+- `getFileUrl(attachmentKey)` — resolve local PDF path via `/items/{key}/file/view/url`
 - No authentication required, no rate limits
 
 **Web API (write):**
-- `createChildNote(parentKey, htmlContent)` — attach summary note to item
-- `addTag(itemKey, tag)` — add `vault:ingested` tag to parent item
+- `createChildNote(parentKey, htmlContent)` — attach summary note to item (single POST)
+- `addTag(itemKey, tag)` — add `vault:ingested` tag to parent item. This is a read-modify-write cycle: fetch current item, append tag to `tags` array, PATCH back. Separate API call from note creation, with independent version conflict potential.
 - Requires `ZOTERO_API_KEY` and `ZOTERO_USER_ID`
-- Includes `If-Unmodified-Since-Version` header for conflict safety
+- Includes `If-Unmodified-Since-Version` header (Zotero-specific custom header, not standard HTTP) for conflict safety
 - On 412 (version conflict): re-fetch version, retry once
 - Rate limit handling: respect `Backoff` and `Retry-After` headers
 
@@ -229,12 +230,29 @@ Three new files, three modified. Core pipeline untouched.
 
 Zotero's native 8-character item keys (e.g. `YXSUPARC`) are used as the stable identifier linking vault notes to Zotero items. Better BibTeX citekeys are not required. If BBT is installed later, citekey support can be added as a minor enhancement.
 
+## Integration Notes
+
+**Promotion must not move Zotero PDFs.** The existing `handlePromotion` renames the source file to `upload/processed/`. For Zotero-sourced jobs (`source_type === 'zotero'`), the file move MUST be skipped — moving a file out of Zotero's managed `storage/` directory would corrupt Zotero's database.
+
+**`createIngestionJob` signature expansion.** The current function accepts `(id, sourcePath, sourceFilename, contentHash?)`. For Zotero jobs, it needs to also accept `source_type`, `zotero_key`, and `zotero_metadata`. Extend the existing function with optional parameters rather than creating a separate function.
+
+**`JobRow` interface expansion.** The `JobRow` interface in `pipeline.ts` must include `source_type`, `zotero_key`, and `zotero_metadata` so that downstream consumers (promotion handler, agent processor, write-back) can make source-aware decisions.
+
+**`AgentProcessor.buildPrompt` signature.** Currently receives `(extractedContent, fileName, jobId, figures, vaultManifest)` with no job metadata. Needs an additional parameter (or the full `JobRow`) to access Zotero metadata for prompt injection.
+
+**First-run behavior.** On first connection (no stored library version), the watcher fetches the current `Last-Modified-Version` and stores it WITHOUT processing existing items. This avoids a burst of 60+ ingestion jobs. Only items added/changed after first connection are processed. A manual "backfill" can be triggered later if desired.
+
+**Dashboard follow-up.** The dashboard likely displays ingestion jobs. Surfacing `source_type` and Zotero-specific fields in the UI is a follow-up, not part of this spec.
+
 ## Edge Cases
 
 - **Item has no PDF attachment**: Skipped, logged as "no PDF available"
+- **Multiple PDF attachments**: Largest file selected (most likely full text vs. supplement)
 - **Item updated in Zotero after ingestion**: Version bump triggers re-poll, but dedup by `zotero_key` prevents re-processing. Metadata-only changes are ignored.
 - **Zotero quits mid-session**: Watcher logs warning, resumes automatically when Zotero reopens
 - **PDF is already in upload/ pipeline**: Content hash dedup prevents double-processing regardless of source
 - **Web API rate limit**: Respect `Backoff` and `Retry-After` headers, exponential backoff
 - **Version conflict on write-back (412)**: Re-fetch current version, retry once
 - **Item moved to exclude collection after ingestion**: No effect — already processed, tag remains
+- **Deleted items in `since` response**: The Zotero API returns both modified and deleted item keys in `since` responses. Deleted items are ignored (no action needed).
+- **Attachment replaced without parent edit**: May not bump parent item version. Accepted limitation — re-adding the item to Zotero or manually uploading the PDF are workarounds.
