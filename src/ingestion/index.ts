@@ -27,6 +27,7 @@ import {
   getSetting,
   getIngestionJobs,
   deleteCitationEdges,
+  getIngestionJobByZoteroKey,
 } from '../db.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
@@ -36,7 +37,17 @@ import {
   EXTRACTIONS_DIR,
   SENTINEL_TIMEOUT,
   PROCESSED_DIR,
+  ZOTERO_ENABLED,
+  ZOTERO_API_KEY,
+  ZOTERO_USER_ID,
+  ZOTERO_POLL_INTERVAL,
+  ZOTERO_EXCLUDE_COLLECTION,
+  ZOTERO_LOCAL_URL,
 } from '../config.js';
+import { ZoteroWatcher } from './zotero-watcher.js';
+import { ZoteroWriteBack } from './zotero-writeback.js';
+import { ZoteroLocalClient, ZoteroWebClient } from './zotero-client.js';
+import { ZoteroMetadata } from './types.js';
 
 const RATE_LIMIT_PATTERNS = [
   /rate.?limit/i,
@@ -68,6 +79,8 @@ export class IngestionPipeline {
   private reviewAgentGroup: RegisteredGroup;
   private drainer: PipelineDrainer;
   private notify: ((message: string) => void) | undefined;
+  private zoteroWatcher: ZoteroWatcher | null = null;
+  private zoteroWriteBack: ZoteroWriteBack | null = null;
 
   constructor(opts: IngestionPipelineOpts) {
     this.uploadDir = opts.uploadDir;
@@ -162,6 +175,45 @@ export class IngestionPipeline {
       `ingestion: Enqueuing: ${relativePath}`,
     );
     createIngestionJob(jobId, filePath, fileName, contentHash);
+  }
+
+  private enqueueZotero(
+    filePath: string,
+    zoteroKey: string,
+    metadata: ZoteroMetadata,
+  ): void {
+    // Content-hash dedup (same as enqueue)
+    let contentHash: string;
+    try {
+      const fileBuffer = readFileSync(filePath);
+      contentHash = createHash('sha256').update(fileBuffer).digest('hex');
+    } catch (err) {
+      logger.warn(
+        { filePath, zoteroKey, err },
+        'zotero: Failed to hash file, skipping',
+      );
+      return;
+    }
+
+    const completedDuplicate = getCompletedJobByHash(contentHash);
+    if (completedDuplicate) {
+      logger.info(
+        { zoteroKey, duplicateOfJob: completedDuplicate.id },
+        'zotero: Skipping duplicate of completed job',
+      );
+      return;
+    }
+
+    const jobId = randomUUID();
+    logger.info(
+      { jobId, zoteroKey, title: metadata.title },
+      `zotero: Enqueuing: ${metadata.title}`,
+    );
+    createIngestionJob(jobId, filePath, basename(filePath), contentHash, {
+      source_type: 'zotero',
+      zotero_key: zoteroKey,
+      zotero_metadata: JSON.stringify(metadata),
+    });
   }
 
   async handleExtraction(job: JobRow): Promise<void> {
@@ -529,27 +581,52 @@ export class IngestionPipeline {
       }
     }
 
-    // Move source file to processed/
-    await mkdir(PROCESSED_DIR, { recursive: true });
-    try {
-      await rename(
-        job.source_path,
-        join(PROCESSED_DIR, `${job.id}-${fileName}`),
-      );
-    } catch {
-      logger.warn({ jobId: job.id }, 'Failed to move source to processed/');
+    // Move source file to processed/ (skip for Zotero — file is managed by Zotero)
+    if (job.source_type !== 'zotero') {
+      await mkdir(PROCESSED_DIR, { recursive: true });
+      try {
+        await rename(
+          job.source_path,
+          join(PROCESSED_DIR, `${job.id}-${fileName}`),
+        );
+      } catch {
+        logger.warn({ jobId: job.id }, 'Failed to move source to processed/');
+      }
     }
 
     // Cleanup — sentinel, manifest, any remaining draft files, extraction artifacts
     cleanupSentinel(draftsDir, job.id);
     cleanupDraftBundle(draftsDir, job.id);
     await this.extractor.cleanup(job.id);
-    await this.pruneEmptyDirs(dirname(job.source_path));
+    if (job.source_type !== 'zotero') {
+      await this.pruneEmptyDirs(dirname(job.source_path));
+    }
 
     updateIngestionJob(job.id, {
       status: 'completed',
       promoted_paths: JSON.stringify(promotedPaths),
     });
+
+    // Zotero write-back: post summary note + tag
+    if (job.source_type === 'zotero' && job.zotero_key && this.zoteroWriteBack) {
+      const sourceNotePath = promotedPaths.find((p) => p.startsWith('sources/'));
+      if (sourceNotePath) {
+        try {
+          const fullPath = join(this.vaultDir, sourceNotePath);
+          const noteContent = readFileSync(fullPath, 'utf-8');
+          await this.zoteroWriteBack.writeBack(
+            job.zotero_key,
+            noteContent,
+            promotedPaths,
+          );
+        } catch (err) {
+          logger.warn(
+            { jobId: job.id, zoteroKey: job.zotero_key, err },
+            'Zotero write-back failed',
+          );
+        }
+      }
+    }
 
     logger.info(
       { jobId: job.id, relativePath, notes: promotedPaths.length },
@@ -585,10 +662,38 @@ export class IngestionPipeline {
     await this.watcher.start();
     this.drainer.drain();
 
+    // Start Zotero watcher if enabled
+    if (ZOTERO_ENABLED) {
+      const localClient = new ZoteroLocalClient(ZOTERO_LOCAL_URL);
+
+      if (ZOTERO_API_KEY && ZOTERO_USER_ID) {
+        const webClient = new ZoteroWebClient(ZOTERO_API_KEY, ZOTERO_USER_ID);
+        this.zoteroWriteBack = new ZoteroWriteBack(webClient);
+      } else {
+        logger.warn(
+          'Zotero write-back disabled — ZOTERO_API_KEY or ZOTERO_USER_ID not set',
+        );
+      }
+
+      this.zoteroWatcher = new ZoteroWatcher({
+        client: localClient,
+        excludeCollection: ZOTERO_EXCLUDE_COLLECTION,
+        onItem: (filePath, zoteroKey, metadata) => {
+          this.enqueueZotero(filePath, zoteroKey, metadata);
+        },
+        pollIntervalMs: ZOTERO_POLL_INTERVAL,
+      });
+      await this.zoteroWatcher.start();
+      logger.info('Zotero integration enabled');
+    }
+
     logger.info(`Watching ${this.uploadDir} for new files`);
   }
 
   async stop(): Promise<void> {
+    if (this.zoteroWatcher) {
+      this.zoteroWatcher.stop();
+    }
     await this.drainer.stop();
     await this.watcher.stop();
   }

@@ -5,7 +5,9 @@ const REQUEST_TIMEOUT = 10_000;
 export class ZoteroLocalClient {
   constructor(private readonly baseUrl: string) {}
 
-  async getItems(since?: number): Promise<{ items: unknown[]; version: number }> {
+  async getItems(
+    since?: number,
+  ): Promise<{ items: unknown[]; version: number }> {
     // Build query string manually to preserve literal '+' in itemType filter
     // (URLSearchParams encodes '+' as '%2B' which Zotero does not accept)
     const parts: string[] = [];
@@ -18,8 +20,11 @@ export class ZoteroLocalClient {
     });
     if (!res.ok) throw new Error(`Zotero local API error: ${res.status}`);
 
-    const items = await res.json();
-    const version = parseInt(res.headers.get('Last-Modified-Version') || '0', 10);
+    const items = (await res.json()) as unknown[];
+    const version = parseInt(
+      res.headers.get('Last-Modified-Version') || '0',
+      10,
+    );
     return { items, version };
   }
 
@@ -29,7 +34,7 @@ export class ZoteroLocalClient {
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT) },
     );
     if (!res.ok) throw new Error(`Zotero children fetch error: ${res.status}`);
-    return res.json();
+    return (await res.json()) as unknown[];
   }
 
   async getCollections(): Promise<unknown[]> {
@@ -37,8 +42,9 @@ export class ZoteroLocalClient {
       `${this.baseUrl}/api/users/0/collections?format=json`,
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT) },
     );
-    if (!res.ok) throw new Error(`Zotero collections fetch error: ${res.status}`);
-    return res.json();
+    if (!res.ok)
+      throw new Error(`Zotero collections fetch error: ${res.status}`);
+    return (await res.json()) as unknown[];
   }
 
   async getFileUrl(attachmentKey: string): Promise<string | null> {
