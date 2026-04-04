@@ -28,7 +28,7 @@ When the agent wants to speak:
 ```
 Agent calls synthesize_speech MCP tool (text)
   → HTTPS POST to https://api.mistral.ai/v1/audio/speech
-  → OneCLI proxy injects MISTRAL_API_KEY in container
+  → Container reads MISTRAL_API_KEY from env and sends Bearer auth
   → Mistral returns WAV audio
   → WAV saved to /workspace/group/audio/
   → Agent calls send_voice MCP tool (file path)
@@ -61,8 +61,7 @@ STT does NOT need format conversion — the .oga file from Telegram is sent dire
 
 | Variable | Location | Purpose |
 |----------|----------|---------|
-| `MISTRAL_API_KEY` | `.env` (host) | STT authentication (read via `readEnvFile()` in Telegram channel) |
-| `MISTRAL_API_KEY` | OneCLI vault | TTS authentication (injected into container HTTPS requests) |
+| `MISTRAL_API_KEY` | `.env` (host) | STT authentication (Telegram channel) and TTS (passed into containers as env var) |
 
 No local binaries, model files, or resident services needed.
 
@@ -92,7 +91,7 @@ No local binaries, model files, or resident services needed.
 - **Text too long (>5000 chars):** Rejected with clear error before API call
 - **STT API error:** Agent receives `[Voice message (transcription failed)]`
 - **STT timeout (60s):** Same fallback text
-- **MISTRAL_API_KEY missing:** STT skipped with warning log; TTS fails at API level
+- **MISTRAL_API_KEY missing:** STT skipped with warning log; TTS returns explicit error from MCP tool
 - **ffmpeg failure (TTS delivery):** Logged, voice message not sent
 - **Invalid container path in IPC:** Rejected if not under `/workspace/group/` or contains `..`
 
@@ -115,4 +114,4 @@ No local binaries, model files, or resident services needed.
 - Container `send_voice` tool restricts file paths to `/workspace/group/audio/` directory
 - Host IPC handler validates container paths (prefix check + no `..` traversal)
 - Voice IPC uses the same authorization model as text: main group can send anywhere, others only to their own chat
-- MISTRAL_API_KEY is read from `.env` on host only; containers get auth via OneCLI HTTPS proxy (never see raw key)
+- MISTRAL_API_KEY is passed into containers as an env var by the host (read from `process.env` or `.env`). The container sends it directly in the Authorization header to the Mistral API
