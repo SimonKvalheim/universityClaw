@@ -135,3 +135,16 @@ export const SENTINEL_TIMEOUT = parseInt(
   10,
 ); // 10min default
 export const PROCESSED_DIR = path.resolve(UPLOAD_DIR, 'processed');
+
+export const ZOTERO_ENABLED =
+  (process.env.ZOTERO_ENABLED || '').toLowerCase() === 'true';
+export const ZOTERO_API_KEY = process.env.ZOTERO_API_KEY || '';
+export const ZOTERO_USER_ID = process.env.ZOTERO_USER_ID || '';
+export const ZOTERO_POLL_INTERVAL = parseInt(
+  process.env.ZOTERO_POLL_INTERVAL || '60000',
+  10,
+);
+export const ZOTERO_EXCLUDE_COLLECTION =
+  process.env.ZOTERO_EXCLUDE_COLLECTION || '';
+export const ZOTERO_LOCAL_URL =
+  process.env.ZOTERO_LOCAL_URL || 'http://localhost:23119';
