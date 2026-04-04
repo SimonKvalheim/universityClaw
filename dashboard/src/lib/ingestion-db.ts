@@ -67,12 +67,12 @@ export function getRecentJobs(status?: string): JobSummary[] {
   if (status) {
     rows = db
       .prepare(
-        `SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY created_at DESC LIMIT 20`,
+        `SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY created_at DESC LIMIT 100`,
       )
       .all(status) as DbRow[];
   } else {
     rows = db
-      .prepare(`SELECT * FROM ingestion_jobs ORDER BY created_at DESC LIMIT 20`)
+      .prepare(`SELECT * FROM ingestion_jobs ORDER BY created_at DESC LIMIT 100`)
       .all() as DbRow[];
   }
   return rows.map(rowToSummary);
