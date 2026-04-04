@@ -106,6 +106,13 @@ Desktop.ini
 .classpath
 .settings/
 
+# ------ Dashboard (Next.js) ------
+dashboard/.next/
+dashboard/out/
+dashboard/build/
+dashboard/.vercel/
+dashboard/next-env.d.ts
+
 # ------ NanoClaw internals ------
 .nanoclaw/
 agents-sdk-docs
