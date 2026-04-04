@@ -11,6 +11,9 @@ export interface JobRow {
   retry_after?: string | null;
   retry_count?: number;
   error?: string | null;
+  source_type?: string;
+  zotero_key?: string | null;
+  zotero_metadata?: string | null;
 }
 
 export interface PipelineDrainerOpts {

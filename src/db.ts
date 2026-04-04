@@ -92,7 +92,10 @@ function createSchema(database: Database.Database): void {
       error TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       completed_at TEXT,
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      source_type TEXT DEFAULT 'upload',
+      zotero_key TEXT,
+      zotero_metadata TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_status ON ingestion_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_source_path ON ingestion_jobs(source_path);
@@ -192,6 +195,36 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add Zotero columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE ingestion_jobs ADD COLUMN source_type TEXT DEFAULT 'upload'`,
+    );
+  } catch {
+    /* column exists */
+  }
+  try {
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN zotero_key TEXT`);
+  } catch {
+    /* column exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE ingestion_jobs ADD COLUMN zotero_metadata TEXT`,
+    );
+  } catch {
+    /* column exists */
+  }
+
+  // Zotero sync state
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS zotero_sync (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key        TEXT PRIMARY KEY,
@@ -254,7 +287,7 @@ export function _initTestDatabase(): void {
 
 /** @internal - for tests only. */
 export function _closeDatabase(): void {
-  db.close();
+  if (db) db.close();
 }
 
 export function getDb(): Database.Database {
@@ -769,6 +802,29 @@ export function getCompletedJobByHash(
     .get(hash) as { id: string } | undefined;
 }
 
+export function getIngestionJobByZoteroKey(
+  zoteroKey: string,
+): { id: string; status: string } | undefined {
+  return db
+    .prepare(
+      `SELECT id, status FROM ingestion_jobs WHERE zotero_key = ? AND status NOT IN ('dismissed', 'failed') ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(zoteroKey) as { id: string; status: string } | undefined;
+}
+
+export function getZoteroSyncVersion(): number | null {
+  const row = db
+    .prepare(`SELECT value FROM zotero_sync WHERE key = 'library_version'`)
+    .get() as { value: string } | undefined;
+  return row ? parseInt(row.value, 10) : null;
+}
+
+export function setZoteroSyncVersion(version: number): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO zotero_sync (key, value) VALUES ('library_version', ?)`,
+  ).run(String(version));
+}
+
 export function deleteIngestionJob(id: string): void {
   db.prepare(`DELETE FROM ingestion_jobs WHERE id = ?`).run(id);
 }
@@ -778,13 +834,26 @@ export function createIngestionJob(
   sourcePath: string,
   sourceFilename: string,
   contentHash?: string,
+  zoteroOpts?: {
+    source_type?: string;
+    zotero_key?: string;
+    zotero_metadata?: string;
+  },
 ): void {
   getDb()
     .prepare(
-      `INSERT INTO ingestion_jobs (id, source_path, source_filename, content_hash)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO ingestion_jobs (id, source_path, source_filename, content_hash, source_type, zotero_key, zotero_metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, sourcePath, sourceFilename, contentHash ?? null);
+    .run(
+      id,
+      sourcePath,
+      sourceFilename,
+      contentHash ?? null,
+      zoteroOpts?.source_type ?? 'upload',
+      zoteroOpts?.zotero_key ?? null,
+      zoteroOpts?.zotero_metadata ?? null,
+    );
 }
 
 export function getIngestionJobById(id: string): unknown | undefined {
