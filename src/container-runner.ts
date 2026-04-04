@@ -25,6 +25,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -246,6 +247,14 @@ async function buildContainerArgs(
     .replace('localhost', 'host.docker.internal')
     .replace('127.0.0.1', 'host.docker.internal');
   args.push('-e', `LIGHTRAG_URL=${containerLightragUrl}`);
+
+  // Mistral API key for TTS (synthesize_speech tool in container)
+  const mistralKey =
+    process.env.MISTRAL_API_KEY ||
+    readEnvFile(['MISTRAL_API_KEY']).MISTRAL_API_KEY;
+  if (mistralKey) {
+    args.push('-e', `MISTRAL_API_KEY=${mistralKey}`);
+  }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
