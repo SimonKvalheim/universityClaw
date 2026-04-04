@@ -2,11 +2,12 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Channel } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
-import { WEB_CHANNEL_PORT } from '../config.js';
+import { DASHBOARD_PORT, WEB_CHANNEL_PORT } from '../config.js';
 import { logger } from '../logger.js';
 import { getRecentlyCompletedJobs } from '../db.js';
 
 const JID_PREFIX = 'web:review:';
+const CORS_ORIGIN = `http://localhost:${DASHBOARD_PORT}`;
 
 // Buffer agent responses per draft for SSE consumers
 const responseBuffers = new Map<string, string[]>();
@@ -94,7 +95,7 @@ export function createWebChannel(opts: ChannelOpts): Channel {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': CORS_ORIGIN,
     });
     res.write(':\n\n'); // SSE comment to establish connection
 
@@ -119,7 +120,7 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     // CORS preflight
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': CORS_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
       });
@@ -127,7 +128,7 @@ export function createWebChannel(opts: ChannelOpts): Channel {
       return;
     }
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
 
     const url = new URL(req.url || '/', `http://localhost`);
 
