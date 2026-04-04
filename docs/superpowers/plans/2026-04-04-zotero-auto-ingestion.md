@@ -108,6 +108,7 @@ ZOTERO_API_KEY=
 ZOTERO_USER_ID=
 # ZOTERO_POLL_INTERVAL=60000
 # ZOTERO_EXCLUDE_COLLECTION=Do Not Process
+# ZOTERO_LOCAL_URL=http://localhost:23119
 ```
 
 - [ ] **Step 4: Commit**
@@ -483,22 +484,19 @@ Create `src/ingestion/zotero-db.test.ts`:
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createIngestionJob,
+  updateIngestionJob,
   getIngestionJobByZoteroKey,
   getZoteroSyncVersion,
   setZoteroSyncVersion,
   getIngestionJobById,
+  _initTestDatabase,
+  _closeDatabase,
 } from '../db.js';
-import { initDb, closeDb } from '../db.js';
-import { mkdtempSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
 
 describe('Zotero DB functions', () => {
   beforeEach(() => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'zotero-db-test-'));
-    closeDb();
-    process.env.STORE_DIR = tmpDir;
-    initDb();
+    _closeDatabase();
+    _initTestDatabase();
   });
 
   it('createIngestionJob stores zotero fields', () => {
@@ -525,8 +523,6 @@ describe('Zotero DB functions', () => {
       source_type: 'zotero',
       zotero_key: 'EFGH5678',
     });
-    // Manually update to completed
-    const { updateIngestionJob } = require('../db.js');
     updateIngestionJob('job-3', { status: 'completed' });
 
     const result = getIngestionJobByZoteroKey('EFGH5678');
@@ -848,6 +844,7 @@ describe('ZoteroWatcher', () => {
       },
     });
 
+    // Item is in the excluded collection and HAS a PDF (to prove exclusion, not missing-PDF)
     mockClient.getItems.mockResolvedValue({
       items: [
         { key: 'EXCL_ITEM', data: { title: 'Excluded', collections: ['EXCL1'], creators: [], date: '', tags: [] }, meta: { numChildren: 1 } },
@@ -855,10 +852,24 @@ describe('ZoteroWatcher', () => {
       version: 150,
     });
 
-    await watcherWithExclude.poll();
+    mockClient.getChildren.mockResolvedValue([
+      {
+        key: 'ATT_EXCL',
+        data: { itemType: 'attachment', contentType: 'application/pdf', filename: 'paper.pdf' },
+        links: { enclosure: { length: 500000 } },
+      },
+    ]);
+    mockClient.getFileUrl.mockResolvedValue('/Users/test/Zotero/storage/ATT_EXCL/paper.pdf');
+
+    // Must call start() so resolveExcludeCollection runs before polling
+    await watcherWithExclude.start();
+    // start() calls poll() internally, so items have already been processed
+    // Stop the interval timer immediately
+    watcherWithExclude.stop();
 
     expect(enqueuedItems).toHaveLength(0);
-    watcherWithExclude.stop();
+    // Verify getChildren was NOT called — item was filtered before PDF resolution
+    expect(mockClient.getChildren).not.toHaveBeenCalled();
   });
 
   it('picks largest PDF when multiple attachments exist', async () => {
