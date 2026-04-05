@@ -16,7 +16,12 @@ export interface ZoteroItem {
   data: ZoteroItemData;
   meta: { numChildren?: number };
   links?: {
-    attachment?: { href: string; type: string; attachmentType?: string; attachmentSize?: number };
+    attachment?: {
+      href: string;
+      type: string;
+      attachmentType?: string;
+      attachmentSize?: number;
+    };
   };
 }
 

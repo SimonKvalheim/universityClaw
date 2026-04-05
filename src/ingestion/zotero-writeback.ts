@@ -88,7 +88,9 @@ export class ZoteroWriteBack {
           const items = trimmed
             .split(/\n/)
             .filter((l) => l.trim())
-            .map((l) => `<li>${this.inlineFormat(l.replace(/^[-*]\s+/, ''))}</li>`)
+            .map(
+              (l) => `<li>${this.inlineFormat(l.replace(/^[-*]\s+/, ''))}</li>`,
+            )
             .join('\n');
           return `<ul>\n${items}\n</ul>`;
         }

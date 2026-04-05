@@ -338,7 +338,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 );
 
 const AUDIO_DIR = '/workspace/group/audio';
-const TTS_MAX_TEXT_LENGTH = 5000;
+const TTS_MAX_TEXT_LENGTH = 50000;
 const MISTRAL_TTS_URL = 'https://api.mistral.ai/v1/audio/speech';
 // Default voice: "Paul - Neutral" (en_us, male, casual)
 const MISTRAL_DEFAULT_VOICE_ID = 'c69964a6-ab8b-4f8a-9465-ec0925096ec8';
@@ -347,7 +347,7 @@ server.tool(
   'synthesize_speech',
   'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
   {
-    text: z.string().describe('Text to synthesize (max 5000 characters)'),
+    text: z.string().describe('Text to synthesize (max 50000 characters). Mistral handles long text via server-side interleaving.'),
   },
   async (args) => {
     if (!args.text || args.text.trim().length === 0) {
@@ -391,7 +391,7 @@ server.tool(
           voice_id: MISTRAL_DEFAULT_VOICE_ID,
           response_format: 'wav',
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(300_000),
       });
 
       if (!response.ok) {

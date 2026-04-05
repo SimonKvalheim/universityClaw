@@ -57,7 +57,8 @@ export class AgentProcessor {
         if (meta.title) lines.push(`- Title: ${meta.title}`);
         if (creators) lines.push(`- Authors: ${creators}`);
         if (meta.date) lines.push(`- Date: ${meta.date}`);
-        if (meta.publicationTitle) lines.push(`- Publication: ${meta.publicationTitle}`);
+        if (meta.publicationTitle)
+          lines.push(`- Publication: ${meta.publicationTitle}`);
         if (meta.DOI) lines.push(`- DOI: ${meta.DOI}`);
         if (tags) lines.push(`- Tags: ${tags}`);
         if (meta.abstractNote) lines.push(`- Abstract: ${meta.abstractNote}`);
