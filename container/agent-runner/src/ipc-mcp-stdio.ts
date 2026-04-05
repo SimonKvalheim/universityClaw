@@ -347,7 +347,7 @@ server.tool(
   'synthesize_speech',
   'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
   {
-    text: z.string().describe('Text to synthesize (max 50000 characters). Mistral handles long text via server-side interleaving.'),
+    text: z.string().max(50000).describe('Text to synthesize (max 50000 characters). Mistral handles long text via server-side interleaving.'),
   },
   async (args) => {
     if (!args.text || args.text.trim().length === 0) {
