@@ -28,7 +28,11 @@ describe('ZoteroWatcher', () => {
     getCollections: ReturnType<typeof vi.fn>;
     getFileUrl: ReturnType<typeof vi.fn>;
   };
-  let enqueuedItems: { filePath: string; zoteroKey: string; metadata: unknown }[];
+  let enqueuedItems: {
+    filePath: string;
+    zoteroKey: string;
+    metadata: unknown;
+  }[];
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -56,7 +60,18 @@ describe('ZoteroWatcher', () => {
   it('first run stores version without processing items', async () => {
     vi.mocked(getZoteroSyncVersion).mockReturnValue(null);
     mockClient.getItems.mockResolvedValue({
-      items: [{ key: 'ABC', data: { title: 'Paper', collections: [], creators: [], date: '', tags: [] } }],
+      items: [
+        {
+          key: 'ABC',
+          data: {
+            title: 'Paper',
+            collections: [],
+            creators: [],
+            date: '',
+            tags: [],
+          },
+        },
+      ],
       version: 200,
     });
 
@@ -78,7 +93,9 @@ describe('ZoteroWatcher', () => {
             title: 'New Paper',
             itemType: 'journalArticle',
             collections: [],
-            creators: [{ firstName: 'John', lastName: 'Doe', creatorType: 'author' }],
+            creators: [
+              { firstName: 'John', lastName: 'Doe', creatorType: 'author' },
+            ],
             date: '2025-01-01',
             tags: [{ tag: 'AI' }],
             abstractNote: 'Abstract text',
@@ -101,22 +118,40 @@ describe('ZoteroWatcher', () => {
       },
     ]);
 
-    mockClient.getFileUrl.mockResolvedValue('/Users/test/Zotero/storage/ATT1/paper.pdf');
+    mockClient.getFileUrl.mockResolvedValue(
+      '/Users/test/Zotero/storage/ATT1/paper.pdf',
+    );
 
     await watcher.poll();
 
     expect(enqueuedItems).toHaveLength(1);
-    expect(enqueuedItems[0].filePath).toBe('/Users/test/Zotero/storage/ATT1/paper.pdf');
+    expect(enqueuedItems[0].filePath).toBe(
+      '/Users/test/Zotero/storage/ATT1/paper.pdf',
+    );
     expect(enqueuedItems[0].zoteroKey).toBe('NEW1');
     expect(setZoteroSyncVersion).toHaveBeenCalledWith(150);
   });
 
   it('skips items already ingested (dedup by zotero_key)', async () => {
     vi.mocked(getZoteroSyncVersion).mockReturnValue(100);
-    vi.mocked(getIngestionJobByZoteroKey).mockReturnValue({ id: 'existing', status: 'completed' });
+    vi.mocked(getIngestionJobByZoteroKey).mockReturnValue({
+      id: 'existing',
+      status: 'completed',
+    });
 
     mockClient.getItems.mockResolvedValue({
-      items: [{ key: 'OLD1', data: { title: 'Old', collections: [], creators: [], date: '', tags: [] } }],
+      items: [
+        {
+          key: 'OLD1',
+          data: {
+            title: 'Old',
+            collections: [],
+            creators: [],
+            date: '',
+            tags: [],
+          },
+        },
+      ],
       version: 150,
     });
 
@@ -130,7 +165,19 @@ describe('ZoteroWatcher', () => {
     vi.mocked(getIngestionJobByZoteroKey).mockReturnValue(undefined);
 
     mockClient.getItems.mockResolvedValue({
-      items: [{ key: 'NOPDF', data: { title: 'Webpage', collections: [], creators: [], date: '', tags: [] }, meta: { numChildren: 0 } }],
+      items: [
+        {
+          key: 'NOPDF',
+          data: {
+            title: 'Webpage',
+            collections: [],
+            creators: [],
+            date: '',
+            tags: [],
+          },
+          meta: { numChildren: 0 },
+        },
+      ],
       version: 150,
     });
 
@@ -159,7 +206,17 @@ describe('ZoteroWatcher', () => {
 
     mockClient.getItems.mockResolvedValue({
       items: [
-        { key: 'EXCL_ITEM', data: { title: 'Excluded', collections: ['EXCL1'], creators: [], date: '', tags: [] }, meta: { numChildren: 1 } },
+        {
+          key: 'EXCL_ITEM',
+          data: {
+            title: 'Excluded',
+            collections: ['EXCL1'],
+            creators: [],
+            date: '',
+            tags: [],
+          },
+          meta: { numChildren: 1 },
+        },
       ],
       version: 150,
     });
@@ -167,11 +224,17 @@ describe('ZoteroWatcher', () => {
     mockClient.getChildren.mockResolvedValue([
       {
         key: 'ATT_EXCL',
-        data: { itemType: 'attachment', contentType: 'application/pdf', filename: 'paper.pdf' },
+        data: {
+          itemType: 'attachment',
+          contentType: 'application/pdf',
+          filename: 'paper.pdf',
+        },
         links: { enclosure: { length: 500000 } },
       },
     ]);
-    mockClient.getFileUrl.mockResolvedValue('/Users/test/Zotero/storage/ATT_EXCL/paper.pdf');
+    mockClient.getFileUrl.mockResolvedValue(
+      '/Users/test/Zotero/storage/ATT_EXCL/paper.pdf',
+    );
 
     // Must call start() so resolveExcludeCollection runs before polling
     await watcherWithExclude.start();
@@ -187,19 +250,39 @@ describe('ZoteroWatcher', () => {
     vi.mocked(getIngestionJobByZoteroKey).mockReturnValue(undefined);
 
     mockClient.getItems.mockResolvedValue({
-      items: [{ key: 'MULTI', data: { title: 'Multi', collections: [], creators: [], date: '', tags: [] }, meta: { numChildren: 2 } }],
+      items: [
+        {
+          key: 'MULTI',
+          data: {
+            title: 'Multi',
+            collections: [],
+            creators: [],
+            date: '',
+            tags: [],
+          },
+          meta: { numChildren: 2 },
+        },
+      ],
       version: 150,
     });
 
     mockClient.getChildren.mockResolvedValue([
       {
         key: 'SMALL',
-        data: { itemType: 'attachment', contentType: 'application/pdf', filename: 'supplement.pdf' },
+        data: {
+          itemType: 'attachment',
+          contentType: 'application/pdf',
+          filename: 'supplement.pdf',
+        },
         links: { enclosure: { length: 100000 } },
       },
       {
         key: 'BIG',
-        data: { itemType: 'attachment', contentType: 'application/pdf', filename: 'full-text.pdf' },
+        data: {
+          itemType: 'attachment',
+          contentType: 'application/pdf',
+          filename: 'full-text.pdf',
+        },
         links: { enclosure: { length: 5000000 } },
       },
     ]);

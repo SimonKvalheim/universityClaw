@@ -35,7 +35,9 @@ describe('ZoteroLocalClient', () => {
 
     const result = await client.getItems();
     expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/users/0/items?itemType=-attachment+-note&format=json'),
+      expect.stringContaining(
+        '/api/users/0/items?itemType=-attachment+-note&format=json',
+      ),
       expect.any(Object),
     );
     expect(result.version).toBe(200);
@@ -85,7 +87,9 @@ describe('ZoteroLocalClient', () => {
   });
 
   it('throws on network error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new Error('ECONNREFUSED'),
+    );
 
     await expect(client.getItems()).rejects.toThrow('ECONNREFUSED');
   });
@@ -124,16 +128,20 @@ describe('ZoteroWebClient', () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ key: 'ABC12345', version: 100, data: { tags: [{ tag: 'existing' }] } }),
+          JSON.stringify({
+            key: 'ABC12345',
+            version: 100,
+            data: { tags: [{ tag: 'existing' }] },
+          }),
         ),
       )
-      .mockResolvedValueOnce(
-        new Response(null, { status: 204 }),
-      );
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     await client.addTag('ABC12345', 'vault:ingested');
     const patchCall = vi.mocked(fetch).mock.calls[1];
-    expect(patchCall[0]).toBe('https://api.zotero.org/users/12345/items/ABC12345');
+    expect(patchCall[0]).toBe(
+      'https://api.zotero.org/users/12345/items/ABC12345',
+    );
     const body = JSON.parse(patchCall[1]!.body as string);
     expect(body.tags).toEqual([{ tag: 'existing' }, { tag: 'vault:ingested' }]);
   });
@@ -141,7 +149,11 @@ describe('ZoteroWebClient', () => {
   it('addTag skips if tag already present', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ key: 'ABC12345', version: 100, data: { tags: [{ tag: 'vault:ingested' }] } }),
+        JSON.stringify({
+          key: 'ABC12345',
+          version: 100,
+          data: { tags: [{ tag: 'vault:ingested' }] },
+        }),
       ),
     );
 

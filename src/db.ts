@@ -210,9 +210,7 @@ function createSchema(database: Database.Database): void {
     /* column exists */
   }
   try {
-    database.exec(
-      `ALTER TABLE ingestion_jobs ADD COLUMN zotero_metadata TEXT`,
-    );
+    database.exec(`ALTER TABLE ingestion_jobs ADD COLUMN zotero_metadata TEXT`);
   } catch {
     /* column exists */
   }

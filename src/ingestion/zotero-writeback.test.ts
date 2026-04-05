@@ -21,12 +21,19 @@ describe('ZoteroWriteBack', () => {
       addTag: vi.fn().mockResolvedValue(undefined),
       getLibraryVersion: vi.fn().mockResolvedValue(100),
     };
-    writeBack = new ZoteroWriteBack(mockWebClient as unknown as ZoteroWebClient);
+    writeBack = new ZoteroWriteBack(
+      mockWebClient as unknown as ZoteroWebClient,
+    );
   });
 
   it('writes summary note and tag to Zotero', async () => {
-    const sourceContent = '---\ntitle: Test Paper\n---\n\nThis is the summary body.';
-    const promotedPaths = ['sources/test-paper.md', 'concepts/concept-1.md', 'concepts/concept-2.md'];
+    const sourceContent =
+      '---\ntitle: Test Paper\n---\n\nThis is the summary body.';
+    const promotedPaths = [
+      'sources/test-paper.md',
+      'concepts/concept-1.md',
+      'concepts/concept-2.md',
+    ];
 
     await writeBack.writeBack('ABC12345', sourceContent, promotedPaths);
 
@@ -40,11 +47,15 @@ describe('ZoteroWriteBack', () => {
       expect.stringContaining('2 concepts'),
       100,
     );
-    expect(mockWebClient.addTag).toHaveBeenCalledWith('ABC12345', 'vault:ingested');
+    expect(mockWebClient.addTag).toHaveBeenCalledWith(
+      'ABC12345',
+      'vault:ingested',
+    );
   });
 
   it('converts markdown to basic HTML', async () => {
-    const sourceContent = '---\ntitle: Test\n---\n\n**Bold** and *italic* text.\n\nSecond paragraph.';
+    const sourceContent =
+      '---\ntitle: Test\n---\n\n**Bold** and *italic* text.\n\nSecond paragraph.';
 
     await writeBack.writeBack('ABC12345', sourceContent, ['sources/test.md']);
 

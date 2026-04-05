@@ -25,7 +25,9 @@ describe('Zotero DB functions', () => {
     const job = getIngestionJobById('job-1') as Record<string, unknown>;
     expect(job.source_type).toBe('zotero');
     expect(job.zotero_key).toBe('ABCD1234');
-    expect(JSON.parse(job.zotero_metadata as string)).toEqual({ title: 'Test Paper' });
+    expect(JSON.parse(job.zotero_metadata as string)).toEqual({
+      title: 'Test Paper',
+    });
   });
 
   it('createIngestionJob defaults source_type to upload', () => {

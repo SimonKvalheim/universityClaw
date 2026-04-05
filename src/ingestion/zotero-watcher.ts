@@ -10,7 +10,11 @@ import { logger } from '../logger.js';
 export interface ZoteroWatcherOpts {
   client: ZoteroLocalClient;
   excludeCollection: string;
-  onItem: (filePath: string, zoteroKey: string, metadata: ZoteroMetadata) => void;
+  onItem: (
+    filePath: string,
+    zoteroKey: string,
+    metadata: ZoteroMetadata,
+  ) => void;
   pollIntervalMs?: number;
 }
 
@@ -108,7 +112,11 @@ export class ZoteroWatcher {
         title: string;
         itemType: string;
         collections: string[];
-        creators: { firstName: string; lastName: string; creatorType: string }[];
+        creators: {
+          firstName: string;
+          lastName: string;
+          creatorType: string;
+        }[];
         date: string;
         DOI?: string;
         url?: string;
@@ -149,7 +157,8 @@ export class ZoteroWatcher {
     };
     meta: { numChildren?: number };
   }): Promise<void> {
-    if (item.data.itemType === 'attachment' || item.data.itemType === 'note') return;
+    if (item.data.itemType === 'attachment' || item.data.itemType === 'note')
+      return;
 
     if (
       this.excludeCollectionKey &&

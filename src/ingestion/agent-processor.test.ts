@@ -107,11 +107,18 @@ describe('AgentProcessor.buildPrompt', () => {
       itemType: 'journalArticle',
     });
 
-    const prompt = processor.buildPrompt('content', 'file.pdf', 'job-1', [], undefined, {
-      source_type: 'zotero',
-      zotero_key: 'ABCD1234',
-      zotero_metadata: metadata,
-    });
+    const prompt = processor.buildPrompt(
+      'content',
+      'file.pdf',
+      'job-1',
+      [],
+      undefined,
+      {
+        source_type: 'zotero',
+        zotero_key: 'ABCD1234',
+        zotero_metadata: metadata,
+      },
+    );
 
     expect(prompt).toContain('## Source Document Metadata (from Zotero)');
     expect(prompt).toContain('Doe, J.');
