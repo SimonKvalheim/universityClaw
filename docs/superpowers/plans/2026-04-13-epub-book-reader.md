@@ -23,10 +23,10 @@
 git checkout -b feat/epub-book-reader main
 ```
 
-- [ ] **Step 2: Install jszip**
+- [ ] **Step 2: Install jszip and jsdom (test environment)**
 
 ```bash
-cd dashboard && npm install jszip
+cd dashboard && npm install jszip && npm install -D jsdom
 ```
 
 - [ ] **Step 3: Verify build**
@@ -41,49 +41,25 @@ Expected: Build succeeds with no errors.
 
 ```bash
 git add dashboard/package.json dashboard/package-lock.json
-git commit -m "chore: add jszip dependency for EPUB parsing"
+git commit -m "chore: add jszip and jsdom dependencies for EPUB parsing"
 ```
 
 ---
 
-### Task 2: Add initialPosition to useRSVPEngine
+### Task 2: Add initialPosition and textVersion to useRSVPEngine
 
-The engine resets position to 0 whenever `text` changes. The book reader needs to resume at a saved position. Add an optional `initialPosition` field.
+The engine resets position to 0 whenever `text` changes. The book reader needs to:
+1. Resume at a saved position when opening a book
+2. Force a reset even when navigating to a chapter with identical text (e.g., re-selecting the current chapter)
+
+We add `initialPosition` (where to start) and `textVersion` (a counter the caller increments to force the effect to re-fire even when text is unchanged). The effect depends on `[text, textVersion]`.
 
 **Files:**
 - Modify: `dashboard/src/app/read/useRSVPEngine.ts:9-20` (options interface)
+- Modify: `dashboard/src/app/read/useRSVPEngine.ts:176` (destructure)
 - Modify: `dashboard/src/app/read/useRSVPEngine.ts:210-216` (text-change effect)
-- Test: `dashboard/src/app/read/useRSVPEngine.test.ts`
 
-- [ ] **Step 1: Write failing test**
-
-Add to the end of `dashboard/src/app/read/useRSVPEngine.test.ts`:
-
-```typescript
-// ---------------------------------------------------------------------------
-// tokenizeWithDurations — initialPosition support
-// ---------------------------------------------------------------------------
-
-describe("tokenizeWithDurations with initialPosition", () => {
-  it("is a pass-through — initialPosition is consumed by the hook, not tokenization", () => {
-    // This test documents that tokenizeWithDurations is unchanged.
-    // The initialPosition parameter lives in RSVPEngineOptions, consumed by the hook.
-    const words = tokenizeWithDurations("Hello world again", 600);
-    expect(words).toHaveLength(3);
-    expect(words[0].word).toBe("Hello");
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it passes** (this is a documentation test)
-
-```bash
-npm test -- --run dashboard/src/app/read/useRSVPEngine.test.ts
-```
-
-Expected: All tests PASS.
-
-- [ ] **Step 3: Add initialPosition to the options interface**
+- [ ] **Step 1: Add initialPosition and textVersion to the options interface**
 
 In `dashboard/src/app/read/useRSVPEngine.ts`, update the `RSVPEngineOptions` interface:
 
@@ -93,21 +69,22 @@ export interface RSVPEngineOptions {
   wpm: number;
   chunkSize: 1 | 2 | 3;
   initialPosition?: number;
+  textVersion?: number;
 }
 ```
 
-- [ ] **Step 4: Update the text-change useEffect to use initialPosition**
+- [ ] **Step 2: Update the hook to destructure and use the new options**
 
-In `dashboard/src/app/read/useRSVPEngine.ts`, in the `useRSVPEngine` function, destructure the new option:
+In the `useRSVPEngine` function, update the destructure:
 
 ```typescript
-const { text, wpm, chunkSize, initialPosition } = options;
+const { text, wpm, chunkSize, initialPosition, textVersion } = options;
 ```
 
 Then update the text-change `useEffect` (the one with `setPosition(0)`) to:
 
 ```typescript
-  // Re-tokenize when text changes — reset position (or use initialPosition for resume)
+  // Re-tokenize when text or textVersion changes — start at initialPosition or 0
   useEffect(() => {
     const newWords = tokenizeWithDurations(text, wpm);
     setWords(newWords);
@@ -116,22 +93,22 @@ Then update the text-change `useEffect` (the one with `setPosition(0)`) to:
     positionRef.current = startPos;
     setIsPlaying(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text]);
+  }, [text, textVersion]);
 ```
 
-- [ ] **Step 5: Run all tests**
+- [ ] **Step 3: Run all tests**
 
 ```bash
 npm test -- --run dashboard/src/app/read/useRSVPEngine.test.ts
 ```
 
-Expected: All tests PASS. Existing behavior unchanged (no callers pass `initialPosition`).
+Expected: All tests PASS. Existing behavior unchanged (no callers pass `initialPosition` or `textVersion`).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add dashboard/src/app/read/useRSVPEngine.ts dashboard/src/app/read/useRSVPEngine.test.ts
-git commit -m "feat(rsvp): add initialPosition option for resume support"
+git add dashboard/src/app/read/useRSVPEngine.ts
+git commit -m "feat(rsvp): add initialPosition and textVersion for chapter resume"
 ```
 
 ---
@@ -390,6 +367,7 @@ Pure module that takes an EPUB `ArrayBuffer` and returns structured chapter data
 Create `dashboard/src/app/read/book/epubParser.test.ts`:
 
 ```typescript
+// @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { extractTextFromHtml, resolveHref } from './epubParser';
 
@@ -438,6 +416,14 @@ describe('resolveHref', () => {
 
   it('handles nested paths', () => {
     expect(resolveHref('text/ch1.xhtml', 'OEBPS/')).toBe('OEBPS/text/ch1.xhtml');
+  });
+
+  it('resolves ../ segments', () => {
+    expect(resolveHref('../Text/ch1.xhtml', 'OEBPS/nav/')).toBe('OEBPS/Text/ch1.xhtml');
+  });
+
+  it('decodes URL-encoded characters', () => {
+    expect(resolveHref('chapter%201.xhtml', 'OEBPS/')).toBe('OEBPS/chapter 1.xhtml');
   });
 });
 ```
@@ -488,7 +474,8 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
   if (!containerXml) throw new Error('Invalid EPUB: missing META-INF/container.xml');
 
   const containerDoc = parseXml(containerXml);
-  const rootfileEl = containerDoc.getElementsByTagName('rootfile')[0];
+  // Use getElementsByTagNameNS with wildcard to handle any namespace
+  const rootfileEl = containerDoc.getElementsByTagNameNS('*', 'rootfile')[0];
   const opfPath = rootfileEl?.getAttribute('full-path');
   if (!opfPath) throw new Error('Invalid EPUB: no rootfile path found');
 
@@ -506,7 +493,7 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
 
   // 4. Build manifest map (id → href)
   const manifest = new Map<string, string>();
-  const manifestItems = opfDoc.getElementsByTagName('item');
+  const manifestItems = opfDoc.getElementsByTagNameNS('*', 'item');
   for (let i = 0; i < manifestItems.length; i++) {
     const item = manifestItems[i];
     const id = item.getAttribute('id');
@@ -516,13 +503,13 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
 
   // 5. Get spine order
   const spineIds: string[] = [];
-  const spineItemrefs = opfDoc.getElementsByTagName('itemref');
+  const spineItemrefs = opfDoc.getElementsByTagNameNS('*', 'itemref');
   for (let i = 0; i < spineItemrefs.length; i++) {
     const idref = spineItemrefs[i].getAttribute('idref');
     if (idref) spineIds.push(idref);
   }
 
-  // 6. Parse TOC for chapter titles
+  // 6. Parse TOC for chapter titles (keys are paths relative to ZIP root)
   const tocTitles = await parseToc(zip, opfDoc, opfDir, manifest);
 
   // 7. Extract text from each spine item
@@ -543,7 +530,8 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
     // Skip chapters with fewer than 5 words (front matter, copyright, etc.)
     if (wordCount < 5) continue;
 
-    const chapterTitle = tocTitles.get(href) ?? `Chapter ${++untitledIndex}`;
+    // Match against TOC using ZIP-root-relative path
+    const chapterTitle = tocTitles.get(filePath) ?? `Chapter ${++untitledIndex}`;
     chapters.push({ title: chapterTitle, text, wordCount });
   }
 
@@ -560,18 +548,37 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
 
 /**
  * Strip HTML tags from XHTML content and return plain text.
+ * Tries strict XHTML first, falls back to lenient text/html for malformed content.
  */
 export function extractTextFromHtml(html: string): string {
-  const doc = new DOMParser().parseFromString(html, 'application/xhtml+xml');
+  // Try strict XHTML first
+  let doc = new DOMParser().parseFromString(html, 'application/xhtml+xml');
+  // If parse failed (malformed XHTML), DOMParser returns a document with <parsererror>
+  if (doc.querySelector('parsererror')) {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  }
   const body = doc.body ?? doc.documentElement;
   return (body.textContent ?? '').trim();
 }
 
 /**
  * Resolve a manifest href relative to the OPF directory.
+ * Handles `../` segments and URL-encoded characters.
  */
 export function resolveHref(href: string, opfDir: string): string {
-  return opfDir + href;
+  const decoded = decodeURIComponent(href);
+  const combined = opfDir + decoded;
+  // Resolve ../  segments
+  const parts = combined.split('/');
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (part === '..') {
+      resolved.pop();
+    } else if (part !== '.') {
+      resolved.push(part);
+    }
+  }
+  return resolved.join('/');
 }
 
 // ---------------------------------------------------------------------------
@@ -600,7 +607,8 @@ async function parseToc(
   const titles = new Map<string, string>();
 
   // Try EPUB 3 nav document first
-  const manifestItems = opfDoc.getElementsByTagName('item');
+  const manifestItems = opfDoc.getElementsByTagNameNS('*', 'item');
+  let navDir = opfDir; // directory of nav file, for resolving relative hrefs
   for (let i = 0; i < manifestItems.length; i++) {
     const item = manifestItems[i];
     const props = item.getAttribute('properties') ?? '';
@@ -608,24 +616,26 @@ async function parseToc(
       const navHref = item.getAttribute('href');
       if (!navHref) continue;
 
-      const navXhtml = await readZipText(zip, resolveHref(navHref, opfDir));
+      const navPath = resolveHref(navHref, opfDir);
+      navDir = navPath.includes('/') ? navPath.substring(0, navPath.lastIndexOf('/') + 1) : '';
+      const navXhtml = await readZipText(zip, navPath);
       if (!navXhtml) continue;
 
-      const navDoc = new DOMParser().parseFromString(navXhtml, 'application/xhtml+xml');
-      // Find all <a> elements inside <nav> elements
+      // Parse as text/html for robustness — nav docs are often loose HTML
+      const navDoc = new DOMParser().parseFromString(navXhtml, 'text/html');
       const navElements = navDoc.getElementsByTagName('nav');
       for (let n = 0; n < navElements.length; n++) {
         const nav = navElements[n];
-        // Check for epub:type="toc" or id="toc"
         const epubType = nav.getAttribute('epub:type') ?? nav.getAttributeNS('http://www.idpf.org/2007/ops', 'type') ?? '';
         if (epubType !== 'toc' && nav.id !== 'toc') continue;
 
         const links = nav.getElementsByTagName('a');
         for (let l = 0; l < links.length; l++) {
           const a = links[l];
-          const href = a.getAttribute('href')?.split('#')[0];
+          const rawHref = a.getAttribute('href')?.split('#')[0];
           const text = a.textContent?.trim();
-          if (href && text) titles.set(href, text);
+          // Normalize to ZIP-root-relative path for matching
+          if (rawHref && text) titles.set(resolveHref(rawHref, navDir), text);
         }
       }
 
@@ -634,22 +644,25 @@ async function parseToc(
   }
 
   // Fall back to NCX (EPUB 2)
-  const spineEl = opfDoc.getElementsByTagName('spine')[0];
+  const spineEl = opfDoc.getElementsByTagNameNS('*', 'spine')[0];
   const tocId = spineEl?.getAttribute('toc');
   if (tocId) {
     const ncxHref = manifest.get(tocId);
     if (ncxHref) {
-      const ncxXml = await readZipText(zip, resolveHref(ncxHref, opfDir));
+      const ncxPath = resolveHref(ncxHref, opfDir);
+      const ncxDir = ncxPath.includes('/') ? ncxPath.substring(0, ncxPath.lastIndexOf('/') + 1) : '';
+      const ncxXml = await readZipText(zip, ncxPath);
       if (ncxXml) {
         const ncxDoc = parseXml(ncxXml);
-        const navPoints = ncxDoc.getElementsByTagName('navPoint');
+        const navPoints = ncxDoc.getElementsByTagNameNS('*', 'navPoint');
         for (let i = 0; i < navPoints.length; i++) {
           const np = navPoints[i];
-          const textEl = np.getElementsByTagName('text')[0];
-          const contentEl = np.getElementsByTagName('content')[0];
+          const textEl = np.getElementsByTagNameNS('*', 'text')[0];
+          const contentEl = np.getElementsByTagNameNS('*', 'content')[0];
           const text = textEl?.textContent?.trim();
           const src = contentEl?.getAttribute('src')?.split('#')[0];
-          if (text && src) titles.set(src, text);
+          // Normalize to ZIP-root-relative path for matching
+          if (text && src) titles.set(resolveHref(src, ncxDir), text);
         }
       }
     }
@@ -868,6 +881,9 @@ const STORE_NAME = 'books';
 const DB_VERSION = 1;
 
 function openDB(): Promise<IDBDatabase> {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB not available'));
+  }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
@@ -1039,6 +1055,7 @@ export default function BookReaderPage() {
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const [initialPosition, setInitialPosition] = useState(0);
   const [copiedSentence, setCopiedSentence] = useState(false);
+  const [textVersion, setTextVersion] = useState(0);
 
   // Timing refs
   const readingStartTime = useRef(0);
@@ -1046,7 +1063,13 @@ export default function BookReaderPage() {
   const lastPauseStart = useRef(0);
   const autoSaveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const engine = useRSVPEngine({ text: chapterText, wpm, chunkSize, initialPosition });
+  // Refs for values needed in stable callbacks (avoids stale closures)
+  const currentBookRef = useRef(currentBook);
+  const currentChapterIndexRef = useRef(currentChapterIndex);
+  useEffect(() => { currentBookRef.current = currentBook; }, [currentBook]);
+  useEffect(() => { currentChapterIndexRef.current = currentChapterIndex; }, [currentChapterIndex]);
+
+  const engine = useRSVPEngine({ text: chapterText, wpm, chunkSize, initialPosition, textVersion });
 
   // Completion stats
   const [completionStats, setCompletionStats] = useState<{
@@ -1069,18 +1092,24 @@ export default function BookReaderPage() {
   // Auto-save on visibilitychange
   // -----------------------------------------------------------------------
 
+  // Use engine position via ref so the callback stays stable during playback.
+  // Without this, engine.position in deps causes the 30s interval to restart every word.
+  const enginePositionRef = useRef(engine.position);
+  useEffect(() => { enginePositionRef.current = engine.position; }, [engine.position]);
+
   const saveCurrentState = useCallback(() => {
-    if (!currentBook) return;
+    const book = currentBookRef.current;
+    if (!book) return;
     saveReadingState({
-      bookId: currentBook.id,
-      currentChapter: currentChapterIndex,
-      position: engine.position,
+      bookId: book.id,
+      currentChapter: currentChapterIndexRef.current,
+      position: enginePositionRef.current,
       wpm,
       chunkSize,
       displayMode,
       lastRead: Date.now(),
     });
-  }, [currentBook, currentChapterIndex, engine.position, wpm, chunkSize, displayMode]);
+  }, [wpm, chunkSize, displayMode]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -1107,10 +1136,10 @@ export default function BookReaderPage() {
 
   // Save on pause
   useEffect(() => {
-    if (phase === 'reading' && !engine.isPlaying && currentBook) {
+    if (phase === 'reading' && !engine.isPlaying && currentBookRef.current) {
       saveCurrentState();
     }
-  }, [engine.isPlaying, phase, currentBook, saveCurrentState]);
+  }, [engine.isPlaying, phase, saveCurrentState]);
 
   // Track pause time
   useEffect(() => {
@@ -1131,8 +1160,10 @@ export default function BookReaderPage() {
       engine.position >= engine.totalWords &&
       engine.totalWords > 0
     ) {
-      if (!currentBook) return;
-      const isLastChapter = currentChapterIndex >= currentBook.chapters.length - 1;
+      const book = currentBookRef.current;
+      const chIdx = currentChapterIndexRef.current;
+      if (!book) return;
+      const isLastChapter = chIdx >= book.chapters.length - 1;
 
       if (isLastChapter) {
         // Book complete
@@ -1141,13 +1172,13 @@ export default function BookReaderPage() {
           lastPauseStart.current = 0;
         }
         const totalTime = (Date.now() - readingStartTime.current - totalPauseTime.current) / 1000;
-        const totalWords = currentBook.chapters.reduce((sum, ch) => sum + ch.wordCount, 0);
+        const totalWords = book.chapters.reduce((sum, ch) => sum + ch.wordCount, 0);
         const effectiveWpm = totalTime > 0 ? Math.round(totalWords / (totalTime / 60)) : 0;
         setCompletionStats({ totalTime, effectiveWpm });
         setPhase('complete');
       } else {
         // Advance to next chapter
-        goToChapter(currentChapterIndex + 1, 0);
+        goToChapter(chIdx + 1, 0);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1244,6 +1275,7 @@ export default function BookReaderPage() {
     setCurrentChapterIndex(index);
     setInitialPosition(pos);
     setChapterText(chapter.text);
+    setTextVersion((v) => v + 1); // Force engine re-init even if same text
   }
 
   async function openBook(bookId: string) {
@@ -1495,6 +1527,7 @@ export default function BookReaderPage() {
             {engine.isPlaying ? 'Pause' : 'Play'}
           </button>
           <button className="px-3 py-2 rounded bg-gray-800 text-gray-300 hover:bg-gray-700 text-sm transition-colors" onClick={() => engine.seek(10)} title="Seek forward 10s (→)">10s→</button>
+          <button className="px-3 py-2 rounded bg-gray-800 text-gray-300 hover:bg-gray-700 text-sm transition-colors" onClick={() => engine.restart()} title="Restart chapter (R)">↺</button>
         </div>
 
         {/* Status bar */}
