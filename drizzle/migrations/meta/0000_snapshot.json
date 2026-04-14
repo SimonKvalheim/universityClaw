@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a0d3ab69-f992-4460-9415-8f0e0fda17cd",
+  "id": "459c4f3d-16f7-4ff4-89a6-73e9bafe8fb8",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "chats": {
@@ -64,7 +64,7 @@
           "name": "chat_jid",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "sender": {

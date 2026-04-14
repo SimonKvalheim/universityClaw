@@ -21,8 +21,9 @@ describe('database migrations', () => {
 
       const db = getDb();
 
-      const tables = db
-        .all(sql`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`) as Array<{ name: string }>;
+      const tables = db.all(
+        sql`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`,
+      ) as Array<{ name: string }>;
       const tableNames = tables.map((t) => t.name);
 
       const expectedTables = [
@@ -41,19 +42,23 @@ describe('database migrations', () => {
       ];
 
       for (const table of expectedTables) {
-        expect(tableNames, `Expected table "${table}" to exist`).toContain(table);
+        expect(tableNames, `Expected table "${table}" to exist`).toContain(
+          table,
+        );
       }
 
       // Spot-check key columns via PRAGMA
-      const ingestionCols = db
-        .all(sql`PRAGMA table_info(ingestion_jobs)`) as Array<{ name: string }>;
+      const ingestionCols = db.all(
+        sql`PRAGMA table_info(ingestion_jobs)`,
+      ) as Array<{ name: string }>;
       const ingestionColNames = ingestionCols.map((c) => c.name);
       expect(ingestionColNames).toContain('promoted_paths');
       expect(ingestionColNames).toContain('source_type');
       expect(ingestionColNames).toContain('content_hash');
 
-      const chatCols = db
-        .all(sql`PRAGMA table_info(chats)`) as Array<{ name: string }>;
+      const chatCols = db.all(sql`PRAGMA table_info(chats)`) as Array<{
+        name: string;
+      }>;
       const chatColNames = chatCols.map((c) => c.name);
       expect(chatColNames).toContain('channel');
       expect(chatColNames).toContain('is_group');
@@ -82,18 +87,25 @@ describe('database migrations', () => {
         );
       `);
       legacyDb
-        .prepare(`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`)
+        .prepare(
+          `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
+        )
         .run('tg:12345', 'Telegram DM', '2024-01-01T00:00:00.000Z');
       legacyDb
-        .prepare(`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`)
+        .prepare(
+          `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
+        )
         .run('tg:-10012345', 'Telegram Group', '2024-01-01T00:00:01.000Z');
       legacyDb
-        .prepare(`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`)
+        .prepare(
+          `INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
+        )
         .run('room@g.us', 'WhatsApp Group', '2024-01-01T00:00:02.000Z');
       legacyDb.close();
 
       vi.resetModules();
-      const { initDatabase, getAllChats, _closeDatabase } = await import('./db.js');
+      const { initDatabase, getAllChats, _closeDatabase } =
+        await import('./db.js');
 
       initDatabase();
 

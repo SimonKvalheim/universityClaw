@@ -94,44 +94,26 @@ export function storeChatMetadata(
   const ch = channel ?? null;
   const group = isGroup === undefined ? null : isGroup ? 1 : 0;
 
-  if (name) {
-    db.insert(schema.chats)
-      .values({
-        jid: chatJid,
-        name,
-        last_message_time: timestamp,
-        channel: ch,
-        is_group: group,
-      })
-      .onConflictDoUpdate({
-        target: schema.chats.jid,
-        set: {
-          name: sql`excluded.name`,
-          last_message_time: sql`MAX(${schema.chats.last_message_time}, excluded.last_message_time)`,
-          channel: sql`COALESCE(excluded.channel, ${schema.chats.channel})`,
-          is_group: sql`COALESCE(excluded.is_group, ${schema.chats.is_group})`,
-        },
-      })
-      .run();
-  } else {
-    db.insert(schema.chats)
-      .values({
-        jid: chatJid,
-        name: chatJid,
-        last_message_time: timestamp,
-        channel: ch,
-        is_group: group,
-      })
-      .onConflictDoUpdate({
-        target: schema.chats.jid,
-        set: {
-          last_message_time: sql`MAX(${schema.chats.last_message_time}, excluded.last_message_time)`,
-          channel: sql`COALESCE(excluded.channel, ${schema.chats.channel})`,
-          is_group: sql`COALESCE(excluded.is_group, ${schema.chats.is_group})`,
-        },
-      })
-      .run();
-  }
+  const set: Record<string, unknown> = {
+    last_message_time: sql`MAX(${schema.chats.last_message_time}, excluded.last_message_time)`,
+    channel: sql`COALESCE(excluded.channel, ${schema.chats.channel})`,
+    is_group: sql`COALESCE(excluded.is_group, ${schema.chats.is_group})`,
+  };
+  if (name) set.name = sql`excluded.name`;
+
+  db.insert(schema.chats)
+    .values({
+      jid: chatJid,
+      name: name || chatJid,
+      last_message_time: timestamp,
+      channel: ch,
+      is_group: group,
+    })
+    .onConflictDoUpdate({
+      target: schema.chats.jid,
+      set,
+    })
+    .run();
 }
 
 /**

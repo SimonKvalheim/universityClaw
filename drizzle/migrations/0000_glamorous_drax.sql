@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS `chats` (
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `messages` (
 	`id` text NOT NULL,
-	`chat_jid` text,
+	`chat_jid` text NOT NULL,
 	`sender` text,
 	`sender_name` text,
 	`content` text,
