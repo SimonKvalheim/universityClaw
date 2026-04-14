@@ -5,14 +5,15 @@
  * process (store/messages.db). Because Next.js/Turbopack cannot bundle
  * TypeScript source from outside the project root, this module re-implements
  * the subset of src/shared/db-reader.ts that the dashboard API routes need,
- * using better-sqlite3 directly.
+ * using Drizzle ORM over better-sqlite3.
  *
  * The DB path is resolved via the STORE_DIR env var (set in next.config.ts
  * to <project-root>/store) with a fallback of process.cwd()/../store.
  */
 
-import Database from 'better-sqlite3';
-import { join } from 'path';
+import { eq, desc, sql } from 'drizzle-orm';
+import { getDb } from './db/index';
+import { ingestion_jobs, settings } from './db/schema';
 
 export interface JobSummary {
   id: string;
@@ -30,50 +31,40 @@ export interface JobDetail extends JobSummary {
   promotedPaths: string[] | null;
 }
 
-type DbRow = Record<string, unknown>;
+type JobRow = typeof ingestion_jobs.$inferSelect;
 
-let _db: Database.Database | null = null;
-
-function getDb(): Database.Database {
-  if (!_db) {
-    const storeDir =
-      process.env.STORE_DIR ?? join(process.cwd(), '..', 'store');
-    const dbPath = join(storeDir, 'messages.db');
-    _db = new Database(dbPath, { readonly: false });
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
-    _db.pragma('busy_timeout = 5000');
-  }
-  return _db;
-}
-
-function rowToSummary(row: DbRow): JobSummary {
+function rowToSummary(row: JobRow): JobSummary {
   return {
-    id: row.id as string,
-    filename: row.source_filename as string,
-    status: row.status as string,
-    error: (row.error as string | null) ?? null,
-    retryAfter: (row.retry_after as string | null) ?? null,
-    retryCount: (row.retry_count as number) ?? 0,
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-    completedAt: (row.completed_at as string | null) ?? null,
+    id: row.id,
+    filename: row.source_filename,
+    status: row.status ?? 'pending',
+    error: row.error ?? null,
+    retryAfter: row.retry_after ?? null,
+    retryCount: row.retry_count ?? 0,
+    createdAt: row.created_at ?? '',
+    updatedAt: row.updated_at ?? '',
+    completedAt: row.completed_at ?? null,
   };
 }
 
 export function getRecentJobs(status?: string): JobSummary[] {
   const db = getDb();
-  let rows: DbRow[];
+  let rows: JobRow[];
   if (status) {
     rows = db
-      .prepare(
-        `SELECT * FROM ingestion_jobs WHERE status = ? ORDER BY created_at DESC LIMIT 100`,
-      )
-      .all(status) as DbRow[];
+      .select()
+      .from(ingestion_jobs)
+      .where(eq(ingestion_jobs.status, status))
+      .orderBy(desc(ingestion_jobs.created_at))
+      .limit(100)
+      .all();
   } else {
     rows = db
-      .prepare(`SELECT * FROM ingestion_jobs ORDER BY created_at DESC LIMIT 100`)
-      .all() as DbRow[];
+      .select()
+      .from(ingestion_jobs)
+      .orderBy(desc(ingestion_jobs.created_at))
+      .limit(100)
+      .all();
   }
   return rows.map(rowToSummary);
 }
@@ -81,13 +72,15 @@ export function getRecentJobs(status?: string): JobSummary[] {
 export function getJobDetail(id: string): JobDetail | null {
   const db = getDb();
   const row = db
-    .prepare(`SELECT * FROM ingestion_jobs WHERE id = ?`)
-    .get(id) as DbRow | undefined;
+    .select()
+    .from(ingestion_jobs)
+    .where(eq(ingestion_jobs.id, id))
+    .get();
   if (!row) return null;
 
   const summary = rowToSummary(row);
   let promotedPaths: string[] | null = null;
-  if (row.promoted_paths && typeof row.promoted_paths === 'string') {
+  if (row.promoted_paths) {
     try {
       promotedPaths = JSON.parse(row.promoted_paths) as string[];
     } catch {
@@ -100,8 +93,10 @@ export function getJobDetail(id: string): JobDetail | null {
 export function getJobSourcePath(id: string): string | null {
   const db = getDb();
   const row = db
-    .prepare(`SELECT source_path FROM ingestion_jobs WHERE id = ?`)
-    .get(id) as { source_path: string } | undefined;
+    .select({ source_path: ingestion_jobs.source_path })
+    .from(ingestion_jobs)
+    .where(eq(ingestion_jobs.id, id))
+    .get();
   return row ? row.source_path : null;
 }
 
@@ -114,8 +109,10 @@ const STAGE_MAP: Record<string, string> = {
 export function retryJob(id: string): { ok: true } | { ok: false; error: string } {
   const db = getDb();
   const row = db
-    .prepare(`SELECT * FROM ingestion_jobs WHERE id = ?`)
-    .get(id) as DbRow | undefined;
+    .select()
+    .from(ingestion_jobs)
+    .where(eq(ingestion_jobs.id, id))
+    .get();
 
   if (!row) {
     return { ok: false, error: 'Job not found' };
@@ -132,14 +129,20 @@ export function retryJob(id: string): { ok: true } | { ok: false; error: string 
   if (row.status === 'oversized') {
     resetStatus = 'extracted';
   } else {
-    const errorStr = (row.error as string | null) ?? '';
+    const errorStr = row.error ?? '';
     const prefix = errorStr.split(':')[0].toLowerCase().trim();
     resetStatus = STAGE_MAP[prefix] ?? 'pending';
   }
 
-  db.prepare(
-    `UPDATE ingestion_jobs SET status = ?, error = NULL, retry_after = NULL, updated_at = datetime('now') WHERE id = ?`,
-  ).run(resetStatus, id);
+  db.update(ingestion_jobs)
+    .set({
+      status: resetStatus,
+      error: null,
+      retry_after: null,
+      updated_at: sql`datetime('now')`,
+    })
+    .where(eq(ingestion_jobs.id, id))
+    .run();
 
   return { ok: true };
 }
@@ -147,45 +150,65 @@ export function retryJob(id: string): { ok: true } | { ok: false; error: string 
 export function dismissJob(id: string): { ok: true; sourcePath: string | null } | { ok: false; error: string } {
   const db = getDb();
   const row = db
-    .prepare(`SELECT * FROM ingestion_jobs WHERE id = ?`)
-    .get(id) as DbRow | undefined;
+    .select()
+    .from(ingestion_jobs)
+    .where(eq(ingestion_jobs.id, id))
+    .get();
 
   if (!row) {
     return { ok: false, error: 'Job not found' };
   }
 
-  if (!['failed', 'oversized', 'rate_limited'].includes(row.status as string)) {
+  if (!['failed', 'oversized', 'rate_limited'].includes(row.status ?? '')) {
     return {
       ok: false,
       error: `Job is not in a dismissable state (status: ${row.status})`,
     };
   }
 
-  db.prepare(
-    `UPDATE ingestion_jobs SET status = 'dismissed', error = NULL, retry_after = NULL, updated_at = datetime('now') WHERE id = ?`,
-  ).run(id);
+  db.update(ingestion_jobs)
+    .set({
+      status: 'dismissed',
+      error: null,
+      retry_after: null,
+      updated_at: sql`datetime('now')`,
+    })
+    .where(eq(ingestion_jobs.id, id))
+    .run();
 
-  return { ok: true, sourcePath: (row.source_path as string) ?? null };
+  return { ok: true, sourcePath: row.source_path };
 }
 
 export function getSettings(): { maxGenerationConcurrent: number } {
   const db = getDb();
   const row = db
-    .prepare(`SELECT value FROM settings WHERE key = ?`)
-    .get('maxGenerationConcurrent') as { value: string } | undefined;
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, 'maxGenerationConcurrent'))
+    .get();
   const raw = row?.value ?? '1';
   const parsed = parseInt(raw, 10);
   const clamped = Math.min(5, Math.max(1, isNaN(parsed) ? 1 : parsed));
   return { maxGenerationConcurrent: clamped };
 }
 
-export function updateSettings(settings: {
+export function updateSettings(config: {
   maxGenerationConcurrent: number;
 }): void {
   const db = getDb();
-  const clamped = Math.min(5, Math.max(1, settings.maxGenerationConcurrent));
-  db.prepare(
-    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
-  ).run('maxGenerationConcurrent', String(clamped));
+  const clamped = Math.min(5, Math.max(1, config.maxGenerationConcurrent));
+  db.insert(settings)
+    .values({
+      key: 'maxGenerationConcurrent',
+      value: String(clamped),
+      updated_at: sql`datetime('now')`,
+    })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: {
+        value: sql`excluded.value`,
+        updated_at: sql`excluded.updated_at`,
+      },
+    })
+    .run();
 }
