@@ -1,4 +1,10 @@
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+} from 'drizzle-orm/sqlite-core';
 
 export const scheduled_tasks = sqliteTable(
   'scheduled_tasks',
@@ -37,6 +43,9 @@ export const task_run_logs = sqliteTable(
     error: text('error'),
   },
   (table) => ({
-    idx_task_run_logs: index('idx_task_run_logs').on(table.task_id, table.run_at),
+    idx_task_run_logs: index('idx_task_run_logs').on(
+      table.task_id,
+      table.run_at,
+    ),
   }),
 );

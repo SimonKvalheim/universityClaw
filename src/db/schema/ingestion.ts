@@ -22,8 +22,14 @@ export const ingestion_jobs = sqliteTable(
     promoted_paths: text('promoted_paths'),
   },
   (table) => ({
-    idx_ingestion_jobs_status: index('idx_ingestion_jobs_status').on(table.status),
-    idx_ingestion_jobs_source_path: index('idx_ingestion_jobs_source_path').on(table.source_path),
-    idx_ingestion_jobs_hash: index('idx_ingestion_jobs_hash').on(table.content_hash),
+    idx_ingestion_jobs_status: index('idx_ingestion_jobs_status').on(
+      table.status,
+    ),
+    idx_ingestion_jobs_source_path: index('idx_ingestion_jobs_source_path').on(
+      table.source_path,
+    ),
+    idx_ingestion_jobs_hash: index('idx_ingestion_jobs_hash').on(
+      table.content_hash,
+    ),
   }),
 );

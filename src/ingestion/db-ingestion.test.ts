@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { sql } from 'drizzle-orm';
 
 import {
   _initTestDatabase,
@@ -41,7 +42,7 @@ describe('simplified ingestion schema', () => {
   it('does not have a review_items table', () => {
     const db = getDb();
     expect(() => {
-      db.prepare('SELECT * FROM review_items').all();
+      db.all(sql`SELECT * FROM review_items`);
     }).toThrow();
   });
 });

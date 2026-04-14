@@ -18,7 +18,7 @@ import {
   sql,
 } from 'drizzle-orm';
 
-import { DATA_DIR, STORE_DIR } from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from '../config.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import type {
@@ -45,6 +45,7 @@ export function initDatabase(): void {
   db = drizzle(rawSqlite, { schema });
 
   runMigrations(db);
+  runLegacyColumnMigrations(rawSqlite);
   migrateJsonState();
 }
 
@@ -589,11 +590,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
         ? JSON.stringify(group.containerConfig)
         : null,
       requires_trigger:
-        group.requiresTrigger === undefined
-          ? 1
-          : group.requiresTrigger
-            ? 1
-            : 0,
+        group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
       is_main: group.isMain ? 1 : 0,
     })
     .onConflictDoUpdate({
@@ -957,6 +954,113 @@ export function setZoteroSyncVersion(version: number): void {
       set: { value: String(version) },
     })
     .run();
+}
+
+// ====================================================================
+// Legacy column migrations (for databases created before Drizzle)
+// ====================================================================
+
+/**
+ * Databases created by the old raw-SQL schema may be missing columns that the
+ * Drizzle-managed migration (0000) creates via CREATE TABLE IF NOT EXISTS —
+ * which is a no-op when the table already exists. This function adds any
+ * missing columns with the same ALTER TABLE / backfill logic the old code used.
+ */
+function runLegacyColumnMigrations(sqlite: Database.Database): void {
+  const tryExec = (ddl: string) => {
+    try {
+      sqlite.exec(ddl);
+    } catch {
+      /* column/index already exists */
+    }
+  };
+
+  // scheduled_tasks additions
+  tryExec(
+    `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
+  );
+  tryExec(`ALTER TABLE scheduled_tasks ADD COLUMN script TEXT`);
+
+  // messages additions
+  try {
+    sqlite.exec(
+      `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
+    );
+    sqlite
+      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
+      .run(`${ASSISTANT_NAME}:%`);
+  } catch {
+    /* column already exists */
+  }
+
+  // registered_groups additions
+  try {
+    sqlite.exec(
+      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
+    );
+    sqlite.exec(
+      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // ingestion_jobs additions
+  tryExec(`ALTER TABLE ingestion_jobs ADD COLUMN extraction_path TEXT`);
+  try {
+    sqlite.exec(`ALTER TABLE ingestion_jobs ADD COLUMN updated_at TEXT`);
+    sqlite.exec(
+      `UPDATE ingestion_jobs SET updated_at = COALESCE(created_at, datetime('now')) WHERE updated_at IS NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    sqlite.exec(`ALTER TABLE ingestion_jobs ADD COLUMN content_hash TEXT`);
+    sqlite.exec(
+      `CREATE INDEX idx_ingestion_jobs_hash ON ingestion_jobs(content_hash)`,
+    );
+  } catch {
+    /* column/index already exists */
+  }
+  tryExec(`ALTER TABLE ingestion_jobs ADD COLUMN retry_after TEXT`);
+  try {
+    sqlite.exec(
+      `ALTER TABLE ingestion_jobs ADD COLUMN retry_count INTEGER DEFAULT 0`,
+    );
+    sqlite.exec(
+      `UPDATE ingestion_jobs SET retry_count = 0 WHERE retry_count IS NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  tryExec(`ALTER TABLE ingestion_jobs ADD COLUMN promoted_paths TEXT`);
+  tryExec(
+    `ALTER TABLE ingestion_jobs ADD COLUMN source_type TEXT DEFAULT 'upload'`,
+  );
+  tryExec(`ALTER TABLE ingestion_jobs ADD COLUMN zotero_key TEXT`);
+  tryExec(`ALTER TABLE ingestion_jobs ADD COLUMN zotero_metadata TEXT`);
+
+  // chats additions
+  try {
+    sqlite.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
+    sqlite.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
+    // Backfill from JID patterns
+    sqlite.exec(
+      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
+    );
+    sqlite.exec(
+      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
+    );
+    sqlite.exec(
+      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
+    );
+    sqlite.exec(
+      `UPDATE chats SET channel = 'telegram', is_group = 0 WHERE jid LIKE 'tg:%'`,
+    );
+  } catch {
+    /* columns already exist */
+  }
 }
 
 // ====================================================================
