@@ -15,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <a href="/upload" className="hover:text-gray-100">Upload</a>
               <a href="/vault" className="hover:text-gray-100">Vault</a>
               <a href="/read" className="hover:text-gray-100">Read</a>
+              <a href="/read/book" className="hover:text-gray-100">Book</a>
             </div>
           </div>
         </nav>

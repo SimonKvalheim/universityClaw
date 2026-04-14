@@ -17,6 +17,8 @@ export interface RSVPEngineOptions {
   text: string;
   wpm: number;
   chunkSize: 1 | 2 | 3;
+  initialPosition?: number;
+  textVersion?: number;
 }
 
 export interface RSVPEngineState {
@@ -174,7 +176,7 @@ export function computeTimeLeft(
 // ---------------------------------------------------------------------------
 
 export function useRSVPEngine(options: RSVPEngineOptions): RSVPEngineState {
-  const { text, wpm, chunkSize } = options;
+  const { text, wpm, chunkSize, initialPosition, textVersion } = options;
 
   const [words, setWords] = useState<TokenizedWord[]>(() =>
     tokenizeWithDurations(text, wpm)
@@ -206,14 +208,16 @@ export function useRSVPEngine(options: RSVPEngineOptions): RSVPEngineState {
     chunkSizeRef.current = chunkSize;
   }, [chunkSize]);
 
-  // Re-tokenize when text changes — reset position
+  // Re-tokenize when text or textVersion changes — start at initialPosition or 0
   useEffect(() => {
     const newWords = tokenizeWithDurations(text, wpm);
     setWords(newWords);
-    setPosition(0);
+    const startPos = initialPosition ?? 0;
+    setPosition(startPos);
+    positionRef.current = startPos;
     setIsPlaying(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text]);
+  }, [text, textVersion]);
 
   // Re-tokenize when WPM changes — keep position (live speed adjustment)
   useEffect(() => {
