@@ -13,6 +13,11 @@ export interface ParsedChapter {
   wordCount: number;
 }
 
+interface TocEntry {
+  title: string;
+  fragment: string | null;
+}
+
 // Public API
 export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
   const zip = await JSZip.loadAsync(buffer);
@@ -51,7 +56,7 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
     if (idref) spineIds.push(idref);
   }
 
-  const tocTitles = await parseToc(zip, opfDoc, opfDir, manifest);
+  const tocMap = await parseToc(zip, opfDoc, opfDir, manifest);
 
   const chapters: ParsedChapter[] = [];
   let untitledIndex = 0;
@@ -64,13 +69,24 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedBook> {
     const xhtml = await readZipText(zip, filePath);
     if (!xhtml) continue;
 
-    const text = extractTextFromHtml(xhtml);
-    const wordCount = text ? text.trim().split(/\s+/).length : 0;
+    const tocEntries = tocMap.get(filePath);
+    const hasFragments = tocEntries?.some(e => e.fragment !== null);
 
-    if (wordCount < 5) continue;
+    if (hasFragments && tocEntries) {
+      // File has fragment-based chapters — split content at anchor points
+      const fragmentChapters = splitHtmlByFragments(xhtml, tocEntries);
+      for (const ch of fragmentChapters) {
+        if (ch.wordCount >= 5) chapters.push(ch);
+      }
+    } else {
+      // Single chapter per file (original behavior)
+      const text = extractTextFromHtml(xhtml);
+      const wordCount = text ? text.trim().split(/\s+/).length : 0;
+      if (wordCount < 5) continue;
 
-    const chapterTitle = tocTitles.get(filePath) ?? `Chapter ${++untitledIndex}`;
-    chapters.push({ title: chapterTitle, text, wordCount });
+      const chapterTitle = tocEntries?.[0]?.title ?? `Chapter ${++untitledIndex}`;
+      chapters.push({ title: chapterTitle, text, wordCount });
+    }
   }
 
   if (chapters.length === 0) {
@@ -118,13 +134,87 @@ async function readZipText(zip: JSZip, path: string): Promise<string | null> {
   return file.async('text');
 }
 
+function splitHref(href: string): [string, string | null] {
+  const hashIndex = href.indexOf('#');
+  if (hashIndex < 0) return [href, null];
+  return [href.substring(0, hashIndex), href.substring(hashIndex + 1)];
+}
+
+export function splitHtmlByFragments(
+  html: string,
+  entries: TocEntry[],
+): ParsedChapter[] {
+  const fragmentEntries = entries.filter(
+    (e): e is TocEntry & { fragment: string } => e.fragment !== null,
+  );
+  if (fragmentEntries.length === 0) return [];
+
+  let doc = new DOMParser().parseFromString(html, 'application/xhtml+xml');
+  if (doc.querySelector('parsererror')) {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  }
+  const body = doc.body ?? doc.documentElement;
+
+  // Locate fragment elements in the DOM; keep only those that exist
+  const fragmentEls = fragmentEntries
+    .map(e => ({ title: e.title, fragment: e.fragment, el: doc.getElementById(e.fragment) }))
+    .filter((f): f is { title: string; fragment: string; el: HTMLElement } => f.el !== null);
+
+  if (fragmentEls.length === 0) {
+    // Fragments listed in TOC but not found in the document — fall back to full text
+    const text = (body.textContent ?? '').trim();
+    return [{ title: entries[0].title, text, wordCount: text ? text.split(/\s+/).length : 0 }];
+  }
+
+  // Walk every text node in document order and assign it to the latest
+  // fragment element that precedes (or contains) it.
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const sections = new Map<string, string[]>();
+  for (const f of fragmentEls) sections.set(f.fragment, []);
+
+  let currentIdx = -1; // index into fragmentEls; -1 = before first fragment
+  let textNode: Node | null;
+
+  while ((textNode = walker.nextNode())) {
+    const content = textNode.textContent ?? '';
+    if (!content.trim()) continue;
+
+    // Advance the current fragment pointer whenever the text node is
+    // after (or inside) the next fragment element in document order.
+    while (currentIdx + 1 < fragmentEls.length) {
+      const next = fragmentEls[currentIdx + 1].el;
+      const pos = next.compareDocumentPosition(textNode);
+      if (pos & (Node.DOCUMENT_POSITION_FOLLOWING | Node.DOCUMENT_POSITION_CONTAINED_BY)) {
+        currentIdx++;
+      } else {
+        break;
+      }
+    }
+
+    if (currentIdx >= 0) {
+      sections.get(fragmentEls[currentIdx].fragment)!.push(content);
+    }
+    // Text before the first fragment anchor is discarded (front matter / preamble)
+  }
+
+  return fragmentEls.map(f => {
+    const text = (sections.get(f.fragment) ?? []).join(' ').replace(/\s+/g, ' ').trim();
+    return { title: f.title, text, wordCount: text ? text.split(/\s+/).length : 0 };
+  });
+}
+
 async function parseToc(
   zip: JSZip,
   opfDoc: Document,
   opfDir: string,
   manifest: Map<string, string>,
-): Promise<Map<string, string>> {
-  const titles = new Map<string, string>();
+): Promise<Map<string, TocEntry[]>> {
+  const entries = new Map<string, TocEntry[]>();
+
+  const addEntry = (resolvedPath: string, title: string, fragment: string | null) => {
+    if (!entries.has(resolvedPath)) entries.set(resolvedPath, []);
+    entries.get(resolvedPath)!.push({ title, fragment });
+  };
 
   const manifestItems = opfDoc.getElementsByTagNameNS('*', 'item');
   let navDir = opfDir;
@@ -150,13 +240,15 @@ async function parseToc(
         const links = nav.getElementsByTagName('a');
         for (let l = 0; l < links.length; l++) {
           const a = links[l];
-          const rawHref = a.getAttribute('href')?.split('#')[0];
+          const rawHref = a.getAttribute('href');
           const text = a.textContent?.trim();
-          if (rawHref && text) titles.set(resolveHref(rawHref, navDir), text);
+          if (!rawHref || !text) continue;
+          const [hrefPath, fragment] = splitHref(rawHref);
+          addEntry(resolveHref(hrefPath, navDir), text, fragment);
         }
       }
 
-      if (titles.size > 0) return titles;
+      if (entries.size > 0) return entries;
     }
   }
 
@@ -176,12 +268,14 @@ async function parseToc(
           const textEl = np.getElementsByTagNameNS('*', 'text')[0];
           const contentEl = np.getElementsByTagNameNS('*', 'content')[0];
           const text = textEl?.textContent?.trim();
-          const src = contentEl?.getAttribute('src')?.split('#')[0];
-          if (text && src) titles.set(resolveHref(src, ncxDir), text);
+          const src = contentEl?.getAttribute('src');
+          if (!text || !src) continue;
+          const [srcPath, fragment] = splitHref(src);
+          addEntry(resolveHref(srcPath, ncxDir), text, fragment);
         }
       }
     }
   }
 
-  return titles;
+  return entries;
 }
