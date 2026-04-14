@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useRSVPEngine, type TokenizedWord } from '../useRSVPEngine';
+import { useRSVPEngine } from '../useRSVPEngine';
 import {
   formatTime,
   getFontSize,
@@ -11,7 +11,7 @@ import {
   ContextDisplay,
   SourcePanel,
 } from '../components';
-import { parseEpub, type ParsedChapter } from './epubParser';
+import { parseEpub } from './epubParser';
 import {
   getAllBooks,
   getBook,
@@ -295,6 +295,7 @@ export default function BookReaderPage() {
     setCurrentChapterIndex(chIdx);
     setInitialPosition(pos);
     setChapterText(book.chapters[chIdx]?.text ?? '');
+    setTextVersion((v) => v + 1);
     readingStartTime.current = Date.now();
     totalPauseTime.current = 0;
     lastPauseStart.current = 0;
@@ -374,8 +375,8 @@ export default function BookReaderPage() {
   const fontSize = getFontSize(engine.currentChunk);
   const showSettings = !engine.isPlaying && phase === 'reading';
   const currentChapter = currentBook?.chapters[currentChapterIndex];
-  const chapterProgress = currentChapter
-    ? Math.round((engine.position / currentChapter.wordCount) * 100)
+  const chapterProgress = engine.totalWords > 0
+    ? Math.round((engine.position / engine.totalWords) * 100)
     : 0;
   const overallProgress = currentBook
     ? (() => {
@@ -663,7 +664,7 @@ export default function BookReaderPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {books
+          {[...books]
             .sort((a, b) => {
               const stateA = getReadingState(a.id);
               const stateB = getReadingState(b.id);
