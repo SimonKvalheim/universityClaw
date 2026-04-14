@@ -270,8 +270,9 @@ export default function BookReaderPage() {
   // -----------------------------------------------------------------------
 
   function goToChapter(index: number, pos: number) {
-    if (!currentBook) return;
-    const chapter = currentBook.chapters[index];
+    const book = currentBookRef.current;
+    if (!book) return;
+    const chapter = book.chapters[index];
     if (!chapter) return;
     setCurrentChapterIndex(index);
     setInitialPosition(pos);
@@ -351,7 +352,7 @@ export default function BookReaderPage() {
       setCurrentBook(book);
       setCurrentChapterIndex(0);
       setInitialPosition(0);
-      setChapterText(book.chapters[0].text);
+      setChapterText(book.chapters[0]?.text ?? '');
       readingStartTime.current = Date.now();
       totalPauseTime.current = 0;
       lastPauseStart.current = 0;

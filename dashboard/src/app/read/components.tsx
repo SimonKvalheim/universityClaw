@@ -46,15 +46,6 @@ export function ORPDisplay({ chunk, fontSize }: { chunk: TokenizedWord[]; fontSi
   const pivotChar = word[pivot] ?? '';
   const after = word.slice(pivot + 1);
 
-  // For multi-word chunks, join remaining words
-  const otherWords = chunk
-    .filter((w) => w !== longestWord)
-    .map((w) => w.word)
-    .join(' ');
-  const displayWord = chunk.length > 1
-    ? chunk.map((w) => w.word).join(' ')
-    : word;
-
   // For multi-word chunks, build the full phrase and calculate pivot offset
   // relative to the longest word's pivot character within the phrase
   if (chunk.length > 1) {
