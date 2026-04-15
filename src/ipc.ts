@@ -19,6 +19,8 @@ import {
 } from './study/queries.js';
 import { computeDueDate } from './study/sm2.js';
 import type { GeneratedActivity, ActivityType } from './study/types.js';
+import { generateActivities } from './study/generator.js';
+import { triggerPostSessionGeneration } from './study/engine.js';
 import { RegisteredGroup } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -292,6 +294,10 @@ export async function processTaskIpc(
     // For study_generated_activities
     conceptId?: string;
     activities?: GeneratedActivity[];
+    // For study_generation_request
+    bloomLevel?: number;
+    // For study_post_session_generation
+    sessionId?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -692,6 +698,45 @@ export async function processTaskIpc(
       logger.info(
         `IPC: inserted ${validActivities.length} activities for concept ${data.conceptId} (${skipped} skipped)`,
       );
+      break;
+    }
+
+    case 'study_generation_request': {
+      if (!data.conceptId) {
+        logger.error(
+          { sourceGroup },
+          'study_generation_request: missing conceptId',
+        );
+        break;
+      }
+      const bloomLevel = data.bloomLevel ?? 1;
+      try {
+        await generateActivities(data.conceptId, bloomLevel);
+      } catch (err) {
+        logger.error(
+          { err, conceptId: data.conceptId, bloomLevel },
+          'study_generation_request: generateActivities threw',
+        );
+      }
+      break;
+    }
+
+    case 'study_post_session_generation': {
+      if (!data.sessionId) {
+        logger.error(
+          { sourceGroup },
+          'study_post_session_generation: missing sessionId',
+        );
+        break;
+      }
+      try {
+        await triggerPostSessionGeneration(data.sessionId);
+      } catch (err) {
+        logger.error(
+          { err, sessionId: data.sessionId },
+          'study_post_session_generation: triggerPostSessionGeneration threw',
+        );
+      }
       break;
     }
 
