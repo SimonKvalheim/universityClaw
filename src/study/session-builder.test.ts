@@ -60,9 +60,15 @@ describe('buildDailySession', () => {
   // ──────────────────────────────────────────────────────────────────────────
   it('populates new, review, and stretch blocks when activities are available', async () => {
     // Concept ceiling < 3 for new block, ceiling 2 for review, ceiling >= 4 for stretch
-    createConcept(makeConcept({ id: 'c-new', title: 'New Concept', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-rev', title: 'Review Concept', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-str', title: 'Stretch Concept', bloomCeiling: 5 }));
+    createConcept(
+      makeConcept({ id: 'c-new', title: 'New Concept', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'c-rev', title: 'Review Concept', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'c-str', title: 'Stretch Concept', bloomCeiling: 5 }),
+    );
 
     // 5 new L1 activities (bloomLevel 1, concept ceiling < 3)
     for (let i = 1; i <= 5; i++) {
@@ -73,13 +79,23 @@ describe('buildDailySession', () => {
     // 10 review activities (not L1-2 with ceiling < 3 — use bloomLevel 3)
     for (let i = 1; i <= 10; i++) {
       createActivity(
-        makeActivity({ id: `rev-${i}`, conceptId: 'c-rev', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `rev-${i}`,
+          conceptId: 'c-rev',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
     // 3 stretch L5 activities (bloomLevel >= 4, concept ceiling >= 4)
     for (let i = 1; i <= 3; i++) {
       createActivity(
-        makeActivity({ id: `str-${i}`, conceptId: 'c-str', bloomLevel: 5, activityType: 'synthesis' }),
+        makeActivity({
+          id: `str-${i}`,
+          conceptId: 'c-str',
+          bloomLevel: 5,
+          activityType: 'synthesis',
+        }),
       );
     }
 
@@ -113,11 +129,18 @@ describe('buildDailySession', () => {
   // ──────────────────────────────────────────────────────────────────────────
   it('places all activities in review block when concepts ceiling < 3 and bloomLevel not 1-2', async () => {
     // bloomCeiling = 2, but activities at bloomLevel 3 → not "new material" eligible
-    createConcept(makeConcept({ id: 'c-rev', title: 'Review Concept', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({ id: 'c-rev', title: 'Review Concept', bloomCeiling: 2 }),
+    );
 
     for (let i = 1; i <= 15; i++) {
       createActivity(
-        makeActivity({ id: `rev-${i}`, conceptId: 'c-rev', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `rev-${i}`,
+          conceptId: 'c-rev',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
 
@@ -137,18 +160,45 @@ describe('buildDailySession', () => {
   // 4. Domain focus filter
   // ──────────────────────────────────────────────────────────────────────────
   it('filters to only activities from the focused domain', async () => {
-    createConcept(makeConcept({ id: 'c-math', title: 'Math', domain: 'math', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-phys', title: 'Physics', domain: 'physics', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-bio', title: 'Biology', domain: 'biology', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({
+        id: 'c-math',
+        title: 'Math',
+        domain: 'math',
+        bloomCeiling: 2,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-phys',
+        title: 'Physics',
+        domain: 'physics',
+        bloomCeiling: 2,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-bio',
+        title: 'Biology',
+        domain: 'biology',
+        bloomCeiling: 2,
+      }),
+    );
 
     for (let i = 1; i <= 5; i++) {
-      createActivity(makeActivity({ id: `math-${i}`, conceptId: 'c-math', bloomLevel: 3 }));
+      createActivity(
+        makeActivity({ id: `math-${i}`, conceptId: 'c-math', bloomLevel: 3 }),
+      );
     }
     for (let i = 1; i <= 5; i++) {
-      createActivity(makeActivity({ id: `phys-${i}`, conceptId: 'c-phys', bloomLevel: 3 }));
+      createActivity(
+        makeActivity({ id: `phys-${i}`, conceptId: 'c-phys', bloomLevel: 3 }),
+      );
     }
     for (let i = 1; i <= 5; i++) {
-      createActivity(makeActivity({ id: `bio-${i}`, conceptId: 'c-bio', bloomLevel: 3 }));
+      createActivity(
+        makeActivity({ id: `bio-${i}`, conceptId: 'c-bio', bloomLevel: 3 }),
+      );
     }
 
     const result = await buildDailySession({ domainFocus: 'math' });
@@ -199,10 +249,20 @@ describe('buildDailySession', () => {
   // ──────────────────────────────────────────────────────────────────────────
   it('groups new block activities by domain for topic coherence', async () => {
     createConcept(
-      makeConcept({ id: 'c-a', title: 'Domain A Concept', domain: 'domain-a', bloomCeiling: 2 }),
+      makeConcept({
+        id: 'c-a',
+        title: 'Domain A Concept',
+        domain: 'domain-a',
+        bloomCeiling: 2,
+      }),
     );
     createConcept(
-      makeConcept({ id: 'c-b', title: 'Domain B Concept', domain: 'domain-b', bloomCeiling: 2 }),
+      makeConcept({
+        id: 'c-b',
+        title: 'Domain B Concept',
+        domain: 'domain-b',
+        bloomCeiling: 2,
+      }),
     );
 
     // 3 activities per domain at bloomLevel 1
@@ -240,17 +300,31 @@ describe('buildDailySession', () => {
   // 7. Stretch requires concept bloomCeiling >= 4
   // ──────────────────────────────────────────────────────────────────────────
   it('produces no stretch activities when all concept ceilings are below 4', async () => {
-    createConcept(makeConcept({ id: 'c-low2', title: 'Low2', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-low3', title: 'Low3', bloomCeiling: 3 }));
+    createConcept(
+      makeConcept({ id: 'c-low2', title: 'Low2', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'c-low3', title: 'Low3', bloomCeiling: 3 }),
+    );
 
     for (let i = 1; i <= 5; i++) {
       createActivity(
-        makeActivity({ id: `l2-${i}`, conceptId: 'c-low2', bloomLevel: 4, activityType: 'synthesis' }),
+        makeActivity({
+          id: `l2-${i}`,
+          conceptId: 'c-low2',
+          bloomLevel: 4,
+          activityType: 'synthesis',
+        }),
       );
     }
     for (let i = 1; i <= 5; i++) {
       createActivity(
-        makeActivity({ id: `l3-${i}`, conceptId: 'c-low3', bloomLevel: 5, activityType: 'synthesis' }),
+        makeActivity({
+          id: `l3-${i}`,
+          conceptId: 'c-low3',
+          bloomLevel: 5,
+          activityType: 'synthesis',
+        }),
       );
     }
 
@@ -267,7 +341,12 @@ describe('buildDailySession', () => {
 
     for (let i = 1; i <= 30; i++) {
       createActivity(
-        makeActivity({ id: `act-${i}`, conceptId: 'c-1', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `act-${i}`,
+          conceptId: 'c-1',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
 
@@ -285,13 +364,23 @@ describe('buildDailySession', () => {
     // 4 card_review @ 1.5 min each = 6 min
     for (let i = 1; i <= 4; i++) {
       createActivity(
-        makeActivity({ id: `cr-${i}`, conceptId: 'c-1', bloomLevel: 3, activityType: 'card_review' }),
+        makeActivity({
+          id: `cr-${i}`,
+          conceptId: 'c-1',
+          bloomLevel: 3,
+          activityType: 'card_review',
+        }),
       );
     }
     // 2 synthesis @ 7 min each = 14 min
     for (let i = 1; i <= 2; i++) {
       createActivity(
-        makeActivity({ id: `syn-${i}`, conceptId: 'c-2', bloomLevel: 5, activityType: 'synthesis' }),
+        makeActivity({
+          id: `syn-${i}`,
+          conceptId: 'c-2',
+          bloomLevel: 5,
+          activityType: 'synthesis',
+        }),
       );
     }
 
@@ -311,7 +400,10 @@ describe('buildDailySession', () => {
           act.activityType === 'concept_map'
         )
           expectedMinutes += 5;
-        else if (act.activityType === 'synthesis' || act.activityType === 'socratic')
+        else if (
+          act.activityType === 'synthesis' ||
+          act.activityType === 'socratic'
+        )
           expectedMinutes += 7;
       }
     }
@@ -324,18 +416,36 @@ describe('buildDailySession', () => {
   // ──────────────────────────────────────────────────────────────────────────
   it('silently skips activities whose concept is archived (not active)', async () => {
     // Active concept — activities should be included
-    createConcept(makeConcept({ id: 'c-real', title: 'Real Concept', status: 'active', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({
+        id: 'c-real',
+        title: 'Real Concept',
+        status: 'active',
+        bloomCeiling: 2,
+      }),
+    );
     // Archived concept — activities for this concept should be skipped by the builder
-    createConcept(makeConcept({ id: 'c-archived', title: 'Archived Concept', status: 'archived', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({
+        id: 'c-archived',
+        title: 'Archived Concept',
+        status: 'archived',
+        bloomCeiling: 2,
+      }),
+    );
 
     createActivity(
       makeActivity({ id: 'act-real', conceptId: 'c-real', bloomLevel: 3 }),
     );
     createActivity(
-      makeActivity({ id: 'act-archived', conceptId: 'c-archived', bloomLevel: 3 }),
+      makeActivity({
+        id: 'act-archived',
+        conceptId: 'c-archived',
+        bloomLevel: 3,
+      }),
     );
 
-    let result: Awaited<ReturnType<typeof buildDailySession>> | undefined;
+    let result: ReturnType<typeof buildDailySession> | undefined;
     await expect(async () => {
       result = await buildDailySession();
     }).not.toThrow();
@@ -352,25 +462,46 @@ describe('buildDailySession', () => {
   // ──────────────────────────────────────────────────────────────────────────
   it('ensures all active domains with due activities are represented in the session', async () => {
     // 3 domains
-    createConcept(makeConcept({ id: 'c-a', title: 'A', domain: 'alpha', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-b', title: 'B', domain: 'beta', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-c', title: 'C', domain: 'gamma', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({ id: 'c-a', title: 'A', domain: 'alpha', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'c-b', title: 'B', domain: 'beta', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'c-c', title: 'C', domain: 'gamma', bloomCeiling: 2 }),
+    );
 
     // Alpha gets many activities (will fill most of the slots)
     for (let i = 1; i <= 15; i++) {
       createActivity(
-        makeActivity({ id: `a-${i}`, conceptId: 'c-a', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `a-${i}`,
+          conceptId: 'c-a',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
     // Beta and gamma each have a few activities
     for (let i = 1; i <= 3; i++) {
       createActivity(
-        makeActivity({ id: `b-${i}`, conceptId: 'c-b', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `b-${i}`,
+          conceptId: 'c-b',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
     for (let i = 1; i <= 3; i++) {
       createActivity(
-        makeActivity({ id: `c-${i}`, conceptId: 'c-c', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `c-${i}`,
+          conceptId: 'c-c',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
 
@@ -387,20 +518,40 @@ describe('buildDailySession', () => {
   // 12. domainsCovered reflects all placed activities
   // ──────────────────────────────────────────────────────────────────────────
   it('reports domainsCovered as unique domains across all placed activities', async () => {
-    createConcept(makeConcept({ id: 'c-x', title: 'X', domain: 'xdomain', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'c-y', title: 'Y', domain: 'ydomain', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({
+        id: 'c-x',
+        title: 'X',
+        domain: 'xdomain',
+        bloomCeiling: 2,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-y',
+        title: 'Y',
+        domain: 'ydomain',
+        bloomCeiling: 2,
+      }),
+    );
 
     for (let i = 1; i <= 3; i++) {
-      createActivity(makeActivity({ id: `x-${i}`, conceptId: 'c-x', bloomLevel: 3 }));
+      createActivity(
+        makeActivity({ id: `x-${i}`, conceptId: 'c-x', bloomLevel: 3 }),
+      );
     }
     for (let i = 1; i <= 3; i++) {
-      createActivity(makeActivity({ id: `y-${i}`, conceptId: 'c-y', bloomLevel: 3 }));
+      createActivity(
+        makeActivity({ id: `y-${i}`, conceptId: 'c-y', bloomLevel: 3 }),
+      );
     }
 
     const result = await buildDailySession({ targetActivities: 20 });
     expect(result.domainsCovered).toContain('xdomain');
     expect(result.domainsCovered).toContain('ydomain');
     // No duplicates
-    expect(result.domainsCovered.length).toBe(new Set(result.domainsCovered).size);
+    expect(result.domainsCovered.length).toBe(
+      new Set(result.domainsCovered).size,
+    );
   });
 });

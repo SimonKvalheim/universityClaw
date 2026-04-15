@@ -333,7 +333,10 @@ export async function triggerPostSessionGeneration(
     if (advancement !== null && advancement.generationNeeded) {
       advanced++;
       try {
-        await generateActivities(conceptId, advancement.newCeiling as BloomLevel);
+        await generateActivities(
+          conceptId,
+          advancement.newCeiling as BloomLevel,
+        );
         queued++;
       } catch (err) {
         logger.error(

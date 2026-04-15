@@ -123,7 +123,11 @@ describe('discoverConcepts', () => {
   it('handles multiple paths with mixed types and returns only concepts', () => {
     writeFileSync(
       join(vaultDir, 'concepts', 'alpha.md'),
-      makeFrontmatter({ title: 'Alpha Concept', type: 'concept', domain: 'math' }),
+      makeFrontmatter({
+        title: 'Alpha Concept',
+        type: 'concept',
+        domain: 'math',
+      }),
     );
     writeFileSync(
       join(vaultDir, 'concepts', 'beta.md'),

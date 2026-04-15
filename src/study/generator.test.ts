@@ -77,7 +77,8 @@ describe('generateActivities', () => {
 
   it('prompt includes concept title and vault content', async () => {
     const vaultNotePath = 'concepts/action-research.md';
-    const noteContent = '# Action Research\n\nIterative cycles of action and reflection.';
+    const noteContent =
+      '# Action Research\n\nIterative cycles of action and reflection.';
 
     writeFileSync(join(vaultDir, vaultNotePath), noteContent);
     createConcept(makeConcept({ vaultNotePath }));

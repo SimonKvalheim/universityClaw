@@ -94,8 +94,7 @@ export interface SessionComposition {
 /** Options controlling session composition */
 export interface SessionOptions {
   targetActivities?: number; // default 20
-  domainFocus?: string;      // filter to specific domain
-  maxMinutes?: number;       // default 30
+  domainFocus?: string; // filter to specific domain
 }
 
 /** Bloom advancement check result */

@@ -638,9 +638,7 @@ describe('createActivityConceptLinks', () => {
   });
 
   it('does nothing when given an empty conceptIds array', () => {
-    expect(() =>
-      createActivityConceptLinks('activity-1', []),
-    ).not.toThrow();
+    expect(() => createActivityConceptLinks('activity-1', [])).not.toThrow();
   });
 });
 
@@ -654,13 +652,28 @@ describe('getConceptsAboveBloomCeiling', () => {
 
   it('returns active concepts whose bloomCeiling meets or exceeds the threshold', () => {
     createConcept(
-      makeConcept({ id: 'c-l0', title: 'Zero', status: 'active', bloomCeiling: 0 }),
+      makeConcept({
+        id: 'c-l0',
+        title: 'Zero',
+        status: 'active',
+        bloomCeiling: 0,
+      }),
     );
     createConcept(
-      makeConcept({ id: 'c-l2', title: 'Two', status: 'active', bloomCeiling: 2 }),
+      makeConcept({
+        id: 'c-l2',
+        title: 'Two',
+        status: 'active',
+        bloomCeiling: 2,
+      }),
     );
     createConcept(
-      makeConcept({ id: 'c-l4', title: 'Four', status: 'active', bloomCeiling: 4 }),
+      makeConcept({
+        id: 'c-l4',
+        title: 'Four',
+        status: 'active',
+        bloomCeiling: 4,
+      }),
     );
 
     const result = getConceptsAboveBloomCeiling(2);
@@ -672,10 +685,20 @@ describe('getConceptsAboveBloomCeiling', () => {
 
   it('excludes non-active concepts even if bloomCeiling qualifies', () => {
     createConcept(
-      makeConcept({ id: 'c-archived', title: 'Archived', status: 'archived', bloomCeiling: 5 }),
+      makeConcept({
+        id: 'c-archived',
+        title: 'Archived',
+        status: 'archived',
+        bloomCeiling: 5,
+      }),
     );
     createConcept(
-      makeConcept({ id: 'c-pending', title: 'Pending', status: 'pending', bloomCeiling: 5 }),
+      makeConcept({
+        id: 'c-pending',
+        title: 'Pending',
+        status: 'pending',
+        bloomCeiling: 5,
+      }),
     );
 
     const result = getConceptsAboveBloomCeiling(1);
@@ -686,7 +709,12 @@ describe('getConceptsAboveBloomCeiling', () => {
 
   it('returns empty array when no concepts meet the threshold', () => {
     createConcept(
-      makeConcept({ id: 'c-low', title: 'Low', status: 'active', bloomCeiling: 1 }),
+      makeConcept({
+        id: 'c-low',
+        title: 'Low',
+        status: 'active',
+        bloomCeiling: 1,
+      }),
     );
     const result = getConceptsAboveBloomCeiling(3);
     expect(result).toHaveLength(0);
@@ -694,10 +722,20 @@ describe('getConceptsAboveBloomCeiling', () => {
 
   it('returns results ordered by title asc', () => {
     createConcept(
-      makeConcept({ id: 'c-zebra', title: 'Zebra', status: 'active', bloomCeiling: 3 }),
+      makeConcept({
+        id: 'c-zebra',
+        title: 'Zebra',
+        status: 'active',
+        bloomCeiling: 3,
+      }),
     );
     createConcept(
-      makeConcept({ id: 'c-alpha', title: 'Alpha', status: 'active', bloomCeiling: 3 }),
+      makeConcept({
+        id: 'c-alpha',
+        title: 'Alpha',
+        status: 'active',
+        bloomCeiling: 3,
+      }),
     );
 
     const result = getConceptsAboveBloomCeiling(3);

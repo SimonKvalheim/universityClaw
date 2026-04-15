@@ -116,10 +116,18 @@ export async function generateActivities(
 
   // 7. Fire and forget — IPC handler processes the output asynchronously
   const onProcess = (_proc: ChildProcess, containerName: string): void => {
-    logger.info({ conceptId, bloomLevel, containerName }, 'Generator container spawned');
+    logger.info(
+      { conceptId, bloomLevel, containerName },
+      'Generator container spawned',
+    );
   };
 
-  void runContainerAgent(generatorGroup, input, onProcess);
+  runContainerAgent(generatorGroup, input, onProcess).catch((err) => {
+    logger.error(
+      { conceptId, bloomLevel, err },
+      'Generator container dispatch failed',
+    );
+  });
 
   // 8. Increment cycle counter
   conceptsGeneratedThisCycle++;
@@ -137,7 +145,14 @@ interface PromptParams {
 }
 
 function buildGenerationPrompt(params: PromptParams): string {
-  const { conceptId, title, vaultContent, bloomLevel, activityCount, vaultNotePath } = params;
+  const {
+    conceptId,
+    title,
+    vaultContent,
+    bloomLevel,
+    activityCount,
+    vaultNotePath,
+  } = params;
   return [
     `## Activity Generation Request`,
     ``,

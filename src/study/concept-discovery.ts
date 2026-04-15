@@ -42,12 +42,10 @@ export function discoverConcepts(
     if (typeof title !== 'string' || title.trim() === '') continue;
 
     // 5. Map optional fields — fall back to null
-    const domain =
-      typeof data['domain'] === 'string' ? data['domain'] : null;
+    const domain = typeof data['domain'] === 'string' ? data['domain'] : null;
     const subdomain =
       typeof data['subdomain'] === 'string' ? data['subdomain'] : null;
-    const course =
-      typeof data['course'] === 'string' ? data['course'] : null;
+    const course = typeof data['course'] === 'string' ? data['course'] : null;
 
     results.push({
       id: randomUUID(),

@@ -1,4 +1,14 @@
-import { eq, and, lte, desc, sql, isNull, asc, gte, inArray } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  lte,
+  desc,
+  sql,
+  isNull,
+  asc,
+  gte,
+  inArray,
+} from 'drizzle-orm';
 
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema/index.js';
@@ -188,9 +198,7 @@ export function getActivitiesByConcept(conceptId: string): LearningActivity[] {
     .all();
 }
 
-export function batchCreateActivities(
-  activities: NewLearningActivity[],
-): void {
+export function batchCreateActivities(activities: NewLearningActivity[]): void {
   if (activities.length === 0) return;
   getDb().transaction((tx) => {
     for (const activity of activities) {

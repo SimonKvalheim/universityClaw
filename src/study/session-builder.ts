@@ -48,12 +48,15 @@ function toSessionActivity(
 
 // ─── Interleave so no two consecutive share the same conceptId ────────────────
 
-function interleaveByConceptId(activities: SessionActivity[]): SessionActivity[] {
+function interleaveByConceptId(
+  activities: SessionActivity[],
+): SessionActivity[] {
   const result: SessionActivity[] = [];
   const remaining = [...activities];
 
   while (remaining.length > 0) {
-    const prevConceptId = result.length > 0 ? result[result.length - 1].conceptId : null;
+    const prevConceptId =
+      result.length > 0 ? result[result.length - 1].conceptId : null;
     const idx = remaining.findIndex((a) => a.conceptId !== prevConceptId);
     if (idx === -1) {
       // All remaining share the same conceptId — append them (tail is acceptable)
@@ -68,19 +71,26 @@ function interleaveByConceptId(activities: SessionActivity[]): SessionActivity[]
 
 // ─── Main session builder ─────────────────────────────────────────────────────
 
-export async function buildDailySession(
+export function buildDailySession(
   options?: SessionOptions,
-): Promise<SessionComposition> {
+): SessionComposition {
   const target = options?.targetActivities ?? 20;
 
   // 1. Fetch due activities and active concepts
   const dueActivities = getDueActivities();
   if (dueActivities.length === 0) {
-    return { blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] };
+    return {
+      blocks: [],
+      totalActivities: 0,
+      estimatedMinutes: 0,
+      domainsCovered: [],
+    };
   }
 
   const activeConcepts = getActiveConcepts();
-  const conceptMap = new Map<string, Concept>(activeConcepts.map((c) => [c.id, c]));
+  const conceptMap = new Map<string, Concept>(
+    activeConcepts.map((c) => [c.id, c]),
+  );
 
   // 2. Enrich and filter activities
   let enriched: Array<{ activity: LearningActivity; concept: Concept }> = [];
@@ -97,7 +107,12 @@ export async function buildDailySession(
   }
 
   if (enriched.length === 0) {
-    return { blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] };
+    return {
+      blocks: [],
+      totalActivities: 0,
+      estimatedMinutes: 0,
+      domainsCovered: [],
+    };
   }
 
   // ─── Block targets ────────────────────────────────────────────────────────
@@ -110,9 +125,7 @@ export async function buildDailySession(
   const stretchCandidateIds = new Set<string>(
     enriched
       .filter(
-        (e) =>
-          e.activity.bloomLevel >= 4 &&
-          (e.concept.bloomCeiling ?? 0) >= 4,
+        (e) => e.activity.bloomLevel >= 4 && (e.concept.bloomCeiling ?? 0) >= 4,
       )
       .slice(0, stretchTarget)
       .map((e) => e.activity.id),
@@ -147,7 +160,8 @@ export async function buildDailySession(
 
   // ─── Review block: remaining (excluding stretch candidates), sorted overdue → low easeFactor
   const reviewCandidates = enriched.filter(
-    (e) => !placedIds.has(e.activity.id) && !stretchCandidateIds.has(e.activity.id),
+    (e) =>
+      !placedIds.has(e.activity.id) && !stretchCandidateIds.has(e.activity.id),
   );
 
   // Sort: most overdue first (ascending dueAt), then lowest easeFactor
@@ -181,7 +195,11 @@ export async function buildDailySession(
   }
 
   const coveredNow = new Set<string>();
-  for (const a of [...newActivities, ...reviewActivities, ...stretchActivities]) {
+  for (const a of [
+    ...newActivities,
+    ...reviewActivities,
+    ...stretchActivities,
+  ]) {
     if (a.domain) coveredNow.add(a.domain);
   }
 
@@ -191,7 +209,8 @@ export async function buildDailySession(
 
     // Find a due activity from the missing domain not yet placed
     const candidate = enriched.find(
-      (e) => e.concept.domain === missingDomain && !placedIds.has(e.activity.id),
+      (e) =>
+        e.concept.domain === missingDomain && !placedIds.has(e.activity.id),
     );
     if (!candidate) continue;
 
@@ -207,7 +226,8 @@ export async function buildDailySession(
   }
 
   // ─── Fill remaining slots from pool if total < target ─────────────────────
-  const totalSoFar = newActivities.length + reviewActivities.length + stretchActivities.length;
+  const totalSoFar =
+    newActivities.length + reviewActivities.length + stretchActivities.length;
   const fillSlots = target - totalSoFar;
   if (fillSlots > 0) {
     const remaining = enriched.filter((e) => !placedIds.has(e.activity.id));
@@ -219,11 +239,18 @@ export async function buildDailySession(
 
   // ─── Build blocks (only non-empty) ────────────────────────────────────────
   const blocks: SessionBlock[] = [];
-  if (newActivities.length > 0) blocks.push({ type: 'new', activities: newActivities });
-  if (reviewActivities.length > 0) blocks.push({ type: 'review', activities: reviewActivities });
-  if (stretchActivities.length > 0) blocks.push({ type: 'stretch', activities: stretchActivities });
+  if (newActivities.length > 0)
+    blocks.push({ type: 'new', activities: newActivities });
+  if (reviewActivities.length > 0)
+    blocks.push({ type: 'review', activities: reviewActivities });
+  if (stretchActivities.length > 0)
+    blocks.push({ type: 'stretch', activities: stretchActivities });
 
-  const allPlaced = [...newActivities, ...reviewActivities, ...stretchActivities];
+  const allPlaced = [
+    ...newActivities,
+    ...reviewActivities,
+    ...stretchActivities,
+  ];
 
   // ─── Estimate minutes ─────────────────────────────────────────────────────
   const estimatedMinutes = allPlaced.reduce(
@@ -233,7 +260,9 @@ export async function buildDailySession(
 
   // ─── Unique domains covered ───────────────────────────────────────────────
   const domainsCovered = [
-    ...new Set(allPlaced.map((a) => a.domain).filter((d): d is string => d !== null)),
+    ...new Set(
+      allPlaced.map((a) => a.domain).filter((d): d is string => d !== null),
+    ),
   ];
 
   return {
