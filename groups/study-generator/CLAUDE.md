@@ -142,16 +142,38 @@ Atomic retrieval. One fact or definition per card. Use `cardType` to vary format
 
 Feynman technique prompts. Ask the student to explain the concept as if teaching someone unfamiliar with it, in their own words, without using the source's exact phrasing. Effective self-explanation exposes gaps.
 
+**Prompt construction rules:**
+- Do NOT write "explain X" — target a **specific aspect or mechanism** within the concept (e.g. "Explain how X accounts for Y" or "Explain what happens when Z occurs in X").
+- Optionally ban one or two technical terms to prevent recitation without understanding.
+- Name the imagined audience (peer, first-year student, manager) to anchor the register.
+
+**Reference answer rules:**
+- The `referenceAnswer` must be a **key-points list**, not a model explanation. List the ideas a complete answer would cover. This is used for self-rating, not as a sample essay.
+- Format: short bullet points, each describing one required concept or connection.
+
 **Worked example (Information Systems domain):**
 
 ```json
 {
   "activityType": "self_explain",
   "prompt": "Explain transaction management in relational databases as if you were teaching a first-year student who understands spreadsheets but has never written SQL. Avoid using the words 'ACID' or 'atomicity' in your explanation.",
-  "referenceAnswer": "A transaction groups multiple database changes so they either all succeed or all fail together. This prevents corrupt states (e.g. money leaving one account without arriving in the other). The database keeps a log so it can undo partial changes if something fails midway.",
+  "referenceAnswer": "Key points a complete explanation covers: (1) multiple changes are grouped so they all succeed or all fail together; (2) prevents corrupt intermediate states (e.g. money leaving one account without arriving in another); (3) the database logs changes so partial failures can be rolled back.",
   "bloomLevel": 3,
   "difficultyEstimate": 7,
   "sourceNotePath": "concepts/database-transactions.md"
+}
+```
+
+**Worked example (Knowledge Management domain):**
+
+```json
+{
+  "activityType": "self_explain",
+  "prompt": "Explain how Nonaka's SECI model accounts for the conversion of tacit knowledge to explicit knowledge. Focus specifically on the socialization and externalization phases — what happens in each, and why the order matters.",
+  "referenceAnswer": "Key points: (1) socialization — tacit knowledge shared through observation, imitation, and joint practice (no articulation required); (2) externalization — tacit knowledge converted to explicit form through metaphors, analogies, and dialogue; (3) order matters because externalization requires a shared tacit base first — the social context built in socialization makes articulation possible.",
+  "bloomLevel": 3,
+  "difficultyEstimate": 7,
+  "sourceNotePath": "concepts/nonaka-seci-model.md"
 }
 ```
 
@@ -178,9 +200,33 @@ Ask the student to list key concepts from a topic and explicitly state the relat
 
 ### 3.5 `comparison` — Bloom's L4–L5
 
-Structured comparison of two frameworks, models, or concepts along a named dimension. Always include `relatedConceptIds`. The prompt must name both subjects and the dimension of comparison explicitly.
+Structured comparison of two or more frameworks, models, or concepts along named dimensions. Always include `relatedConceptIds` — list **all** concept UUIDs involved (from both the primary concept and related concepts). The prompt must name both subjects and the comparison dimensions explicitly.
+
+**Prompt construction rules:**
+- Name both (or all) concepts being compared.
+- Specify 2–3 **named dimensions** (e.g. "definition", "role in knowledge creation", "how it's made accessible") — do not leave dimensions implicit.
+- The question should ask the student to locate the meaningful difference, not just describe each concept in turn.
+
+**Reference answer rules:**
+- Structure the answer as a **dimension-by-dimension comparison**, not as a narrative paragraph.
+- Format: one row per dimension showing what each concept claims, followed by the key difference.
+- Use `relatedConceptIds` to list **all** concept UUIDs involved in the comparison, not just the secondary one.
 
 **Worked example (Knowledge Management domain):**
+
+```json
+{
+  "activityType": "comparison",
+  "prompt": "Compare Polanyi's tacit knowledge and Nonaka's tacit knowledge along three dimensions: (1) definition, (2) role in knowledge creation, and (3) how it is made accessible to others. Where do the two accounts fundamentally agree, and where do they diverge?",
+  "referenceAnswer": "Definition — Polanyi: knowledge we possess but cannot fully articulate ('we know more than we can tell'); Nonaka: knowledge tied to action, commitment, and context, including cognitive and technical dimensions. Role — Polanyi: foundational to all knowledge, including explicit knowledge; Nonaka: the raw material for the SECI cycle, primary source of innovation. Accessibility — Polanyi: partial at best, through apprenticeship and practice; Nonaka: convertible to explicit form through externalization (metaphor, dialogue). Key divergence: Polanyi treats tacit knowledge as irreducibly personal; Nonaka treats it as organisationally mobilisable through deliberate conversion processes.",
+  "bloomLevel": 5,
+  "difficultyEstimate": 8,
+  "relatedConceptIds": ["uuid-polanyi-tacit", "uuid-nonaka-seci-model"],
+  "sourceNotePath": "concepts/nonaka-seci-model.md"
+}
+```
+
+**Worked example (prior existing):**
 
 ```json
 {
@@ -200,13 +246,36 @@ Structured comparison of two frameworks, models, or concepts along a named dimen
 
 Present a realistic scenario and ask the student to apply, diagnose, or evaluate using the target concept. Scenarios should be plausible in the student's study domains. Avoid contrived toy examples.
 
+**Prompt construction rules:**
+- The scenario must be **concrete and realistic** — name a type of organisation, a problem, and observable symptoms.
+- Always specify the **analytical framework to apply** (e.g. "Using Nonaka's SECI model...", "Applying the VUCA framework..."). Do not leave the framework implicit.
+- At L3–L4 (Apply/Analyze): ask the student to apply or diagnose. At L5–L6 (Evaluate/Create): ask them to evaluate, critique, or propose.
+
+**Reference answer rules:**
+- Walk through the analytical framework **step by step** — not as a single summary paragraph.
+- Label each step or framework component explicitly.
+- End with a conclusion that follows from the analysis (not stated independently of it).
+
+**Worked example (Knowledge Management domain):**
+
+```json
+{
+  "activityType": "case_analysis",
+  "prompt": "A hospital's quality improvement team has collected extensive data and written detailed protocols, but staff continue to rely on informal experience rather than documented procedures. Patient outcomes vary significantly between shifts. Using Nonaka's SECI model, diagnose which knowledge conversion phase is most likely failing and propose one concrete intervention.",
+  "referenceAnswer": "SECI diagnosis — Combination phase (converting explicit knowledge into usable explicit artefacts) appears functional: protocols exist and are documented. The failure is in Internalization — staff are not converting the explicit protocols back into embodied, actionable tacit knowledge. Contributing factor: Socialization is bypassed — experienced staff are not modelling protocol-aligned behaviour in practice, so informal tacit norms diverge from formal explicit ones. Intervention: structured shadowing programme pairing protocol-trained staff with experienced practitioners (restores Socialization → Externalization loop), supplemented by simulation-based drills to drive Internalization of documented procedures.",
+  "bloomLevel": 5,
+  "difficultyEstimate": 9,
+  "sourceNotePath": "concepts/nonaka-seci-model.md"
+}
+```
+
 **Worked example (AI / Information Systems domain):**
 
 ```json
 {
   "activityType": "case_analysis",
   "prompt": "A hospital deploys an AI diagnostic tool trained on historical patient records. Six months after deployment, a review finds that the tool performs 20% worse on patients from rural areas than urban areas. A data scientist suggests retraining with more balanced geographic data. Using what you know about algorithmic bias and data quality, diagnose the likely cause of this performance gap and evaluate whether retraining alone is sufficient to address it.",
-  "referenceAnswer": "Likely cause: representation bias — rural patients were underrepresented in training data, so the model learned decision boundaries that reflect urban clinical patterns. Retraining with balanced data addresses representation bias but does not address: (1) measurement bias if rural patients are systematically recorded differently; (2) historical label bias if past diagnoses for rural patients were themselves biased; (3) deployment drift if rural clinical contexts differ systematically from training contexts. Retraining is necessary but not sufficient — a full bias audit of labelling processes and feature validity is required.",
+  "referenceAnswer": "Step 1 — Diagnose bias type: representation bias — rural patients were underrepresented in training data, so the model learned decision boundaries that reflect urban clinical patterns. Step 2 — Evaluate the proposed fix: retraining with balanced data addresses representation bias but leaves three other risks open: (a) measurement bias if rural records use different coding conventions; (b) historical label bias if past rural diagnoses were themselves biased; (c) deployment drift if rural clinical contexts differ structurally from training contexts. Step 3 — Conclusion: retraining is necessary but not sufficient — a full bias audit of labelling processes and feature validity is required before redeployment.",
   "bloomLevel": 5,
   "difficultyEstimate": 9,
   "sourceNotePath": "concepts/algorithmic-bias.md"
@@ -217,18 +286,28 @@ Present a realistic scenario and ask the student to apply, diagnose, or evaluate
 
 ### 3.7 `synthesis` — Bloom's L5–L6
 
-Integrate two or more distinct concepts to construct an argument, framework, or explanation that requires drawing on all of them. Always include `relatedConceptIds`. The `referenceAnswer` should sketch the synthesis, not just list the concepts.
+Integrate 2–3 distinct concepts to construct an argument, framework, or explanation that requires drawing on all of them. Always include `relatedConceptIds` listing **all** concept UUIDs involved. The question must require genuine integration — not serial summarization of each concept in turn.
+
+**Prompt construction rules:**
+- Name the 2–3 concepts that must be integrated (make this explicit in the prompt, not implicit).
+- Frame the task as constructing something (an argument, a design, a diagnosis, a framework) — not as describing each concept.
+- The scenario or question must be one that **cannot be answered well** by addressing each concept independently: the synthesis must add something.
+
+**Reference answer rules:**
+- The `referenceAnswer` must demonstrate synthesis structure: show how the concepts **interact, constrain, or amplify each other**, not how they individually apply.
+- Label the contribution of each concept, then show the integrated conclusion that only emerges from combining them.
+- A reference answer that could be split into two independent paragraphs (one per concept) is not a synthesis — rewrite it.
 
 **Worked example (Cognitive Psychology + Digital Transformation domain):**
 
 ```json
 {
   "activityType": "synthesis",
-  "prompt": "A large organisation is rolling out a new ERP system to 5,000 employees. Using cognitive load theory and change management principles, construct an argument for how the training programme should be designed. Your argument should explain what cognitive load theory predicts will go wrong with conventional 'big bang' training and what change management theory recommends instead.",
-  "referenceAnswer": "Cognitive load theory: big bang training overloads working memory with unfamiliar interface, new workflows, and changed social norms simultaneously. Intrinsic load (complexity of the system) plus extraneous load (poor training design) exceeds working memory capacity — producing surface compliance without genuine schema formation. Germane load (actual learning) is crowded out. Change management (Kotter / ADKAR): resistance is highest when people lack competence confidence. Training must follow the awareness–desire–knowledge sequence; knowledge (skill) training is most effective after desire is established. Synthesis argument: phase training by role, start with high-relevance workflows only, use worked examples (reduces extraneous load), and build in spaced practice across weeks rather than days. Combine with early wins communication (change management) to sustain desire through the learning curve.",
+  "prompt": "A large organisation is rolling out a new ERP system to 5,000 employees. Using cognitive load theory and change management principles, construct an argument for how the training programme should be designed. Your argument must explain what cognitive load theory predicts will go wrong with conventional 'big bang' training AND how change management theory shapes what timing and sequencing are even possible.",
+  "referenceAnswer": "Cognitive load theory (CLT) contribution: big bang training simultaneously imposes intrinsic load (ERP complexity), extraneous load (unfamiliar interface + poor design), and new social norms — working memory capacity is exceeded, producing surface compliance without schema formation. Germane load is crowded out. Change management contribution: Kotter/ADKAR shows desire must precede knowledge — skill training delivered before people want to change produces resistance, not learning. Integration: these two frameworks constrain each other in opposite directions. CLT demands early simplification (reduce load by starting with narrow workflows); change management demands late skill training (after awareness and desire). The synthesis: phase training by role, deliver high-relevance-only content immediately after desire is established (not before), and use spaced practice across weeks — this satisfies both the load constraint (narrow scope, worked examples) and the motivational sequencing constraint (training follows desire, not precedes it).",
   "bloomLevel": 6,
   "difficultyEstimate": 9,
-  "relatedConceptIds": ["uuid-change-management-kotter"],
+  "relatedConceptIds": ["uuid-change-management-kotter", "uuid-cognitive-load-theory"],
   "sourceNotePath": "concepts/cognitive-load-theory.md"
 }
 ```
@@ -237,15 +316,24 @@ Integrate two or more distinct concepts to construct an argument, framework, or 
 
 ### 3.8 `socratic` — Bloom's L4–L6
 
-A guided question sequence that progressively probes deeper assumptions. The `prompt` contains 3–5 questions in order, from surface to assumption-level. The `referenceAnswer` gives the expected direction of reasoning at each step, not a definitive answer.
+A Socratic dialogue opener followed by a guided question sequence that probes deeper assumptions. The first question challenges a foundational assumption — it is a **dialogue starter**, not a standalone question. Subsequent questions (3–5 total) follow the line of reasoning the first question opens.
 
-**Worked example (Knowledge Management domain):**
+**Prompt construction rules:**
+- **Question 1** must be an assumption-challenging opener — a question that, if taken seriously, forces the student to examine something they likely take for granted. (Example: "If knowledge can only exist in people's heads, how do organisations learn anything?")
+- Questions 2–4 follow the thread opened by Q1, moving from surface implication to deeper assumption.
+- Do not include the answer in the question or make the direction obvious.
+
+**Reference answer rules:**
+- The `referenceAnswer` gives the **expected line of reasoning** at each step, not a definitive answer. Use phrases like "should surface", "expected direction", "a strong answer would...".
+- For Q1 especially: the answer should describe the tension or contradiction the question exposes, not resolve it.
+
+**Worked example (Knowledge Management domain) — Socratic starter format:**
 
 ```json
 {
   "activityType": "socratic",
-  "prompt": "Work through this question sequence in order:\n1. What does an organisation gain by converting tacit knowledge to explicit knowledge?\n2. What is necessarily lost in that conversion?\n3. If codification always loses something, under what conditions is it still worth doing?\n4. What does this imply about the limits of a knowledge management system that relies entirely on documentation?",
-  "referenceAnswer": "1. Gains: scalability, transferability, persistence beyond individuals, auditability. 2. Losses: context-dependence, embodied skill, nuance, the 'knowing-how' that resists description (Polanyi: 'we know more than we can tell'). 3. Worth doing when: knowledge needs to reach people who can't access the expert, when the context is stable enough that codified knowledge remains valid, when the cost of tacit transfer (apprenticeship, co-location) exceeds the cost of codification loss. 4. Implication: documentation-only KM systems will fail for dynamic, complex, or practice-dependent knowledge domains — they capture the skeleton but not the muscle. Communities of practice, mentoring, and rotation programmes are required complements.",
+  "prompt": "Work through this question sequence in order:\n1. If knowledge can only exist in people's heads — as tacit knowledge theorists claim — how do organisations learn anything when employees leave?\n2. What does an organisation gain by converting tacit knowledge to explicit knowledge?\n3. What is necessarily lost in that conversion?\n4. If codification always loses something, under what conditions is it still worth doing?\n5. What does this imply about the limits of a knowledge management system that relies entirely on documentation?",
+  "referenceAnswer": "1. Expected tension: organisations do lose knowledge when people leave — this is the knowledge retention problem. A strong answer surfaces the tension between 'knowledge is personal' and 'organisations appear to learn over time', and asks how that's possible (pointing toward artefacts, norms, and processes as knowledge carriers). 2. Expected direction: scalability, transferability, persistence, auditability. 3. Expected direction: context-dependence, embodied skill, nuance — Polanyi's 'we know more than we can tell'. 4. Expected conditions: knowledge needs to reach people who can't access the expert; context is stable enough that codified knowledge stays valid; cost of tacit transfer (apprenticeship) exceeds codification loss. 5. Expected implication: documentation-only KM fails for dynamic or practice-dependent domains — communities of practice, mentoring, and rotation are required complements.",
   "bloomLevel": 5,
   "difficultyEstimate": 8,
   "sourceNotePath": "concepts/tacit-knowledge.md"
