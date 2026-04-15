@@ -33,6 +33,12 @@ export interface ConceptSummary {
   vaultNotePath: string | null;
   status: string;
   masteryOverall: number;
+  masteryL1: number;
+  masteryL2: number;
+  masteryL3: number;
+  masteryL4: number;
+  masteryL5: number;
+  masteryL6: number;
   bloomCeiling: number;
   dueCount: number;
   createdAt: string;
@@ -84,6 +90,12 @@ function rowToSummary(row: ConceptRow, dueCount: number): ConceptSummary {
     vaultNotePath: row.vault_note_path ?? null,
     status: row.status ?? 'active',
     masteryOverall: row.mastery_overall ?? 0,
+    masteryL1: row.mastery_L1 ?? 0,
+    masteryL2: row.mastery_L2 ?? 0,
+    masteryL3: row.mastery_L3 ?? 0,
+    masteryL4: row.mastery_L4 ?? 0,
+    masteryL5: row.mastery_L5 ?? 0,
+    masteryL6: row.mastery_L6 ?? 0,
     bloomCeiling: row.bloom_ceiling ?? 0,
     dueCount,
     createdAt: row.created_at,

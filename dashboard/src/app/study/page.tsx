@@ -12,24 +12,47 @@ const BLOOM_LABELS: Record<number, string> = {
   6: 'L6',
 };
 
+const MASTERY_THRESHOLD = 10.0;
+
+interface SessionPreview {
+  blocks: Array<{
+    type: string;
+    activities: Array<{
+      activityType: string;
+      bloomLevel: number;
+    }>;
+  }>;
+  totalActivities: number;
+  estimatedMinutes: number;
+  domainsCovered: string[];
+}
+
 export default function StudyPage() {
   const [concepts, setConcepts] = useState<ConceptSummary[]>([]);
   const [pendingGroups, setPendingGroups] = useState<PendingGroup[]>([]);
   const [stats, setStats] = useState<ConceptStats | null>(null);
+  const [session, setSession] = useState<SessionPreview | null>(null);
+  const [streak, setStreak] = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [conceptsRes, pendingRes] = await Promise.all([
+      const [conceptsRes, pendingRes, sessionRes, streakRes] = await Promise.all([
         fetch('/api/study/concepts'),
         fetch('/api/study/concepts/pending'),
+        fetch('/api/study/session'),
+        fetch('/api/study/streak'),
       ]);
       const conceptsData = await conceptsRes.json() as { concepts: ConceptSummary[]; stats: ConceptStats };
       const pendingData = await pendingRes.json() as { groups: PendingGroup[] };
+      const sessionData = await sessionRes.json() as { session: SessionPreview };
+      const streakData = await streakRes.json() as { streak: number };
       setConcepts(conceptsData.concepts ?? []);
       setStats(conceptsData.stats ?? null);
       setPendingGroups(pendingData.groups ?? []);
+      setSession(sessionData.session ?? null);
+      setStreak(streakData.streak ?? 0);
     } catch {
       // silently fail; data stays stale
     } finally {
@@ -67,6 +90,17 @@ export default function StudyPage() {
     );
   }
 
+  // Build activity type breakdown for the session card
+  const activityBreakdown: Record<string, number> = {};
+  if (session) {
+    for (const block of session.blocks) {
+      for (const activity of block.activities) {
+        const type = activity.activityType;
+        activityBreakdown[type] = (activityBreakdown[type] ?? 0) + 1;
+      }
+    }
+  }
+
   return (
     <div className="max-w-5xl space-y-8">
       {/* Header */}
@@ -75,9 +109,46 @@ export default function StudyPage() {
         {stats && (
           <p className="text-sm text-gray-500">
             {stats.active} active · {stats.pending} pending · {stats.domains} domains
+            {streak > 0 && (
+              <span className="ml-2 text-amber-400 font-medium">🔥 {streak} day streak</span>
+            )}
           </p>
         )}
       </div>
+
+      {/* Section 0 — Today's Session */}
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Today&apos;s Session</h3>
+        <div className="rounded-lg border border-gray-800 bg-gray-900 p-5">
+          {session && session.totalActivities > 0 ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-gray-100 font-medium">
+                  {session.totalActivities} {session.totalActivities === 1 ? 'activity' : 'activities'} due
+                </p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                  {Object.entries(activityBreakdown).map(([type, count]) => (
+                    <span key={type} className="text-xs text-gray-500">
+                      {count} {type}
+                    </span>
+                  ))}
+                  {session.estimatedMinutes > 0 && (
+                    <span className="text-xs text-gray-600">~{session.estimatedMinutes} min</span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => { window.location.href = '/study/session'; }}
+                className="shrink-0 px-4 py-2 rounded-md bg-blue-700 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
+              >
+                Start Session
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">All caught up! No activities due today.</p>
+          )}
+        </div>
+      </section>
 
       {/* Section 1 — Pending Approval */}
       {pendingGroups.length > 0 && (
@@ -136,45 +207,67 @@ export default function StudyPage() {
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Concept</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Domain</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Bloom</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-48">Mastery</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Mastery</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Due</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800 bg-gray-950">
-                {concepts.map((concept) => (
-                  <tr key={concept.id} className="hover:bg-gray-900 transition-colors">
-                    <td className="px-4 py-3 text-gray-100">
-                      <span className="font-medium">{concept.title}</span>
-                      {concept.subdomain && (
-                        <span className="ml-1.5 text-xs text-gray-500">{concept.subdomain}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">{concept.domain ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-400">
-                      {concept.bloomCeiling === 0 ? '—' : (BLOOM_LABELS[concept.bloomCeiling] ?? `L${concept.bloomCeiling}`)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-blue-500"
-                            style={{ width: `${Math.min(100, Math.round(concept.masteryOverall * 100))}%` }}
-                          />
+                {concepts.map((concept) => {
+                  const levelValues = [
+                    concept.masteryL1,
+                    concept.masteryL2,
+                    concept.masteryL3,
+                    concept.masteryL4,
+                    concept.masteryL5,
+                    concept.masteryL6,
+                  ];
+                  return (
+                    <tr key={concept.id} className="hover:bg-gray-900 transition-colors">
+                      <td className="px-4 py-3 text-gray-100">
+                        <span className="font-medium">{concept.title}</span>
+                        {concept.subdomain && (
+                          <span className="ml-1.5 text-xs text-gray-500">{concept.subdomain}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-400">{concept.domain ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-400">
+                        {concept.bloomCeiling === 0 ? '—' : (BLOOM_LABELS[concept.bloomCeiling] ?? `L${concept.bloomCeiling}`)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-0.5" title={`Overall: ${Math.round(concept.masteryOverall * 100)}%`}>
+                          {levelValues.map((val, idx) => {
+                            const pct = Math.min(100, Math.round((val / MASTERY_THRESHOLD) * 100));
+                            // Progressively brighter blue as level increases
+                            const opacityClass = idx < 2
+                              ? 'opacity-40'
+                              : idx < 4
+                                ? 'opacity-70'
+                                : 'opacity-100';
+                            return (
+                              <div
+                                key={idx}
+                                className="flex-1 h-2 rounded-sm bg-gray-800 overflow-hidden"
+                                title={`L${idx + 1}: ${Math.round(val * 10) / 10} / ${MASTERY_THRESHOLD}`}
+                              >
+                                <div
+                                  className={`h-full bg-blue-500 ${opacityClass}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
-                        <span className="text-xs text-gray-500 w-8 text-right">
-                          {Math.round(concept.masteryOverall * 100)}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {concept.dueCount > 0 ? (
-                        <span className="text-xs font-medium text-amber-400">{concept.dueCount}</span>
-                      ) : (
-                        <span className="text-xs text-gray-600">0</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-3">
+                        {concept.dueCount > 0 ? (
+                          <span className="text-xs font-medium text-amber-400">{concept.dueCount}</span>
+                        ) : (
+                          <span className="text-xs text-gray-600">0</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
