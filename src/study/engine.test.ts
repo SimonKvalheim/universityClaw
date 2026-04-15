@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { _initTestDatabase, _closeDatabase } from '../db/index.js';
 import {
   createConcept,
   createActivity,
   createActivityLogEntry,
+  createStudySession,
   type NewConcept,
   type NewLearningActivity,
   type NewActivityLogEntry,
@@ -14,7 +15,14 @@ import {
   processCompletion,
   getDeEscalationAdvice,
   getSynthesisOpportunities,
+  triggerPostSessionGeneration,
 } from './engine.js';
+
+// Mock generator.js to prevent container spawning in tests
+vi.mock('./generator.js', () => ({
+  generateActivities: vi.fn().mockResolvedValue(undefined),
+  resetGenerationCycle: vi.fn(),
+}));
 
 // ============================================================
 // Shared fixtures
@@ -310,10 +318,22 @@ describe('processCompletion', () => {
     // because L3 logs below get timestamps slightly after NOW.
     for (let i = 0; i < 8; i++) {
       createActivityLogEntry(
-        makeLog({ id: `log-l1-${i}`, activityId: 'activity-l1', bloomLevel: 1, quality: 5, reviewedAt: NOW }),
+        makeLog({
+          id: `log-l1-${i}`,
+          activityId: 'activity-l1',
+          bloomLevel: 1,
+          quality: 5,
+          reviewedAt: NOW,
+        }),
       );
       createActivityLogEntry(
-        makeLog({ id: `log-l2-${i}`, activityId: 'activity-l2', bloomLevel: 2, quality: 5, reviewedAt: NOW }),
+        makeLog({
+          id: `log-l2-${i}`,
+          activityId: 'activity-l2',
+          bloomLevel: 2,
+          quality: 5,
+          reviewedAt: NOW,
+        }),
       );
     }
 
@@ -579,5 +599,184 @@ describe('getSynthesisOpportunities', () => {
     const crossDomain = result.find((o) => o.type === 'cross-domain');
     expect(crossDomain).toBeDefined();
     expect(crossDomain!.automatic).toBe(false);
+  });
+});
+
+// ============================================================
+// triggerPostSessionGeneration
+// ============================================================
+
+describe('triggerPostSessionGeneration', () => {
+  // Import mocked fns lazily after vi.mock() is hoisted
+  let generateActivitiesMock: ReturnType<typeof vi.fn>;
+  let resetGenerationCycleMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    _initTestDatabase();
+    const gen = await import('./generator.js');
+    generateActivitiesMock = gen.generateActivities as ReturnType<typeof vi.fn>;
+    resetGenerationCycleMock = gen.resetGenerationCycle as ReturnType<
+      typeof vi.fn
+    >;
+    vi.clearAllMocks();
+  });
+  afterEach(() => _closeDatabase());
+
+  // Helper: create a study session
+  function makeSession(id: string) {
+    createStudySession({
+      id,
+      startedAt: NOW,
+      sessionType: 'standard',
+    });
+  }
+
+  it('session with 2 completed activities for 1 concept that advances: generateActivities called once', async () => {
+    // Concept with no existing activities at new ceiling — generationNeeded=true
+    createConcept(makeConcept({ id: 'concept-adv', bloomCeiling: 0 }));
+
+    // Need a helper concept/activity for the FK on activityLog
+    createConcept(
+      makeConcept({ id: 'helper-adv', title: 'Helper', bloomCeiling: 0 }),
+    );
+    createActivity(
+      makeActivity({
+        id: 'act-helper-adv',
+        conceptId: 'helper-adv',
+        bloomLevel: 1,
+      }),
+    );
+
+    makeSession('session-adv');
+
+    // Seed 8 logs attributed to concept-adv with the session id
+    for (let i = 0; i < 8; i++) {
+      createActivityLogEntry(
+        makeLog({
+          id: `log-adv-${i}`,
+          activityId: 'act-helper-adv',
+          conceptId: 'concept-adv',
+          bloomLevel: 1,
+          quality: 5,
+          reviewedAt: NOW,
+          sessionId: 'session-adv',
+        }),
+      );
+    }
+
+    await triggerPostSessionGeneration('session-adv');
+
+    expect(resetGenerationCycleMock).toHaveBeenCalledOnce();
+    expect(generateActivitiesMock).toHaveBeenCalledOnce();
+    expect(generateActivitiesMock).toHaveBeenCalledWith('concept-adv', 1);
+  });
+
+  it('session with 3 concepts, none advance: generateActivities not called', async () => {
+    for (let i = 1; i <= 3; i++) {
+      createConcept(
+        makeConcept({
+          id: `concept-no-adv-${i}`,
+          title: `NoAdv ${i}`,
+          bloomCeiling: 0,
+        }),
+      );
+      createActivity(
+        makeActivity({
+          id: `act-no-adv-${i}`,
+          conceptId: `concept-no-adv-${i}`,
+          bloomLevel: 1,
+        }),
+      );
+    }
+
+    makeSession('session-no-adv');
+
+    // Only 1 log each — not enough evidence to advance
+    for (let i = 1; i <= 3; i++) {
+      createActivityLogEntry(
+        makeLog({
+          id: `log-no-adv-${i}`,
+          activityId: `act-no-adv-${i}`,
+          conceptId: `concept-no-adv-${i}`,
+          bloomLevel: 1,
+          quality: 5,
+          reviewedAt: NOW,
+          sessionId: 'session-no-adv',
+        }),
+      );
+    }
+
+    await triggerPostSessionGeneration('session-no-adv');
+
+    expect(resetGenerationCycleMock).toHaveBeenCalledOnce();
+    expect(generateActivitiesMock).not.toHaveBeenCalled();
+  });
+
+  it('generateActivities throws for 1 concept: other concepts still processed', async () => {
+    // Two advancing concepts — first will throw, second should still be called
+    for (let i = 1; i <= 2; i++) {
+      createConcept(
+        makeConcept({
+          id: `concept-throw-${i}`,
+          title: `Throw ${i}`,
+          bloomCeiling: 0,
+        }),
+      );
+      // No activity at new level, so generationNeeded=true for both
+      createConcept(
+        makeConcept({
+          id: `helper-throw-${i}`,
+          title: `HelperThrow ${i}`,
+          bloomCeiling: 0,
+        }),
+      );
+      createActivity(
+        makeActivity({
+          id: `act-helper-throw-${i}`,
+          conceptId: `helper-throw-${i}`,
+          bloomLevel: 1,
+        }),
+      );
+    }
+
+    makeSession('session-throw');
+
+    // Seed 8 logs for each concept to trigger advancement
+    for (let i = 1; i <= 2; i++) {
+      for (let j = 0; j < 8; j++) {
+        createActivityLogEntry(
+          makeLog({
+            id: `log-throw-${i}-${j}`,
+            activityId: `act-helper-throw-${i}`,
+            conceptId: `concept-throw-${i}`,
+            bloomLevel: 1,
+            quality: 5,
+            reviewedAt: NOW,
+            sessionId: 'session-throw',
+          }),
+        );
+      }
+    }
+
+    // First call throws, second succeeds
+    generateActivitiesMock
+      .mockRejectedValueOnce(new Error('generation error'))
+      .mockResolvedValueOnce(undefined);
+
+    await triggerPostSessionGeneration('session-throw');
+
+    // Both concepts should have been attempted
+    expect(generateActivitiesMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('empty session (no logs): no calls, no errors', async () => {
+    makeSession('session-empty');
+
+    await expect(
+      triggerPostSessionGeneration('session-empty'),
+    ).resolves.toBeUndefined();
+
+    expect(resetGenerationCycleMock).toHaveBeenCalledOnce();
+    expect(generateActivitiesMock).not.toHaveBeenCalled();
   });
 });

@@ -13,10 +13,12 @@ import {
   getRecentActivityLogs,
   getConceptsAboveBloomCeiling,
   getLogsByConceptAndLevel,
+  getLogsBySession,
   completeActivity,
   type CompleteActivityInput,
 } from './queries.js';
 import { computeMastery, computeBloomCeiling } from './mastery.js';
+import { generateActivities, resetGenerationCycle } from './generator.js';
 import type {
   BloomLevel,
   BloomAdvancement,
@@ -24,6 +26,7 @@ import type {
   CompletionResult,
   SynthesisOpportunity,
 } from './types.js';
+import { logger } from '../logger.js';
 
 // ====================================================================
 // getConceptRecommendations
@@ -293,4 +296,58 @@ export function getSynthesisOpportunities(
   }
 
   return opportunities;
+}
+
+// ====================================================================
+// triggerPostSessionGeneration
+// ====================================================================
+
+/**
+ * After a study session, check each touched concept for Bloom advancement
+ * and queue activity generation for any that advanced to a new level.
+ *
+ * Does NOT end the study session or update the session record.
+ */
+export async function triggerPostSessionGeneration(
+  sessionId: string,
+): Promise<void> {
+  // 1. Reset the rate-limit counter for this generation cycle
+  resetGenerationCycle();
+
+  // 2. Fetch all activity log entries for this session
+  const logs = getLogsBySession(sessionId);
+
+  // 3. Collect unique conceptIds
+  const conceptIds = [...new Set(logs.map((log) => log.conceptId))];
+
+  let checked = 0;
+  let advanced = 0;
+  let queued = 0;
+
+  // 4. Check each concept for advancement
+  for (const conceptId of conceptIds) {
+    checked++;
+    const advancement = checkForAdvancement(conceptId);
+
+    // 5. Trigger generation if advancement requires new activities
+    if (advancement !== null && advancement.generationNeeded) {
+      advanced++;
+      try {
+        await generateActivities(conceptId, advancement.newCeiling as BloomLevel);
+        queued++;
+      } catch (err) {
+        logger.error(
+          { conceptId, err },
+          'Post-session generation failed for concept — continuing',
+        );
+      }
+    } else if (advancement !== null) {
+      advanced++;
+    }
+  }
+
+  logger.info(
+    { sessionId, checked, advanced, queued },
+    `Post-session generation: ${checked} concepts checked, ${advanced} advanced, ${queued} queued for generation`,
+  );
 }
