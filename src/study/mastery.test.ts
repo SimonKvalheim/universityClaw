@@ -158,7 +158,9 @@ describe('computeOverallMastery', () => {
   it('L6-only mastery produces higher overall than L1-only mastery', () => {
     const l6Only: MasteryLevels = { ...zero, L6: MASTERY_THRESHOLD };
     const l1Only: MasteryLevels = { ...zero, L1: MASTERY_THRESHOLD };
-    expect(computeOverallMastery(l6Only)).toBeGreaterThan(computeOverallMastery(l1Only));
+    expect(computeOverallMastery(l6Only)).toBeGreaterThan(
+      computeOverallMastery(l1Only),
+    );
   });
 
   it('caps per-level contribution at 1.0 even when evidence exceeds threshold', () => {

@@ -71,9 +71,9 @@ describe('database migrations', () => {
       expect(chatColNames).toContain('channel');
       expect(chatColNames).toContain('is_group');
 
-      const conceptCols = db.all(
-        sql`PRAGMA table_info(concepts)`,
-      ) as Array<{ name: string }>;
+      const conceptCols = db.all(sql`PRAGMA table_info(concepts)`) as Array<{
+        name: string;
+      }>;
       const conceptColNames = conceptCols.map((c) => c.name);
       expect(conceptColNames).toContain('mastery_L1');
       expect(conceptColNames).toContain('bloom_ceiling');

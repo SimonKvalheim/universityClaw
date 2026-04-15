@@ -8,12 +8,10 @@ import {
   getPendingConcepts,
   getActiveConcepts,
   updateConceptStatus,
-  updateConceptMastery,
   createActivity,
   getActivityById,
   getDueActivities,
   getActivitiesByConceptAndType,
-  updateActivitySM2,
   createActivityLogEntry,
   getLogsByConceptAndLevel,
   getLogsBySession,
@@ -53,11 +51,13 @@ function makeConcept(overrides: Partial<NewConcept> = {}): NewConcept {
   };
 }
 
-function makeActivity(overrides: Partial<NewLearningActivity> = {}): NewLearningActivity {
+function makeActivity(
+  overrides: Partial<NewLearningActivity> = {},
+): NewLearningActivity {
   return {
     id: 'activity-1',
     conceptId: 'concept-1',
-    activityType: 'flashcard',
+    activityType: 'card_review',
     prompt: 'What is test?',
     bloomLevel: 1,
     generatedAt: NOW,
@@ -66,7 +66,9 @@ function makeActivity(overrides: Partial<NewLearningActivity> = {}): NewLearning
   };
 }
 
-function makeSession(overrides: Partial<NewStudySession> = {}): NewStudySession {
+function makeSession(
+  overrides: Partial<NewStudySession> = {},
+): NewStudySession {
   return {
     id: 'session-1',
     startedAt: NOW,
@@ -110,7 +112,9 @@ describe('concept queries', () => {
   it('queries concepts by domain', () => {
     createConcept(makeConcept({ id: 'c-a', title: 'Alpha', domain: 'math' }));
     createConcept(makeConcept({ id: 'c-b', title: 'Beta', domain: 'math' }));
-    createConcept(makeConcept({ id: 'c-c', title: 'Gamma', domain: 'physics' }));
+    createConcept(
+      makeConcept({ id: 'c-c', title: 'Gamma', domain: 'physics' }),
+    );
 
     const math = getConceptsByDomain('math');
     expect(math).toHaveLength(2);
@@ -123,8 +127,12 @@ describe('concept queries', () => {
   });
 
   it('filters pending vs active concepts correctly', () => {
-    createConcept(makeConcept({ id: 'c-pending', title: 'Pending', status: 'pending' }));
-    createConcept(makeConcept({ id: 'c-active', title: 'Active', status: 'active' }));
+    createConcept(
+      makeConcept({ id: 'c-pending', title: 'Pending', status: 'pending' }),
+    );
+    createConcept(
+      makeConcept({ id: 'c-active', title: 'Active', status: 'active' }),
+    );
 
     const pending = getPendingConcepts();
     expect(pending).toHaveLength(1);
@@ -173,7 +181,7 @@ describe('activity queries', () => {
 
     const due = getDueActivities(TODAY);
     expect(due).toHaveLength(2);
-    expect(due[0].id).toBe('a-old');   // earliest first
+    expect(due[0].id).toBe('a-old'); // earliest first
     expect(due[1].id).toBe('a-today');
   });
 
@@ -186,11 +194,29 @@ describe('activity queries', () => {
   it('getActivitiesByConceptAndType filters by concept and activity type', () => {
     createConcept(makeConcept({ id: 'concept-2', title: 'Other Concept' }));
 
-    createActivity(makeActivity({ id: 'a-fc-1', activityType: 'flashcard', conceptId: 'concept-1' }));
-    createActivity(makeActivity({ id: 'a-fc-2', activityType: 'flashcard', conceptId: 'concept-2' }));
-    createActivity(makeActivity({ id: 'a-qa-1', activityType: 'qa', conceptId: 'concept-1' }));
+    createActivity(
+      makeActivity({
+        id: 'a-fc-1',
+        activityType: 'card_review',
+        conceptId: 'concept-1',
+      }),
+    );
+    createActivity(
+      makeActivity({
+        id: 'a-fc-2',
+        activityType: 'card_review',
+        conceptId: 'concept-2',
+      }),
+    );
+    createActivity(
+      makeActivity({
+        id: 'a-qa-1',
+        activityType: 'qa',
+        conceptId: 'concept-1',
+      }),
+    );
 
-    const result = getActivitiesByConceptAndType('concept-1', 'flashcard');
+    const result = getActivitiesByConceptAndType('concept-1', 'card_review');
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('a-fc-1');
   });
@@ -208,12 +234,14 @@ describe('activity log queries', () => {
   });
   afterEach(() => _closeDatabase());
 
-  function makeLogEntry(overrides: Partial<NewActivityLogEntry> = {}): NewActivityLogEntry {
+  function makeLogEntry(
+    overrides: Partial<NewActivityLogEntry> = {},
+  ): NewActivityLogEntry {
     return {
       id: 'log-1',
       activityId: 'activity-1',
       conceptId: 'concept-1',
-      activityType: 'flashcard',
+      activityType: 'card_review',
       bloomLevel: 1,
       quality: 4,
       reviewedAt: NOW,
@@ -244,7 +272,9 @@ describe('activity log queries', () => {
 
   it('queries log entries by session', () => {
     createStudySession(makeSession());
-    createActivityLogEntry(makeLogEntry({ id: 'log-with-session', sessionId: 'session-1' }));
+    createActivityLogEntry(
+      makeLogEntry({ id: 'log-with-session', sessionId: 'session-1' }),
+    );
     createActivityLogEntry(makeLogEntry({ id: 'log-no-session' }));
 
     const sessionLogs = getLogsBySession('session-1');
@@ -287,7 +317,10 @@ describe('session queries', () => {
 
   it('updateStudySession updates partial fields', () => {
     createStudySession(makeSession());
-    updateStudySession('session-1', { endedAt: TOMORROW, activitiesCompleted: 5 });
+    updateStudySession('session-1', {
+      endedAt: TOMORROW,
+      activitiesCompleted: 5,
+    });
 
     const updated = getStudySessionById('session-1');
     expect(updated!.endedAt).toBe(TOMORROW);
@@ -331,8 +364,22 @@ describe('plan queries', () => {
   });
 
   it('getAllStudyPlans lists plans ordered by createdAt desc', () => {
-    createStudyPlan(makePlan({ id: 'plan-old', title: 'Old Plan', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: NOW }));
-    createStudyPlan(makePlan({ id: 'plan-new', title: 'New Plan', createdAt: '2026-04-01T00:00:00.000Z', updatedAt: NOW }));
+    createStudyPlan(
+      makePlan({
+        id: 'plan-old',
+        title: 'Old Plan',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: NOW,
+      }),
+    );
+    createStudyPlan(
+      makePlan({
+        id: 'plan-new',
+        title: 'New Plan',
+        createdAt: '2026-04-01T00:00:00.000Z',
+        updatedAt: NOW,
+      }),
+    );
 
     const plans = getAllStudyPlans();
     expect(plans).toHaveLength(2);

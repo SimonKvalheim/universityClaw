@@ -155,33 +155,6 @@ export function getActivitiesByConceptAndType(
     .all();
 }
 
-export function updateActivitySM2(
-  id: string,
-  sm2Fields: {
-    easeFactor: number;
-    intervalDays: number;
-    repetitions: number;
-    dueAt: string;
-    lastQuality: number;
-  },
-  quality: number,
-  masteryState: MasteryState,
-): void {
-  getDb()
-    .update(schema.learningActivities)
-    .set({
-      easeFactor: sm2Fields.easeFactor,
-      intervalDays: sm2Fields.intervalDays,
-      repetitions: sm2Fields.repetitions,
-      dueAt: sm2Fields.dueAt,
-      lastQuality: quality,
-      masteryState,
-      lastReviewed: new Date().toISOString(),
-    })
-    .where(eq(schema.learningActivities.id, id))
-    .run();
-}
-
 // ====================================================================
 // Activity Log
 // ====================================================================
@@ -311,23 +284,14 @@ export function addConceptsToPlan(
     sortOrder: i,
   }));
 
-  if (conceptIds.length > 1) {
-    getDb().transaction((tx) => {
-      for (const row of rows) {
-        tx
-          .insert(schema.studyPlanConcepts)
-          .values(row)
-          .onConflictDoNothing()
-          .run();
-      }
-    });
-  } else {
-    getDb()
-      .insert(schema.studyPlanConcepts)
-      .values(rows[0])
-      .onConflictDoNothing()
-      .run();
-  }
+  getDb().transaction((tx) => {
+    for (const row of rows) {
+      tx.insert(schema.studyPlanConcepts)
+        .values(row)
+        .onConflictDoNothing()
+        .run();
+    }
+  });
 }
 
 export function getPlanConcepts(planId: string): Concept[] {
@@ -402,6 +366,8 @@ export interface CompleteActivityResult {
 export function completeActivity(
   input: CompleteActivityInput,
 ): CompleteActivityResult {
+  const now = new Date().toISOString();
+
   return getDb().transaction((tx) => {
     // Step 1: get activity
     const activity = tx
@@ -437,7 +403,7 @@ export function completeActivity(
         intervalDays: sm2Result.intervalDays,
         repetitions: sm2Result.repetitions,
         dueAt: newDueAt,
-        lastReviewed: new Date().toISOString(),
+        lastReviewed: now,
         lastQuality: input.quality,
         masteryState,
       })
@@ -463,7 +429,7 @@ export function completeActivity(
         methodUsed: input.methodUsed ?? null,
         surface: input.surface ?? null,
         sessionId: input.sessionId ?? null,
-        reviewedAt: new Date().toISOString(),
+        reviewedAt: now,
       })
       .run();
 
@@ -502,7 +468,7 @@ export function completeActivity(
         masteryL6: levels.L6,
         masteryOverall: overall,
         bloomCeiling,
-        lastActivityAt: new Date().toISOString(),
+        lastActivityAt: now,
       })
       .where(eq(schema.concepts.id, activity.conceptId))
       .run();

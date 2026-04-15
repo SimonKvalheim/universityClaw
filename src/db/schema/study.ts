@@ -1,5 +1,10 @@
 import {
-  index, integer, primaryKey, real, sqliteTable, text,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
 } from 'drizzle-orm/sqlite-core';
 
 // ====================================================================
@@ -46,8 +51,12 @@ export const concepts = sqliteTable(
 export const conceptPrerequisites = sqliteTable(
   'concept_prerequisites',
   {
-    conceptId: text('concept_id').notNull().references(() => concepts.id),
-    prerequisiteId: text('prerequisite_id').notNull().references(() => concepts.id),
+    conceptId: text('concept_id')
+      .notNull()
+      .references(() => concepts.id),
+    prerequisiteId: text('prerequisite_id')
+      .notNull()
+      .references(() => concepts.id),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.conceptId, table.prerequisiteId] }),
@@ -65,14 +74,14 @@ export const studyPlans = sqliteTable('study_plans', {
   course: text('course'),
   strategy: text('strategy').notNull().default('open'),
 
-  learningObjectives: text('learning_objectives'),  // JSON array
+  learningObjectives: text('learning_objectives'), // JSON array
   desiredOutcomes: text('desired_outcomes'),
 
   implementationIntention: text('implementation_intention'),
   obstacle: text('obstacle'),
   studySchedule: text('study_schedule'),
 
-  config: text('config'),  // JSON
+  config: text('config'), // JSON
   checkpointIntervalDays: integer('checkpoint_interval_days').default(14),
   nextCheckpointAt: text('next_checkpoint_at'),
   createdAt: text('created_at').notNull(),
@@ -87,8 +96,12 @@ export const studyPlans = sqliteTable('study_plans', {
 export const studyPlanConcepts = sqliteTable(
   'study_plan_concepts',
   {
-    planId: text('plan_id').notNull().references(() => studyPlans.id),
-    conceptId: text('concept_id').notNull().references(() => concepts.id),
+    planId: text('plan_id')
+      .notNull()
+      .references(() => studyPlans.id),
+    conceptId: text('concept_id')
+      .notNull()
+      .references(() => concepts.id),
     targetBloom: integer('target_bloom').default(6),
     sortOrder: integer('sort_order').default(0),
   },
@@ -108,7 +121,7 @@ export const studySessions = sqliteTable('study_sessions', {
   sessionType: text('session_type').notNull(),
   planId: text('plan_id').references(() => studyPlans.id),
 
-  preConfidence: text('pre_confidence'),    // JSON
+  preConfidence: text('pre_confidence'), // JSON
   postReflection: text('post_reflection'),
   calibrationScore: real('calibration_score'),
 
@@ -125,7 +138,9 @@ export const learningActivities = sqliteTable(
   'learning_activities',
   {
     id: text('id').primaryKey(),
-    conceptId: text('concept_id').notNull().references(() => concepts.id),
+    conceptId: text('concept_id')
+      .notNull()
+      .references(() => concepts.id),
 
     activityType: text('activity_type').notNull(),
     prompt: text('prompt').notNull(),
@@ -163,8 +178,12 @@ export const learningActivities = sqliteTable(
 export const activityConcepts = sqliteTable(
   'activity_concepts',
   {
-    activityId: text('activity_id').notNull().references(() => learningActivities.id),
-    conceptId: text('concept_id').notNull().references(() => concepts.id),
+    activityId: text('activity_id')
+      .notNull()
+      .references(() => learningActivities.id),
+    conceptId: text('concept_id')
+      .notNull()
+      .references(() => concepts.id),
     role: text('role').default('related'),
   },
   (table) => ({
@@ -180,8 +199,12 @@ export const activityLog = sqliteTable(
   'activity_log',
   {
     id: text('id').primaryKey(),
-    activityId: text('activity_id').notNull().references(() => learningActivities.id),
-    conceptId: text('concept_id').notNull(),
+    activityId: text('activity_id')
+      .notNull()
+      .references(() => learningActivities.id),
+    conceptId: text('concept_id')
+      .notNull()
+      .references(() => concepts.id),
     activityType: text('activity_type').notNull(),
     bloomLevel: integer('bloom_level').notNull(),
 

@@ -2,16 +2,16 @@
 // Spec: Section 4.1 — implements the SuperMemo 2 scheduling formula exactly.
 
 export interface SM2Input {
-  quality: number;      // 0–5 rating of recall quality
-  repetitions: number;  // number of successful repetitions so far
-  easeFactor: number;   // current ease factor (default 2.5)
+  quality: number; // 0–5 rating of recall quality
+  repetitions: number; // number of successful repetitions so far
+  easeFactor: number; // current ease factor (default 2.5)
   intervalDays: number; // current inter-repetition interval in days
 }
 
 export interface SM2Result {
-  easeFactor: number;   // updated ease factor
+  easeFactor: number; // updated ease factor
   intervalDays: number; // next interval in days
-  repetitions: number;  // updated repetition count
+  repetitions: number; // updated repetition count
 }
 
 /**
@@ -69,7 +69,10 @@ export function sm2(input: SM2Input): SM2Result {
  * @param fromDate     - Base date in 'YYYY-MM-DD' format (defaults to today)
  * @returns Due date in 'YYYY-MM-DD' format
  */
-export function computeDueDate(intervalDays: number, fromDate?: string): string {
+export function computeDueDate(
+  intervalDays: number,
+  fromDate?: string,
+): string {
   const base = fromDate ? new Date(`${fromDate}T00:00:00`) : new Date();
   // Normalise to midnight local time when no fromDate provided
   if (!fromDate) {

@@ -36,7 +36,7 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 function daysSince(reviewedAt: string, now: Date): number {
   const reviewed = new Date(reviewedAt).getTime();
   const elapsed = now.getTime() - reviewed;
-  return elapsed / MS_PER_DAY;
+  return Math.max(0, elapsed / MS_PER_DAY);
 }
 
 function decayFactor(days: number): number {

@@ -3,15 +3,25 @@
 
 /** Activity types — spec Section 3.2 */
 export type ActivityType =
-  | 'card_review' | 'elaboration' | 'self_explain' | 'concept_map'
-  | 'comparison' | 'case_analysis' | 'synthesis' | 'socratic';
+  | 'card_review'
+  | 'elaboration'
+  | 'self_explain'
+  | 'concept_map'
+  | 'comparison'
+  | 'case_analysis'
+  | 'synthesis'
+  | 'socratic';
 
 export type CardType = 'cloze' | 'basic' | 'reversed';
 export type BloomLevel = 1 | 2 | 3 | 4 | 5 | 6;
 export type MasteryState = 'new' | 'learning' | 'reviewing' | 'mastered';
 export type EvaluationMethod = 'self_rated' | 'ai_rated' | 'hybrid';
 export type SessionType = 'daily' | 'weekly' | 'monthly' | 'free';
-export type PlanStrategy = 'open' | 'exam-prep' | 'weekly-review' | 'exploration';
+export type PlanStrategy =
+  | 'open'
+  | 'exam-prep'
+  | 'weekly-review'
+  | 'exploration';
 export type Surface = 'dashboard_chat' | 'dashboard_ui' | 'telegram';
 export type ConceptStatus = 'pending' | 'active' | 'skipped' | 'archived';
 export type ActivityAuthor = 'system' | 'student';
@@ -20,22 +30,26 @@ export type ActivityAuthor = 'system' | 'student';
 
 /** Per-Bloom's-level mastery evidence */
 export interface MasteryLevels {
-  L1: number; L2: number; L3: number;
-  L4: number; L5: number; L6: number;
+  L1: number;
+  L2: number;
+  L3: number;
+  L4: number;
+  L5: number;
+  L6: number;
 }
 
 /** Full mastery computation result */
 export interface MasteryResult {
   levels: MasteryLevels;
-  overall: number;       // 0.0 - 1.0
-  bloomCeiling: number;  // 0-6 (D3: highest mastered level, 0 = none)
+  overall: number; // 0.0 - 1.0
+  bloomCeiling: number; // 0-6 (D3: highest mastered level, 0 = none)
 }
 
 /** Single activity log entry as mastery computation input */
 export interface MasteryActivityInput {
   bloomLevel: BloomLevel;
-  quality: number;       // 0-5
-  reviewedAt: string;    // ISO datetime
+  quality: number; // 0-5
+  reviewedAt: string; // ISO datetime
 }
 
 // === Forward-declared types for later sprints ===
@@ -54,7 +68,10 @@ export interface GeneratedActivity {
 /** Session builder output (S3 will expand) */
 export interface SessionComposition {
   sessionId: string;
-  activities: Array<{ activityId: string; block: 'new' | 'review' | 'stretch' }>;
+  activities: Array<{
+    activityId: string;
+    block: 'new' | 'review' | 'stretch';
+  }>;
   estimatedMinutes: number;
 }
 
