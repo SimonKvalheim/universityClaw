@@ -651,9 +651,14 @@ export function getStreakDays(): number {
   let streak = 0;
   const msPerDay = 86400000;
   const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime();
+  const firstRowMs = new Date(rows[0].day).getTime();
+
+  // Allow most recent day to be today or yesterday (streak shouldn't reset before studying today)
+  const offset = firstRowMs === todayMs ? 0 : firstRowMs === todayMs - msPerDay ? 1 : -1;
+  if (offset === -1) return 0; // most recent day is older than yesterday
 
   for (let i = 0; i < rows.length; i++) {
-    const expectedMs = todayMs - i * msPerDay;
+    const expectedMs = todayMs - (i + offset) * msPerDay;
     const rowMs = new Date(rows[i].day).getTime();
     if (rowMs !== expectedMs) break;
     streak++;

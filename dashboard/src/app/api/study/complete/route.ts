@@ -4,9 +4,16 @@ import { requestGeneration } from '@/lib/generation-trigger';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    if (typeof body.activityId !== 'string' || !body.activityId) {
+      return Response.json({ error: 'activityId is required' }, { status: 400 });
+    }
+    const quality = Number(body.quality);
+    if (!Number.isInteger(quality) || quality < 0 || quality > 5) {
+      return Response.json({ error: 'quality must be an integer 0-5' }, { status: 400 });
+    }
     const result = processCompletion({
       activityId: body.activityId,
-      quality: body.quality,
+      quality,
       sessionId: body.sessionId,
       responseText: body.responseText,
       responseTimeMs: body.responseTimeMs,

@@ -302,6 +302,18 @@ export default function StudySessionPage() {
       }),
     });
 
+    // Track skip in session stats (quality = 0)
+    setSessionStats((prev) => {
+      const newQualities = [...prev.qualities, 0];
+      const avg = newQualities.reduce((s, q) => s + q, 0) / newQualities.length;
+      return {
+        activitiesCompleted: prev.activitiesCompleted + 1,
+        avgQuality: avg,
+        totalTimeMs: Date.now() - sessionStartTime.current,
+        qualities: newQualities,
+      };
+    });
+
     advanceToNext();
   }
 
@@ -639,10 +651,11 @@ export default function StudySessionPage() {
               if (predicted === undefined) return null;
 
               // Compute actual avg quality for this concept
+              // Map each activity to its quality by original index, then filter to this concept
               const logs = flatActivities
-                .filter((fa) => fa.activity.conceptId === conceptId)
-                .map((_, i) => sessionStats.qualities[i])
-                .filter((q): q is number => q !== undefined);
+                .map((fa, idx) => ({ cid: fa.activity.conceptId, quality: sessionStats.qualities[idx] }))
+                .filter((entry) => entry.cid === conceptId && entry.quality !== undefined)
+                .map((entry) => entry.quality as number);
 
               const actualAvg =
                 logs.length > 0
