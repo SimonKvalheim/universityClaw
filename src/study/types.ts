@@ -52,33 +52,82 @@ export interface MasteryActivityInput {
   reviewedAt: string; // ISO datetime
 }
 
-// === Forward-declared types for later sprints ===
-// Stubs so downstream code can reference them. S3 will flesh these out.
+// === S3 types ===
 
-/** Generator agent output (S3 will expand) */
+/** Generator agent output */
 export interface GeneratedActivity {
   activityType: ActivityType;
   prompt: string;
   referenceAnswer: string;
   bloomLevel: BloomLevel;
+  difficultyEstimate?: number;
   cardType?: CardType;
   sourceNotePath?: string;
+  sourceChunkHash?: string;
+  relatedConceptIds?: string[];
 }
 
-/** Session builder output (S3 will expand) */
+/** A block of activities within a session (new / review / stretch) */
+export interface SessionBlock {
+  type: 'new' | 'review' | 'stretch';
+  activities: SessionActivity[];
+}
+
+/** A single schedulable activity within a session block */
+export interface SessionActivity {
+  activityId: string;
+  conceptId: string;
+  conceptTitle: string;
+  domain: string | null;
+  activityType: ActivityType;
+  bloomLevel: BloomLevel;
+}
+
+/** Session builder output */
 export interface SessionComposition {
-  sessionId: string;
-  activities: Array<{
-    activityId: string;
-    block: 'new' | 'review' | 'stretch';
-  }>;
+  blocks: SessionBlock[];
+  totalActivities: number;
   estimatedMinutes: number;
+  domainsCovered: string[];
 }
 
-/** Bloom advancement check result (S3 will expand) */
+/** Options controlling session composition */
+export interface SessionOptions {
+  targetActivities?: number; // default 20
+  domainFocus?: string;      // filter to specific domain
+  maxMinutes?: number;       // default 30
+}
+
+/** Bloom advancement check result */
 export interface BloomAdvancement {
   conceptId: string;
+  conceptTitle: string;
   previousCeiling: number;
   newCeiling: number;
   generationNeeded: boolean;
+}
+
+/** Recommended activity mix for a concept */
+export interface ActivityRecommendation {
+  activityType: ActivityType;
+  bloomLevel: BloomLevel;
+  count: number;
+}
+
+/** Full result from completing an activity (engine-level) */
+export interface CompletionResult {
+  logEntryId: string;
+  newDueAt: string;
+  advancement: BloomAdvancement | null;
+  generationNeeded: boolean;
+  deEscalation: string | null;
+}
+
+/** A synthesis opportunity detected across concepts */
+export interface SynthesisOpportunity {
+  type: 'within-subdomain' | 'within-domain' | 'cross-domain';
+  domain: string;
+  subdomain?: string;
+  concepts: Array<{ id: string; title: string; bloomCeiling: number }>;
+  automatic: boolean; // true for within-subdomain/domain, false for cross-domain
 }
