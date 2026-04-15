@@ -30,12 +30,18 @@ groups/*
 !groups/main/
 !groups/global/
 !groups/review_agent/
+!groups/study/
+!groups/study-generator/
 groups/main/*
 groups/global/*
 groups/review_agent/*
+groups/study/*
+groups/study-generator/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 !groups/review_agent/CLAUDE.md
+!groups/study/CLAUDE.md
+!groups/study-generator/CLAUDE.md
 
 # ------ Secrets & credentials ------
 .env
