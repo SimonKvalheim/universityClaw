@@ -267,6 +267,7 @@ export interface CompleteActivityInput {
 export interface CompleteActivityResult {
   logEntryId: string;
   newDueAt: string;
+  conceptId: string;
   bloomCeilingBefore: number;
   bloomCeilingAfter: number;
 }
@@ -412,7 +413,7 @@ export function completeActivity(input: CompleteActivityInput): CompleteActivity
         .run();
     }
 
-    return { logEntryId, newDueAt, bloomCeilingBefore, bloomCeilingAfter };
+    return { logEntryId, newDueAt, conceptId: activity.concept_id, bloomCeilingBefore, bloomCeilingAfter };
   });
 }
 
@@ -427,18 +428,8 @@ export function completeActivity(input: CompleteActivityInput): CompleteActivity
 export function processCompletion(input: CompleteActivityInput): CompletionResult {
   const db = getDb();
 
-  // Look up activity first to get concept_id (throws if not found)
-  const activity = db
-    .select()
-    .from(learning_activities)
-    .where(eq(learning_activities.id, input.activityId))
-    .get();
-  if (!activity) throw new Error(`Activity not found: ${input.activityId}`);
-
-  const conceptId = activity.concept_id;
-
   // Delegate to completeActivity — runs full SM-2 + mastery update atomically
-  const { logEntryId, newDueAt, bloomCeilingBefore, bloomCeilingAfter } =
+  const { logEntryId, newDueAt, conceptId, bloomCeilingBefore, bloomCeilingAfter } =
     completeActivity(input);
 
   let advancement: CompletionResult['advancement'] = null;
