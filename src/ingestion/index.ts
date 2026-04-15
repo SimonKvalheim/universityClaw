@@ -593,7 +593,8 @@ export class IngestionPipeline {
       const discovered = discoverConcepts(promotedPaths, this.vaultDir);
       let inserted = 0;
       for (const concept of discovered) {
-        const existing = getConceptByVaultPath(concept.vaultNotePath!);
+        if (!concept.vaultNotePath) continue;
+        const existing = getConceptByVaultPath(concept.vaultNotePath);
         if (!existing) {
           createConcept(concept);
           inserted++;

@@ -7,7 +7,7 @@
  * mapped to camelCase response interfaces.
  */
 
-import { eq, and, lte, asc, desc, count, sql } from 'drizzle-orm';
+import { eq, and, lte, asc, desc, count, sql, inArray } from 'drizzle-orm';
 import { getDb } from './db/index';
 import { concepts, learning_activities } from './db/schema';
 
@@ -154,16 +154,12 @@ export function approveConcepts(ids: string[]): number {
   if (ids.length === 0) return 0;
   const db = getDb();
 
-  let changed = 0;
-  for (const id of ids) {
-    const result = db
-      .update(concepts)
-      .set({ status: 'active' })
-      .where(and(eq(concepts.id, id), eq(concepts.status, 'pending')))
-      .run();
-    changed += result.changes;
-  }
-  return changed;
+  const result = db
+    .update(concepts)
+    .set({ status: 'active' })
+    .where(and(inArray(concepts.id, ids), eq(concepts.status, 'pending')))
+    .run();
+  return result.changes;
 }
 
 /**
