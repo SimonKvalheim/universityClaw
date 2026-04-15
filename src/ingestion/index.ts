@@ -48,6 +48,8 @@ import { ZoteroWatcher } from './zotero-watcher.js';
 import { ZoteroWriteBack } from './zotero-writeback.js';
 import { ZoteroLocalClient, ZoteroWebClient } from './zotero-client.js';
 import { ZoteroMetadata } from './types.js';
+import { discoverConcepts } from '../study/concept-discovery.js';
+import { createConcept, getConceptByVaultPath } from '../study/queries.js';
 
 const RATE_LIMIT_PATTERNS = [
   /rate.?limit/i,
@@ -584,6 +586,31 @@ export class IngestionPipeline {
           'Citation linking failed — continuing without it',
         );
       }
+    }
+
+    // --- Concept discovery (non-blocking) ---
+    try {
+      const discovered = discoverConcepts(promotedPaths, this.vaultDir);
+      let inserted = 0;
+      for (const concept of discovered) {
+        if (!concept.vaultNotePath) continue;
+        const existing = getConceptByVaultPath(concept.vaultNotePath);
+        if (!existing) {
+          createConcept(concept);
+          inserted++;
+        }
+      }
+      if (inserted > 0) {
+        logger.info(
+          { jobId: job.id, discovered: discovered.length, inserted },
+          `study: Discovered ${inserted} new concept(s)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { jobId: job.id, err },
+        'Concept discovery failed — continuing without it',
+      );
     }
 
     // Move source file to processed/ (skip for Zotero — file is managed by Zotero)

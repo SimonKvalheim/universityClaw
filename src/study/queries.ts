@@ -49,6 +49,14 @@ export function getConceptById(id: string): Concept | undefined {
     .get();
 }
 
+export function getConceptByVaultPath(vaultNotePath: string): Concept | undefined {
+  return getDb()
+    .select()
+    .from(schema.concepts)
+    .where(eq(schema.concepts.vaultNotePath, vaultNotePath))
+    .get();
+}
+
 export function getConceptsByDomain(domain: string): Concept[] {
   return getDb()
     .select()
