@@ -15,12 +15,17 @@ import {
   getConceptById,
   batchCreateActivities,
   createActivityConceptLinks,
+  getRecentActivityLogs,
+  getActivitiesByConcept,
+  getConceptsByDomain,
+  getLogsByConceptAndLevel,
   type NewLearningActivity,
 } from './study/queries.js';
 import { computeDueDate } from './study/sm2.js';
-import type { GeneratedActivity, ActivityType } from './study/types.js';
+import type { GeneratedActivity, ActivityType, BloomLevel } from './study/types.js';
 import { generateActivities } from './study/generator.js';
-import { triggerPostSessionGeneration } from './study/engine.js';
+import { processCompletion, triggerPostSessionGeneration } from './study/engine.js';
+import { computeMastery, computeBloomCeiling, computeOverallMastery } from './study/mastery.js';
 import { RegisteredGroup } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -298,6 +303,18 @@ export async function processTaskIpc(
     bloomLevel?: number;
     // For study_post_session_generation
     sessionId?: string;
+    // For study_complete
+    activityId?: string;
+    quality?: number;
+    responseText?: string;
+    responseTimeMs?: number;
+    aiFeedback?: string;
+    surface?: string;
+    // For study_concept_status
+    domain?: string;
+    // For study_suggest_activity
+    activityType?: string;
+    author?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -738,6 +755,204 @@ export async function processTaskIpc(
           'study_post_session_generation: triggerPostSessionGeneration threw',
         );
       }
+      break;
+    }
+
+    case 'study_complete': {
+      if (!data.activityId || typeof data.activityId !== 'string') {
+        logger.error(
+          { sourceGroup },
+          'study_complete: missing or invalid activityId',
+        );
+        break;
+      }
+      if (
+        data.quality === undefined ||
+        !Number.isInteger(data.quality) ||
+        data.quality < 0 ||
+        data.quality > 5
+      ) {
+        logger.error(
+          { sourceGroup, quality: data.quality },
+          'study_complete: missing or invalid quality (must be integer 0-5)',
+        );
+        break;
+      }
+      try {
+        const result = processCompletion({
+          activityId: data.activityId,
+          quality: data.quality,
+          sessionId: data.sessionId,
+          responseText: data.responseText,
+          responseTimeMs: data.responseTimeMs,
+          evaluationMethod: data.aiFeedback ? 'ai_evaluated' : 'self_rated',
+          aiQuality: data.aiFeedback ? data.quality : undefined,
+          aiFeedback: data.aiFeedback,
+          surface: data.surface ?? 'dashboard_chat',
+        });
+        if (result.generationNeeded && result.advancement) {
+          try {
+            await generateActivities(
+              result.advancement.conceptId,
+              result.advancement.newCeiling as BloomLevel,
+            );
+          } catch (err) {
+            logger.error(
+              { err, conceptId: result.advancement.conceptId },
+              'study_complete: generateActivities threw',
+            );
+          }
+        }
+        logger.info(
+          `study_complete: activityId=${data.activityId}, quality=${data.quality}, advancement=${result.advancement ? 'yes' : 'no'}`,
+        );
+      } catch (err) {
+        logger.error(
+          { err, activityId: data.activityId },
+          'study_complete: processCompletion threw',
+        );
+      }
+      break;
+    }
+
+    case 'study_concept_status': {
+      if (!data.conceptId && !data.domain) {
+        logger.warn(
+          { sourceGroup },
+          'study_concept_status: neither conceptId nor domain provided',
+        );
+        break;
+      }
+      const ipcBaseDir = path.join(DATA_DIR, 'ipc');
+      const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+      fs.mkdirSync(responsesDir, { recursive: true });
+      const responseFile = path.join(
+        responsesDir,
+        `concept-status-${Date.now()}.json`,
+      );
+
+      if (data.conceptId) {
+        const concept = getConceptById(data.conceptId);
+        if (!concept) {
+          logger.warn(
+            { conceptId: data.conceptId, sourceGroup },
+            'study_concept_status: concept not found',
+          );
+          break;
+        }
+        const recentLogs = getRecentActivityLogs(data.conceptId, 10);
+        const masteryInput = recentLogs.map((log) => ({
+          bloomLevel: log.bloomLevel as BloomLevel,
+          quality: log.quality,
+          reviewedAt: log.reviewedAt,
+        }));
+        const levels = computeMastery(masteryInput);
+        const bloomCeiling = computeBloomCeiling(levels);
+        const overallMastery = computeOverallMastery(levels);
+        fs.writeFileSync(
+          responseFile,
+          JSON.stringify({
+            type: 'concept_status',
+            concept,
+            recentLogs,
+            masteryLevels: levels,
+            bloomCeiling,
+            overallMastery,
+          }),
+        );
+      } else if (data.domain) {
+        const concepts = getConceptsByDomain(data.domain);
+        const summaries = concepts.map((concept) => {
+          const allLogs = getLogsByConceptAndLevel(concept.id);
+          const masteryInput = allLogs.map((log) => ({
+            bloomLevel: log.bloomLevel as BloomLevel,
+            quality: log.quality,
+            reviewedAt: log.reviewedAt,
+          }));
+          const levels = computeMastery(masteryInput);
+          const bloomCeiling = computeBloomCeiling(levels);
+          const overallMastery = computeOverallMastery(levels);
+          return { concept, masteryLevels: levels, bloomCeiling, overallMastery };
+        });
+        fs.writeFileSync(
+          responseFile,
+          JSON.stringify({ type: 'domain_status', domain: data.domain, summaries }),
+        );
+      }
+      break;
+    }
+
+    case 'study_suggest_activity': {
+      const VALID_SUGGEST_TYPES: Set<string> = new Set<ActivityType>([
+        'card_review',
+        'elaboration',
+        'self_explain',
+        'concept_map',
+        'comparison',
+        'case_analysis',
+        'synthesis',
+        'socratic',
+      ]);
+
+      if (
+        !data.conceptId ||
+        !data.activityType ||
+        !data.prompt ||
+        data.bloomLevel === undefined
+      ) {
+        logger.error(
+          { sourceGroup },
+          'study_suggest_activity: missing required fields (conceptId, activityType, prompt, bloomLevel)',
+        );
+        break;
+      }
+
+      if (!VALID_SUGGEST_TYPES.has(data.activityType)) {
+        logger.error(
+          { activityType: data.activityType, sourceGroup },
+          'study_suggest_activity: invalid activityType',
+        );
+        break;
+      }
+
+      if (
+        !Number.isInteger(data.bloomLevel) ||
+        data.bloomLevel < 1 ||
+        data.bloomLevel > 6
+      ) {
+        logger.error(
+          { bloomLevel: data.bloomLevel, sourceGroup },
+          'study_suggest_activity: bloomLevel must be integer 1-6',
+        );
+        break;
+      }
+
+      const suggestActivity: NewLearningActivity = {
+        id: crypto.randomUUID(),
+        conceptId: data.conceptId,
+        activityType: data.activityType as ActivityType,
+        prompt: data.prompt,
+        bloomLevel: data.bloomLevel,
+        author: (data.author ?? 'student') as 'student' | 'system',
+        referenceAnswer: '',
+        difficultyEstimate: 5,
+        generatedAt: new Date().toISOString(),
+        dueAt: new Date().toISOString().split('T')[0],
+        easeFactor: 2.5,
+        intervalDays: 1,
+        repetitions: 0,
+        masteryState: 'new',
+        cardType: null,
+        sourceNotePath: null,
+        sourceChunkHash: null,
+      };
+
+      batchCreateActivities([suggestActivity]);
+      createActivityConceptLinks(suggestActivity.id as string, [data.conceptId]);
+
+      logger.info(
+        `study_suggest_activity: conceptId=${data.conceptId}, type=${data.activityType}, bloomLevel=${data.bloomLevel}`,
+      );
       break;
     }
 
