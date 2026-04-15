@@ -22,10 +22,21 @@ import {
   type NewLearningActivity,
 } from './study/queries.js';
 import { computeDueDate } from './study/sm2.js';
-import type { GeneratedActivity, ActivityType, BloomLevel } from './study/types.js';
+import type {
+  GeneratedActivity,
+  ActivityType,
+  BloomLevel,
+} from './study/types.js';
 import { generateActivities } from './study/generator.js';
-import { processCompletion, triggerPostSessionGeneration } from './study/engine.js';
-import { computeMastery, computeBloomCeiling, computeOverallMastery } from './study/mastery.js';
+import {
+  processCompletion,
+  triggerPostSessionGeneration,
+} from './study/engine.js';
+import {
+  computeMastery,
+  computeBloomCeiling,
+  computeOverallMastery,
+} from './study/mastery.js';
 import { RegisteredGroup } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -872,11 +883,20 @@ export async function processTaskIpc(
           const levels = computeMastery(masteryInput);
           const bloomCeiling = computeBloomCeiling(levels);
           const overallMastery = computeOverallMastery(levels);
-          return { concept, masteryLevels: levels, bloomCeiling, overallMastery };
+          return {
+            concept,
+            masteryLevels: levels,
+            bloomCeiling,
+            overallMastery,
+          };
         });
         fs.writeFileSync(
           responseFile,
-          JSON.stringify({ type: 'domain_status', domain: data.domain, summaries }),
+          JSON.stringify({
+            type: 'domain_status',
+            domain: data.domain,
+            summaries,
+          }),
         );
       }
       break;
@@ -948,7 +968,9 @@ export async function processTaskIpc(
       };
 
       batchCreateActivities([suggestActivity]);
-      createActivityConceptLinks(suggestActivity.id as string, [data.conceptId]);
+      createActivityConceptLinks(suggestActivity.id as string, [
+        data.conceptId,
+      ]);
 
       logger.info(
         `study_suggest_activity: conceptId=${data.conceptId}, type=${data.activityType}, bloomLevel=${data.bloomLevel}`,

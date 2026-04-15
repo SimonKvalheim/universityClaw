@@ -280,7 +280,10 @@ function findGroupForJid(chatJid: string): RegisteredGroup | undefined {
   ) {
     return registeredGroups[REVIEW_AGENT_JID];
   }
-  if (chatJid.startsWith(WEB_STUDY_PREFIX) && registeredGroups[STUDY_AGENT_JID]) {
+  if (
+    chatJid.startsWith(WEB_STUDY_PREFIX) &&
+    registeredGroups[STUDY_AGENT_JID]
+  ) {
     return registeredGroups[STUDY_AGENT_JID];
   }
   return undefined;
@@ -336,7 +339,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     group.folder,
     GROUPS_DIR,
   );
-  const prompt = reviewContext + studyContext + formatMessages(missedMessages, TIMEZONE);
+  const prompt =
+    reviewContext + studyContext + formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -740,14 +744,7 @@ async function main(): Promise<void> {
             readonly: true,
           },
         ],
-        allowedTools: [
-          'Bash',
-          'Read',
-          'Write',
-          'Edit',
-          'Glob',
-          'Grep',
-        ],
+        allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'],
       },
     });
   }

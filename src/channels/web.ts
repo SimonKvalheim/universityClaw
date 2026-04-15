@@ -114,7 +114,10 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     });
   }
 
-  function handleStudyMessage(req: http.IncomingMessage, res: http.ServerResponse) {
+  function handleStudyMessage(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) {
     let body = '';
     let size = 0;
     let aborted = false;
@@ -132,7 +135,10 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     req.on('end', () => {
       if (aborted) return;
       try {
-        const parsed = JSON.parse(body) as { sessionId?: string; text?: string };
+        const parsed = JSON.parse(body) as {
+          sessionId?: string;
+          text?: string;
+        };
         if (!parsed.sessionId || !parsed.text) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Missing sessionId or text' }));
@@ -265,14 +271,18 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     }
 
     // GET /study-stream/:sessionId (UUID format only)
-    const studyStreamMatch = url.pathname.match(/^\/study-stream\/([a-f0-9-]{36})$/);
+    const studyStreamMatch = url.pathname.match(
+      /^\/study-stream\/([a-f0-9-]{36})$/,
+    );
     if (req.method === 'GET' && studyStreamMatch) {
       handleStudySSE(req, res, studyStreamMatch[1]);
       return;
     }
 
     // POST /study-close/:sessionId — signal the study session container to shut down
-    const studyCloseMatch = url.pathname.match(/^\/study-close\/([a-f0-9-]{36})$/);
+    const studyCloseMatch = url.pathname.match(
+      /^\/study-close\/([a-f0-9-]{36})$/,
+    );
     if (req.method === 'POST' && studyCloseMatch) {
       const sessionId = studyCloseMatch[1];
       opts.onStudyClosed?.(sessionId);
@@ -313,7 +323,9 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     },
 
     async sendMessage(jid: string, text: string) {
-      const id = jid.startsWith(STUDY_PREFIX) ? jid.replace(STUDY_PREFIX, '') : jid.replace(JID_PREFIX, '');
+      const id = jid.startsWith(STUDY_PREFIX)
+        ? jid.replace(STUDY_PREFIX, '')
+        : jid.replace(JID_PREFIX, '');
 
       // Push to SSE clients
       const clients = sseClients.get(id);
