@@ -250,6 +250,21 @@ export function validateDrafts(
         file: conceptFile,
       });
     }
+
+    if (!fm.domain) {
+      warnings.push({
+        check: 'concept-domain',
+        message: `Concept note "${conceptFile}" is missing "domain" frontmatter field. Add a broad knowledge area (e.g., "Knowledge Management", "Cognitive Psychology").`,
+        file: conceptFile,
+      });
+    }
+    if (!fm.subdomain) {
+      warnings.push({
+        check: 'concept-subdomain',
+        message: `Concept note "${conceptFile}" is missing "subdomain" frontmatter field. Add a specific topic area within the domain.`,
+        file: conceptFile,
+      });
+    }
   }
 
   // --- Quality warnings (don't block promotion) ---
