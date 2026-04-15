@@ -8,6 +8,20 @@
       "when": 1776197946601,
       "tag": "0000_glamorous_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776243235707,
+      "tag": "0001_outstanding_loki",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776245600959,
+      "tag": "0002_vengeful_kat_farrell",
+      "breakpoints": true
     }
   ]
 }
