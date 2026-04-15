@@ -670,3 +670,25 @@ export function getLogsBySession(sessionId: string): LogRow[] {
     .orderBy(asc(activity_log.reviewed_at))
     .all();
 }
+
+/**
+ * Most recent activity_log entry for a given activityId and evaluation method.
+ * Used by the AI evaluation polling endpoint to detect when the agent has
+ * written back an ai_evaluated result for a specific activity.
+ */
+export function getLogByActivityIdAndMethod(
+  activityId: string,
+  method: string,
+): LogRow | undefined {
+  return getDb()
+    .select()
+    .from(activity_log)
+    .where(
+      and(
+        eq(activity_log.activity_id, activityId),
+        eq(activity_log.evaluation_method, method),
+      ),
+    )
+    .orderBy(desc(activity_log.reviewed_at))
+    .get();
+}
