@@ -8,13 +8,18 @@ import {
   getPendingConcepts,
   getActiveConcepts,
   updateConceptStatus,
+  getConceptsAboveBloomCeiling,
   createActivity,
   getActivityById,
   getDueActivities,
   getActivitiesByConceptAndType,
+  getActivitiesByConcept,
+  batchCreateActivities,
+  createActivityConceptLinks,
   createActivityLogEntry,
   getLogsByConceptAndLevel,
   getLogsBySession,
+  getRecentActivityLogs,
   createStudySession,
   getStudySessionById,
   updateStudySession,
@@ -477,5 +482,264 @@ describe('completeActivity', () => {
     expect(logsAfter).toHaveLength(logsBefore.length);
     expect(conceptAfter!.masteryOverall).toBe(conceptBefore!.masteryOverall);
     expect(conceptAfter!.lastActivityAt).toBe(conceptBefore!.lastActivityAt);
+  });
+});
+
+// ============================================================
+// getActivitiesByConcept
+// ============================================================
+
+describe('getActivitiesByConcept', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    createConcept(makeConcept());
+  });
+  afterEach(() => _closeDatabase());
+
+  it('returns all activities for a concept ordered by bloomLevel asc', () => {
+    createActivity(makeActivity({ id: 'a-l3', bloomLevel: 3 }));
+    createActivity(makeActivity({ id: 'a-l1', bloomLevel: 1 }));
+    createActivity(makeActivity({ id: 'a-l2', bloomLevel: 2 }));
+
+    const result = getActivitiesByConcept('concept-1');
+    expect(result).toHaveLength(3);
+    expect(result[0].bloomLevel).toBe(1);
+    expect(result[1].bloomLevel).toBe(2);
+    expect(result[2].bloomLevel).toBe(3);
+  });
+
+  it('returns empty array when concept has no activities', () => {
+    const result = getActivitiesByConcept('concept-1');
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not return activities belonging to a different concept', () => {
+    createConcept(makeConcept({ id: 'concept-2', title: 'Other' }));
+    createActivity(makeActivity({ id: 'a-other', conceptId: 'concept-2' }));
+
+    const result = getActivitiesByConcept('concept-1');
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// getRecentActivityLogs
+// ============================================================
+
+describe('getRecentActivityLogs', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    createConcept(makeConcept());
+    createActivity(makeActivity());
+  });
+  afterEach(() => _closeDatabase());
+
+  function makeLogEntry(
+    overrides: Partial<NewActivityLogEntry> = {},
+  ): NewActivityLogEntry {
+    return {
+      id: 'log-1',
+      activityId: 'activity-1',
+      conceptId: 'concept-1',
+      activityType: 'card_review',
+      bloomLevel: 1,
+      quality: 4,
+      reviewedAt: NOW,
+      ...overrides,
+    };
+  }
+
+  it('returns the last N logs ordered by reviewedAt desc', () => {
+    createActivityLogEntry(
+      makeLogEntry({ id: 'log-old', reviewedAt: '2026-01-01T10:00:00.000Z' }),
+    );
+    createActivityLogEntry(
+      makeLogEntry({ id: 'log-mid', reviewedAt: '2026-02-01T10:00:00.000Z' }),
+    );
+    createActivityLogEntry(
+      makeLogEntry({ id: 'log-new', reviewedAt: '2026-04-01T10:00:00.000Z' }),
+    );
+
+    const result = getRecentActivityLogs('concept-1', 2);
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('log-new');
+    expect(result[1].id).toBe('log-mid');
+  });
+
+  it('returns all logs when limit exceeds the available count', () => {
+    createActivityLogEntry(makeLogEntry({ id: 'log-a' }));
+    const result = getRecentActivityLogs('concept-1', 10);
+    expect(result).toHaveLength(1);
+  });
+
+  it('returns empty array when concept has no logs', () => {
+    const result = getRecentActivityLogs('concept-1', 5);
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// batchCreateActivities
+// ============================================================
+
+describe('batchCreateActivities', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    createConcept(makeConcept());
+  });
+  afterEach(() => _closeDatabase());
+
+  it('inserts all activities in one transaction', () => {
+    batchCreateActivities([
+      makeActivity({ id: 'batch-a1', bloomLevel: 1 }),
+      makeActivity({ id: 'batch-a2', bloomLevel: 2 }),
+      makeActivity({ id: 'batch-a3', bloomLevel: 3 }),
+    ]);
+
+    expect(getActivityById('batch-a1')).toBeDefined();
+    expect(getActivityById('batch-a2')).toBeDefined();
+    expect(getActivityById('batch-a3')).toBeDefined();
+  });
+
+  it('does nothing when given an empty array', () => {
+    batchCreateActivities([]);
+    const result = getActivitiesByConcept('concept-1');
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// createActivityConceptLinks
+// ============================================================
+
+describe('createActivityConceptLinks', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    createConcept(makeConcept({ id: 'concept-1', title: 'C1' }));
+    createConcept(makeConcept({ id: 'concept-2', title: 'C2' }));
+    createActivity(makeActivity({ id: 'activity-1', conceptId: 'concept-1' }));
+  });
+  afterEach(() => _closeDatabase());
+
+  it('inserts concept links for an activity with the default role', () => {
+    createActivityConceptLinks('activity-1', ['concept-2']);
+    // Verify via getActivitiesByConcept — the link row is not surfaced by
+    // existing query helpers, so we at minimum confirm no error was thrown
+    // and the function is idempotent (second call does not throw).
+    expect(() =>
+      createActivityConceptLinks('activity-1', ['concept-2']),
+    ).not.toThrow();
+  });
+
+  it('inserts links with a custom role without error', () => {
+    expect(() =>
+      createActivityConceptLinks('activity-1', ['concept-2'], 'primary'),
+    ).not.toThrow();
+  });
+
+  it('does nothing when given an empty conceptIds array', () => {
+    expect(() => createActivityConceptLinks('activity-1', [])).not.toThrow();
+  });
+});
+
+// ============================================================
+// getConceptsAboveBloomCeiling
+// ============================================================
+
+describe('getConceptsAboveBloomCeiling', () => {
+  beforeEach(() => _initTestDatabase());
+  afterEach(() => _closeDatabase());
+
+  it('returns active concepts whose bloomCeiling meets or exceeds the threshold', () => {
+    createConcept(
+      makeConcept({
+        id: 'c-l0',
+        title: 'Zero',
+        status: 'active',
+        bloomCeiling: 0,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-l2',
+        title: 'Two',
+        status: 'active',
+        bloomCeiling: 2,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-l4',
+        title: 'Four',
+        status: 'active',
+        bloomCeiling: 4,
+      }),
+    );
+
+    const result = getConceptsAboveBloomCeiling(2);
+    const ids = result.map((c) => c.id);
+    expect(ids).toContain('c-l2');
+    expect(ids).toContain('c-l4');
+    expect(ids).not.toContain('c-l0');
+  });
+
+  it('excludes non-active concepts even if bloomCeiling qualifies', () => {
+    createConcept(
+      makeConcept({
+        id: 'c-archived',
+        title: 'Archived',
+        status: 'archived',
+        bloomCeiling: 5,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-pending',
+        title: 'Pending',
+        status: 'pending',
+        bloomCeiling: 5,
+      }),
+    );
+
+    const result = getConceptsAboveBloomCeiling(1);
+    const ids = result.map((c) => c.id);
+    expect(ids).not.toContain('c-archived');
+    expect(ids).not.toContain('c-pending');
+  });
+
+  it('returns empty array when no concepts meet the threshold', () => {
+    createConcept(
+      makeConcept({
+        id: 'c-low',
+        title: 'Low',
+        status: 'active',
+        bloomCeiling: 1,
+      }),
+    );
+    const result = getConceptsAboveBloomCeiling(3);
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns results ordered by title asc', () => {
+    createConcept(
+      makeConcept({
+        id: 'c-zebra',
+        title: 'Zebra',
+        status: 'active',
+        bloomCeiling: 3,
+      }),
+    );
+    createConcept(
+      makeConcept({
+        id: 'c-alpha',
+        title: 'Alpha',
+        status: 'active',
+        bloomCeiling: 3,
+      }),
+    );
+
+    const result = getConceptsAboveBloomCeiling(3);
+    expect(result[0].title).toBe('Alpha');
+    expect(result[1].title).toBe('Zebra');
   });
 });

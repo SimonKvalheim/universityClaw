@@ -1,4 +1,14 @@
-import { eq, and, lte, desc, sql, isNull, asc } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  lte,
+  desc,
+  sql,
+  isNull,
+  asc,
+  gte,
+  inArray,
+} from 'drizzle-orm';
 
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema/index.js';
@@ -49,7 +59,9 @@ export function getConceptById(id: string): Concept | undefined {
     .get();
 }
 
-export function getConceptByVaultPath(vaultNotePath: string): Concept | undefined {
+export function getConceptByVaultPath(
+  vaultNotePath: string,
+): Concept | undefined {
   return getDb()
     .select()
     .from(schema.concepts)
@@ -81,6 +93,20 @@ export function getPendingConcepts(): Concept[] {
 
 export function getActiveConcepts(): Concept[] {
   return getConceptsByStatus('active');
+}
+
+export function getConceptsAboveBloomCeiling(minCeiling: number): Concept[] {
+  return getDb()
+    .select()
+    .from(schema.concepts)
+    .where(
+      and(
+        eq(schema.concepts.status, 'active'),
+        gte(schema.concepts.bloomCeiling, minCeiling),
+      ),
+    )
+    .orderBy(asc(schema.concepts.title))
+    .all();
 }
 
 export function updateConceptStatus(id: string, status: string): void {
@@ -163,6 +189,40 @@ export function getActivitiesByConceptAndType(
     .all();
 }
 
+export function getActivitiesByConcept(conceptId: string): LearningActivity[] {
+  return getDb()
+    .select()
+    .from(schema.learningActivities)
+    .where(eq(schema.learningActivities.conceptId, conceptId))
+    .orderBy(asc(schema.learningActivities.bloomLevel))
+    .all();
+}
+
+export function batchCreateActivities(activities: NewLearningActivity[]): void {
+  if (activities.length === 0) return;
+  getDb().transaction((tx) => {
+    for (const activity of activities) {
+      tx.insert(schema.learningActivities).values(activity).run();
+    }
+  });
+}
+
+export function createActivityConceptLinks(
+  activityId: string,
+  conceptIds: string[],
+  role = 'related',
+): void {
+  if (conceptIds.length === 0) return;
+  getDb().transaction((tx) => {
+    for (const conceptId of conceptIds) {
+      tx.insert(schema.activityConcepts)
+        .values({ activityId, conceptId, role })
+        .onConflictDoNothing()
+        .run();
+    }
+  });
+}
+
 // ====================================================================
 // Activity Log
 // ====================================================================
@@ -203,6 +263,19 @@ export function getLogsBySession(sessionId: string): ActivityLogEntry[] {
     .from(schema.activityLog)
     .where(eq(schema.activityLog.sessionId, sessionId))
     .orderBy(asc(schema.activityLog.reviewedAt))
+    .all();
+}
+
+export function getRecentActivityLogs(
+  conceptId: string,
+  limit: number,
+): ActivityLogEntry[] {
+  return getDb()
+    .select()
+    .from(schema.activityLog)
+    .where(eq(schema.activityLog.conceptId, conceptId))
+    .orderBy(desc(schema.activityLog.reviewedAt))
+    .limit(limit)
     .all();
 }
 
