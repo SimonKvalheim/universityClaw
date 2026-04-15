@@ -709,7 +709,8 @@ export async function processTaskIpc(
         );
         break;
       }
-      const bloomLevel = data.bloomLevel ?? 1;
+      const bloomLevel = (data.bloomLevel ??
+        1) as import('./study/types.js').BloomLevel;
       try {
         await generateActivities(data.conceptId, bloomLevel);
       } catch (err) {
