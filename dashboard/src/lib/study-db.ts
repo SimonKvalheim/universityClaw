@@ -494,3 +494,171 @@ export function processCompletion(input: CompleteActivityInput): CompletionResul
 
   return { logEntryId, newDueAt, advancement, generationNeeded, deEscalation };
 }
+
+// ---------------------------------------------------------------------------
+// Activity queries
+// ---------------------------------------------------------------------------
+
+/**
+ * Activities due on or before today (YYYY-MM-DD), ordered by due_at asc.
+ */
+export function getDueActivities(): ActivityRow[] {
+  const db = getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  return db
+    .select()
+    .from(learning_activities)
+    .where(lte(learning_activities.due_at, today))
+    .orderBy(asc(learning_activities.due_at))
+    .all();
+}
+
+/**
+ * Full activity row by ID.
+ */
+export function getActivityById(id: string): ActivityRow | undefined {
+  const db = getDb();
+  return db
+    .select()
+    .from(learning_activities)
+    .where(eq(learning_activities.id, id))
+    .get();
+}
+
+/**
+ * All activities for a concept, ordered by bloom_level asc.
+ */
+export function getActivitiesByConceptId(conceptId: string): ActivityRow[] {
+  const db = getDb();
+  return db
+    .select()
+    .from(learning_activities)
+    .where(eq(learning_activities.concept_id, conceptId))
+    .orderBy(asc(learning_activities.bloom_level))
+    .all();
+}
+
+/**
+ * Last N activity_log entries for a concept, ordered by reviewed_at desc.
+ */
+export function getRecentLogs(conceptId: string, limit: number): LogRow[] {
+  const db = getDb();
+  return db
+    .select()
+    .from(activity_log)
+    .where(eq(activity_log.concept_id, conceptId))
+    .orderBy(desc(activity_log.reviewed_at))
+    .limit(limit)
+    .all();
+}
+
+// ---------------------------------------------------------------------------
+// Session CRUD
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert a new study session.
+ */
+export function createSession(session: NewSession): void {
+  const db = getDb();
+  db.insert(study_sessions)
+    .values({
+      id: session.id,
+      started_at: session.startedAt,
+      session_type: session.sessionType,
+      pre_confidence: session.preConfidence ?? null,
+      surface: session.surface ?? null,
+    })
+    .run();
+}
+
+/**
+ * Read a session by ID.
+ */
+export function getSessionById(id: string): SessionRow | undefined {
+  const db = getDb();
+  return db
+    .select()
+    .from(study_sessions)
+    .where(eq(study_sessions.id, id))
+    .get();
+}
+
+/**
+ * Update session fields by ID.
+ */
+export function updateSession(id: string, updates: Partial<SessionRow>): void {
+  const db = getDb();
+  db.update(study_sessions).set(updates).where(eq(study_sessions.id, id)).run();
+}
+
+/**
+ * Most recent sessions, ordered by started_at desc.
+ */
+export function getRecentSessions(limit: number): SessionRow[] {
+  const db = getDb();
+  return db
+    .select()
+    .from(study_sessions)
+    .orderBy(desc(study_sessions.started_at))
+    .limit(limit)
+    .all();
+}
+
+/**
+ * Most recent session with no ended_at (currently active).
+ */
+export function getActiveSession(): SessionRow | undefined {
+  const db = getDb();
+  return db
+    .select()
+    .from(study_sessions)
+    .where(isNull(study_sessions.ended_at))
+    .orderBy(desc(study_sessions.started_at))
+    .limit(1)
+    .get();
+}
+
+/**
+ * Count consecutive days from today backwards that have at least one completed
+ * session (ended_at IS NOT NULL).
+ */
+export function getStreakDays(): number {
+  const db = getDb();
+
+  const rows = db.all<{ day: string }>(
+    sql`SELECT date(ended_at) as day
+        FROM study_sessions
+        WHERE ended_at IS NOT NULL
+        GROUP BY date(ended_at)
+        ORDER BY day DESC`,
+  );
+
+  if (rows.length === 0) return 0;
+
+  let streak = 0;
+  const msPerDay = 86400000;
+  const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime();
+
+  for (let i = 0; i < rows.length; i++) {
+    const expectedMs = todayMs - i * msPerDay;
+    const rowMs = new Date(rows[i].day).getTime();
+    if (rowMs !== expectedMs) break;
+    streak++;
+  }
+
+  return streak;
+}
+
+/**
+ * Activity logs for a session, ordered by reviewed_at asc.
+ */
+export function getLogsBySession(sessionId: string): LogRow[] {
+  const db = getDb();
+  return db
+    .select()
+    .from(activity_log)
+    .where(eq(activity_log.session_id, sessionId))
+    .orderBy(asc(activity_log.reviewed_at))
+    .all();
+}
