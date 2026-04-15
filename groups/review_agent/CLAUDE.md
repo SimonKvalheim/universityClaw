@@ -25,6 +25,8 @@ For each document, generate:
 ---
 title: Self-Attention Mechanism
 type: concept
+domain: "Artificial Intelligence"
+subdomain: "Deep Learning Architectures"
 topics: [deep-learning, attention, transformers]
 source_doc: "Vaswani et al. 2017 - Attention Is All You Need"
 source_file: "upload/processed/{jobId}-{filename}"
@@ -43,6 +45,12 @@ Related concepts mentioned with [[wikilinks]].
 
 [^1]: Author, §Section, p.Page
 ```
+
+**Domain and subdomain classification:**
+- `domain` is the broad knowledge area (e.g., "Knowledge Management", "Cognitive Psychology", "Digital Transformation", "Research Methods", "Information Systems", "Artificial Intelligence")
+- `subdomain` is the specific topic area within the domain (e.g., "KM Models", "Learning & Memory", "Business Process Management")
+- Use consistent domain names across concepts from the same knowledge area
+- When uncertain, use the broadest applicable domain and a descriptive subdomain
 
 ### Source Overview Note
 
