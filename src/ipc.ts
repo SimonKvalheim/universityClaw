@@ -11,6 +11,14 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  getConceptById,
+  batchCreateActivities,
+  createActivityConceptLinks,
+  type NewLearningActivity,
+} from './study/queries.js';
+import { computeDueDate } from './study/sm2.js';
+import type { GeneratedActivity, ActivityType } from './study/types.js';
 import { RegisteredGroup } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -281,6 +289,9 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For study_generated_activities
+    conceptId?: string;
+    activities?: GeneratedActivity[];
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -569,6 +580,120 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'study_generated_activities': {
+      const VALID_ACTIVITY_TYPES: Set<string> = new Set<ActivityType>([
+        'card_review',
+        'elaboration',
+        'self_explain',
+        'concept_map',
+        'comparison',
+        'case_analysis',
+        'synthesis',
+        'socratic',
+      ]);
+
+      if (!data.conceptId) {
+        logger.error(
+          { sourceGroup },
+          'study_generated_activities: missing conceptId',
+        );
+        break;
+      }
+
+      const concept = getConceptById(data.conceptId);
+      if (!concept) {
+        logger.error(
+          { conceptId: data.conceptId, sourceGroup },
+          'study_generated_activities: concept not found in DB',
+        );
+        break;
+      }
+
+      const incoming = data.activities ?? [];
+      const validActivities: NewLearningActivity[] = [];
+      // Parallel array: relatedConceptIds for each entry in validActivities
+      const relatedConceptIdsPerActivity: (string[] | undefined)[] = [];
+      let skipped = 0;
+
+      for (const activity of incoming) {
+        // Validate required fields
+        if (
+          !activity.activityType ||
+          !activity.prompt ||
+          !activity.referenceAnswer ||
+          activity.bloomLevel === undefined ||
+          activity.bloomLevel === null
+        ) {
+          logger.warn(
+            { activity, conceptId: data.conceptId },
+            'study_generated_activities: skipping activity with missing required fields',
+          );
+          skipped++;
+          continue;
+        }
+
+        // Validate activityType
+        if (!VALID_ACTIVITY_TYPES.has(activity.activityType)) {
+          logger.warn(
+            { activityType: activity.activityType, conceptId: data.conceptId },
+            'study_generated_activities: skipping activity with unknown activityType',
+          );
+          skipped++;
+          continue;
+        }
+
+        // Validate bloomLevel is 1–6
+        const bloom = activity.bloomLevel;
+        if (!Number.isInteger(bloom) || bloom < 1 || bloom > 6) {
+          logger.warn(
+            { bloomLevel: bloom, conceptId: data.conceptId },
+            'study_generated_activities: skipping activity with invalid bloomLevel',
+          );
+          skipped++;
+          continue;
+        }
+
+        validActivities.push({
+          id: crypto.randomUUID(),
+          conceptId: data.conceptId,
+          activityType: activity.activityType,
+          prompt: activity.prompt,
+          referenceAnswer: activity.referenceAnswer,
+          bloomLevel: activity.bloomLevel,
+          difficultyEstimate: activity.difficultyEstimate ?? 5,
+          cardType: activity.cardType ?? null,
+          sourceNotePath: activity.sourceNotePath ?? null,
+          sourceChunkHash: activity.sourceChunkHash ?? null,
+          generatedAt: new Date().toISOString(),
+          author: 'system',
+          easeFactor: 2.5,
+          intervalDays: 1,
+          repetitions: 0,
+          dueAt: computeDueDate(1),
+          masteryState: 'new',
+        });
+        relatedConceptIdsPerActivity.push(activity.relatedConceptIds);
+      }
+
+      batchCreateActivities(validActivities);
+
+      // Create concept links for activities that reference related concepts
+      for (let idx = 0; idx < validActivities.length; idx++) {
+        const relatedIds = relatedConceptIdsPerActivity[idx];
+        if (relatedIds && relatedIds.length > 0) {
+          createActivityConceptLinks(
+            validActivities[idx].id as string,
+            relatedIds,
+          );
+        }
+      }
+
+      logger.info(
+        `IPC: inserted ${validActivities.length} activities for concept ${data.conceptId} (${skipped} skipped)`,
+      );
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
