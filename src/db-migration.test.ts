@@ -27,9 +27,14 @@ describe('database migrations', () => {
       const tableNames = tables.map((t) => t.name);
 
       const expectedTables = [
+        'activity_concepts',
+        'activity_log',
         'chats',
         'citation_edges',
+        'concept_prerequisites',
+        'concepts',
         'ingestion_jobs',
+        'learning_activities',
         'messages',
         'rag_index_tracker',
         'registered_groups',
@@ -37,6 +42,9 @@ describe('database migrations', () => {
         'scheduled_tasks',
         'sessions',
         'settings',
+        'study_plan_concepts',
+        'study_plans',
+        'study_sessions',
         'task_run_logs',
         'zotero_sync',
       ];
@@ -62,6 +70,22 @@ describe('database migrations', () => {
       const chatColNames = chatCols.map((c) => c.name);
       expect(chatColNames).toContain('channel');
       expect(chatColNames).toContain('is_group');
+
+      const conceptCols = db.all(
+        sql`PRAGMA table_info(concepts)`,
+      ) as Array<{ name: string }>;
+      const conceptColNames = conceptCols.map((c) => c.name);
+      expect(conceptColNames).toContain('mastery_L1');
+      expect(conceptColNames).toContain('bloom_ceiling');
+      expect(conceptColNames).toContain('vault_note_path');
+
+      const activityCols = db.all(
+        sql`PRAGMA table_info(learning_activities)`,
+      ) as Array<{ name: string }>;
+      const activityColNames = activityCols.map((c) => c.name);
+      expect(activityColNames).toContain('ease_factor');
+      expect(activityColNames).toContain('bloom_level');
+      expect(activityColNames).toContain('mastery_state');
 
       _closeDatabase();
     } finally {
