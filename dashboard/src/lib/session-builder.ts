@@ -5,7 +5,7 @@
  * new-material / review / stretch block layout from spec Section 4.5.
  */
 
-import { getDueActivities, getActiveConcepts } from './study-db';
+import { getDueActivities, getActiveConcepts, getPlanConceptIds } from './study-db';
 import type { ConceptSummary } from './study-db';
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,7 @@ export interface SessionComposition {
 export interface SessionOptions {
   targetActivities?: number;
   domainFocus?: string;
+  planId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +108,13 @@ export function buildSessionComposition(
     return { blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] };
   }
 
+  // Plan concept filtering
+  let activitiesToUse = dueActivities;
+  if (options?.planId) {
+    const planConceptIds = new Set(getPlanConceptIds(options.planId));
+    activitiesToUse = dueActivities.filter(a => planConceptIds.has(a.concept_id));
+  }
+
   const activeConcepts = getActiveConcepts();
 
   // Build concept lookup map keyed by id
@@ -123,7 +131,7 @@ export function buildSessionComposition(
   }
 
   const enriched: EnrichedActivity[] = [];
-  for (const act of dueActivities) {
+  for (const act of activitiesToUse) {
     const concept = conceptMap.get(act.concept_id);
     if (!concept) continue;
 

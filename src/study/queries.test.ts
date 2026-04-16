@@ -30,6 +30,10 @@ import {
   updateStudyPlan,
   addConceptsToPlan,
   getPlanConcepts,
+  getPlanProgress,
+  getActivePlans,
+  removeConceptFromPlan,
+  getPlanConceptIds,
   completeActivity,
   type NewConcept,
   type NewLearningActivity,
@@ -741,5 +745,199 @@ describe('getConceptsAboveBloomCeiling', () => {
     const result = getConceptsAboveBloomCeiling(3);
     expect(result[0].title).toBe('Alpha');
     expect(result[1].title).toBe('Zebra');
+  });
+});
+
+// ============================================================
+// getPlanProgress
+// ============================================================
+
+describe('getPlanProgress', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+  afterEach(() => _closeDatabase());
+
+  it('returns null for a non-existent plan', () => {
+    const result = getPlanProgress('no-such-plan');
+    expect(result).toBeNull();
+  });
+
+  it('computes progress for a plan with 3 concepts, 1 at target bloom', () => {
+    createStudyPlan(makePlan({ id: 'plan-prog', title: 'Progress Plan' }));
+    // concept-a: bloomCeiling=4, targetBloom=3 → at target (4 >= 3)
+    createConcept(makeConcept({ id: 'c-a', title: 'Alpha', domain: 'math', bloomCeiling: 4, status: 'active' }));
+    // concept-b: bloomCeiling=2, targetBloom=3 → not at target (2 < 3)
+    createConcept(makeConcept({ id: 'c-b', title: 'Beta', domain: 'math', bloomCeiling: 2, status: 'active' }));
+    // concept-c: bloomCeiling=1, targetBloom=4 → not at target (1 < 4)
+    createConcept(makeConcept({ id: 'c-c', title: 'Gamma', domain: 'physics', bloomCeiling: 1, status: 'active' }));
+
+    addConceptsToPlan('plan-prog', ['c-a', 'c-b', 'c-c'], 3);
+    // Override targetBloom for c-c by adding separately — addConceptsToPlan uses same targetBloom for all,
+    // so we set targetBloom=3 for all, then verify the atTarget logic:
+    // c-a: ceiling=4 >= target=3 → true
+    // c-b: ceiling=2 >= target=3 → false
+    // c-c: ceiling=1 >= target=3 → false
+
+    const progress = getPlanProgress('plan-prog');
+    expect(progress).not.toBeNull();
+    expect(progress!.planId).toBe('plan-prog');
+    expect(progress!.totalConcepts).toBe(3);
+    expect(progress!.conceptsAtTarget).toBe(1);
+    expect(progress!.progressPercent).toBe(33); // Math.round(1/3 * 100)
+
+    const details = progress!.conceptDetails;
+    expect(details).toHaveLength(3);
+
+    const alpha = details.find(d => d.conceptId === 'c-a')!;
+    expect(alpha.atTarget).toBe(true);
+    expect(alpha.currentBloomCeiling).toBe(4);
+    expect(alpha.targetBloom).toBe(3);
+    expect(alpha.domain).toBe('math');
+
+    const beta = details.find(d => d.conceptId === 'c-b')!;
+    expect(beta.atTarget).toBe(false);
+    expect(beta.currentBloomCeiling).toBe(2);
+  });
+
+  it('returns progressPercent=0 for a plan with no concepts', () => {
+    createStudyPlan(makePlan({ id: 'plan-empty', title: 'Empty Plan' }));
+    const progress = getPlanProgress('plan-empty');
+    expect(progress).not.toBeNull();
+    expect(progress!.totalConcepts).toBe(0);
+    expect(progress!.conceptsAtTarget).toBe(0);
+    expect(progress!.progressPercent).toBe(0);
+    expect(progress!.conceptDetails).toHaveLength(0);
+  });
+
+  it('returns progressPercent=100 when all concepts are at target', () => {
+    createStudyPlan(makePlan({ id: 'plan-full', title: 'Full Plan' }));
+    createConcept(makeConcept({ id: 'c-x', title: 'X', bloomCeiling: 6, status: 'active' }));
+    createConcept(makeConcept({ id: 'c-y', title: 'Y', bloomCeiling: 5, status: 'active' }));
+    addConceptsToPlan('plan-full', ['c-x', 'c-y'], 4);
+
+    const progress = getPlanProgress('plan-full');
+    expect(progress!.conceptsAtTarget).toBe(2);
+    expect(progress!.progressPercent).toBe(100);
+  });
+});
+
+// ============================================================
+// getActivePlans
+// ============================================================
+
+describe('getActivePlans', () => {
+  beforeEach(() => _initTestDatabase());
+  afterEach(() => _closeDatabase());
+
+  it('returns only active plans, ordered by createdAt desc', () => {
+    createStudyPlan(makePlan({
+      id: 'plan-active-1',
+      title: 'Active Old',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: NOW,
+    }));
+    createStudyPlan(makePlan({
+      id: 'plan-active-2',
+      title: 'Active New',
+      status: 'active',
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: NOW,
+    }));
+    createStudyPlan(makePlan({
+      id: 'plan-archived',
+      title: 'Archived',
+      status: 'archived',
+      createdAt: '2026-03-01T00:00:00.000Z',
+      updatedAt: NOW,
+    }));
+
+    const active = getActivePlans();
+    expect(active).toHaveLength(2);
+    const ids = active.map(p => p.id);
+    expect(ids).toContain('plan-active-1');
+    expect(ids).toContain('plan-active-2');
+    expect(ids).not.toContain('plan-archived');
+    // ordered by createdAt desc
+    expect(active[0].id).toBe('plan-active-2');
+    expect(active[1].id).toBe('plan-active-1');
+  });
+
+  it('returns empty array when no active plans exist', () => {
+    createStudyPlan(makePlan({ id: 'plan-arch', status: 'archived', updatedAt: NOW }));
+    const active = getActivePlans();
+    expect(active).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// removeConceptFromPlan
+// ============================================================
+
+describe('removeConceptFromPlan', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    createStudyPlan(makePlan({ id: 'plan-rm', title: 'Remove Plan' }));
+    createConcept(makeConcept({ id: 'c-1', title: 'C1' }));
+    createConcept(makeConcept({ id: 'c-2', title: 'C2' }));
+    createConcept(makeConcept({ id: 'c-3', title: 'C3' }));
+    addConceptsToPlan('plan-rm', ['c-1', 'c-2', 'c-3']);
+  });
+  afterEach(() => _closeDatabase());
+
+  it('removes one concept, leaving the other two', () => {
+    removeConceptFromPlan('plan-rm', 'c-2');
+    const remaining = getPlanConceptIds('plan-rm');
+    expect(remaining).toHaveLength(2);
+    expect(remaining).toContain('c-1');
+    expect(remaining).toContain('c-3');
+    expect(remaining).not.toContain('c-2');
+  });
+
+  it('is a no-op when the concept is not in the plan', () => {
+    expect(() => removeConceptFromPlan('plan-rm', 'does-not-exist')).not.toThrow();
+    const remaining = getPlanConceptIds('plan-rm');
+    expect(remaining).toHaveLength(3);
+  });
+});
+
+// ============================================================
+// getPlanConceptIds
+// ============================================================
+
+describe('getPlanConceptIds', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    createStudyPlan(makePlan({ id: 'plan-ids', title: 'IDs Plan' }));
+    createConcept(makeConcept({ id: 'c-alpha', title: 'Alpha' }));
+    createConcept(makeConcept({ id: 'c-beta', title: 'Beta' }));
+    createConcept(makeConcept({ id: 'c-gamma', title: 'Gamma' }));
+    addConceptsToPlan('plan-ids', ['c-alpha', 'c-beta', 'c-gamma']);
+  });
+  afterEach(() => _closeDatabase());
+
+  it('returns all concept IDs for the plan', () => {
+    const ids = getPlanConceptIds('plan-ids');
+    expect(ids).toHaveLength(3);
+    expect(ids).toContain('c-alpha');
+    expect(ids).toContain('c-beta');
+    expect(ids).toContain('c-gamma');
+  });
+
+  it('returns empty array for a plan with no concepts', () => {
+    createStudyPlan(makePlan({ id: 'plan-none', title: 'No Concepts' }));
+    const ids = getPlanConceptIds('plan-none');
+    expect(ids).toHaveLength(0);
+  });
+
+  it('does not return concept IDs from a different plan', () => {
+    createStudyPlan(makePlan({ id: 'plan-other', title: 'Other Plan' }));
+    createConcept(makeConcept({ id: 'c-other', title: 'Other' }));
+    addConceptsToPlan('plan-other', ['c-other']);
+
+    const ids = getPlanConceptIds('plan-ids');
+    expect(ids).not.toContain('c-other');
+    expect(ids).toHaveLength(3);
   });
 });

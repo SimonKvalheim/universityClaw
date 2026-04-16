@@ -103,3 +103,29 @@ export const activity_log = sqliteTable('activity_log', {
   session_id: text('session_id'),
   reviewed_at: text('reviewed_at').notNull(),
 });
+
+export const study_plans = sqliteTable('study_plans', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  domain: text('domain'),
+  course: text('course'),
+  strategy: text('strategy').notNull().default('open'),
+  learning_objectives: text('learning_objectives'),
+  desired_outcomes: text('desired_outcomes'),
+  implementation_intention: text('implementation_intention'),
+  obstacle: text('obstacle'),
+  study_schedule: text('study_schedule'),
+  config: text('config'),
+  checkpoint_interval_days: integer('checkpoint_interval_days').default(14),
+  next_checkpoint_at: text('next_checkpoint_at'),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+  status: text('status').default('active'),
+});
+
+export const study_plan_concepts = sqliteTable('study_plan_concepts', {
+  plan_id: text('plan_id').notNull(),
+  concept_id: text('concept_id').notNull(),
+  target_bloom: integer('target_bloom').default(6),
+  sort_order: integer('sort_order').default(0),
+});

@@ -3,8 +3,11 @@ import { _initTestDatabase, _closeDatabase } from '../db/index.js';
 import {
   createConcept,
   createActivity,
+  createStudyPlan,
+  addConceptsToPlan,
   type NewConcept,
   type NewLearningActivity,
+  type NewStudyPlan,
 } from './queries.js';
 import { buildDailySession } from './session-builder.js';
 
@@ -553,5 +556,106 @@ describe('buildDailySession', () => {
     expect(result.domainsCovered.length).toBe(
       new Set(result.domainsCovered).size,
     );
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 13. Plan-scoped session contains only plan concept activities
+  // ──────────────────────────────────────────────────────────────────────────
+  it('restricts activities to plan concepts when planId is provided', async () => {
+    const NOW_TS = '2026-04-15T12:00:00.000Z';
+    const TODAY_DATE = '2026-04-15';
+
+    // Concepts A, B, C with due activities
+    createConcept(makeConcept({ id: 'p-ca', title: 'Plan A', bloomCeiling: 2 }));
+    createConcept(makeConcept({ id: 'p-cb', title: 'Plan B', bloomCeiling: 2 }));
+    createConcept(makeConcept({ id: 'p-cc', title: 'Non-Plan C', bloomCeiling: 2 }));
+
+    for (let i = 1; i <= 3; i++) {
+      createActivity(
+        makeActivity({ id: `pa-${i}`, conceptId: 'p-ca', bloomLevel: 3, activityType: 'elaboration' }),
+      );
+      createActivity(
+        makeActivity({ id: `pb-${i}`, conceptId: 'p-cb', bloomLevel: 3, activityType: 'elaboration' }),
+      );
+      createActivity(
+        makeActivity({ id: `pc-${i}`, conceptId: 'p-cc', bloomLevel: 3, activityType: 'elaboration' }),
+      );
+    }
+
+    // Plan P includes concepts A and B only
+    const plan: NewStudyPlan = {
+      id: 'plan-p1',
+      title: 'Test Plan',
+      strategy: 'spaced-repetition',
+      status: 'active',
+      createdAt: NOW_TS,
+      updatedAt: NOW_TS,
+    };
+    createStudyPlan(plan);
+    addConceptsToPlan('plan-p1', ['p-ca', 'p-cb']);
+
+    const result = await buildDailySession({ planId: 'plan-p1' });
+
+    const allActivities = result.blocks.flatMap((b) => b.activities);
+    expect(allActivities.length).toBeGreaterThan(0);
+
+    // All returned activities must belong to concepts A or B
+    for (const act of allActivities) {
+      expect(['p-ca', 'p-cb']).toContain(act.conceptId);
+    }
+    // Concept C must not appear
+    expect(allActivities.every((a) => a.conceptId !== 'p-cc')).toBe(true);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 14. Empty plan returns empty session
+  // ──────────────────────────────────────────────────────────────────────────
+  it('returns empty composition when plan has no concepts', async () => {
+    const NOW_TS = '2026-04-15T12:00:00.000Z';
+
+    // Some activities exist in the DB
+    createConcept(makeConcept({ id: 'ep-c1', title: 'Existing', bloomCeiling: 2 }));
+    createActivity(makeActivity({ id: 'ep-a1', conceptId: 'ep-c1', bloomLevel: 3 }));
+
+    // Plan with no concepts added
+    const plan: NewStudyPlan = {
+      id: 'plan-empty',
+      title: 'Empty Plan',
+      strategy: 'spaced-repetition',
+      status: 'active',
+      createdAt: NOW_TS,
+      updatedAt: NOW_TS,
+    };
+    createStudyPlan(plan);
+
+    const result = await buildDailySession({ planId: 'plan-empty' });
+
+    expect(result.totalActivities).toBe(0);
+    expect(result.blocks).toHaveLength(0);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 15. No planId returns all activities (regression)
+  // ──────────────────────────────────────────────────────────────────────────
+  it('includes activities from all concepts when no planId is provided', async () => {
+    createConcept(makeConcept({ id: 'rg-c1', title: 'C1', bloomCeiling: 2 }));
+    createConcept(makeConcept({ id: 'rg-c2', title: 'C2', bloomCeiling: 2 }));
+    createConcept(makeConcept({ id: 'rg-c3', title: 'C3', bloomCeiling: 2 }));
+
+    for (let i = 1; i <= 2; i++) {
+      createActivity(makeActivity({ id: `rg-c1-${i}`, conceptId: 'rg-c1', bloomLevel: 3 }));
+      createActivity(makeActivity({ id: `rg-c2-${i}`, conceptId: 'rg-c2', bloomLevel: 3 }));
+      createActivity(makeActivity({ id: `rg-c3-${i}`, conceptId: 'rg-c3', bloomLevel: 3 }));
+    }
+
+    const result = await buildDailySession();
+
+    const allActivities = result.blocks.flatMap((b) => b.activities);
+    const conceptIds = new Set(allActivities.map((a) => a.conceptId));
+
+    // All three concepts should be represented
+    expect(conceptIds.has('rg-c1')).toBe(true);
+    expect(conceptIds.has('rg-c2')).toBe(true);
+    expect(conceptIds.has('rg-c3')).toBe(true);
   });
 });

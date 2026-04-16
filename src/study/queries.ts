@@ -22,6 +22,8 @@ import type {
   BloomLevel,
   MasteryActivityInput,
   MasteryState,
+  PlanProgress,
+  PlanConceptProgress,
 } from './types.js';
 
 // ====================================================================
@@ -404,6 +406,76 @@ export function getPlanConcepts(planId: string): Concept[] {
     .where(eq(schema.studyPlanConcepts.planId, planId))
     .orderBy(asc(schema.studyPlanConcepts.sortOrder))
     .all();
+}
+
+export function getPlanProgress(planId: string): PlanProgress | null {
+  const plan = getStudyPlanById(planId);
+  if (!plan) return null;
+
+  const rows = getDb()
+    .select({
+      conceptId: schema.concepts.id,
+      conceptTitle: schema.concepts.title,
+      domain: schema.concepts.domain,
+      bloomCeiling: schema.concepts.bloomCeiling,
+      masteryOverall: schema.concepts.masteryOverall,
+      targetBloom: schema.studyPlanConcepts.targetBloom,
+    })
+    .from(schema.studyPlanConcepts)
+    .innerJoin(schema.concepts, eq(schema.studyPlanConcepts.conceptId, schema.concepts.id))
+    .where(eq(schema.studyPlanConcepts.planId, planId))
+    .orderBy(asc(schema.studyPlanConcepts.sortOrder))
+    .all();
+
+  const details: PlanConceptProgress[] = rows.map(r => ({
+    conceptId: r.conceptId,
+    conceptTitle: r.conceptTitle,
+    domain: r.domain,
+    currentBloomCeiling: r.bloomCeiling ?? 0,
+    targetBloom: r.targetBloom ?? 6,
+    masteryOverall: r.masteryOverall ?? 0,
+    atTarget: (r.bloomCeiling ?? 0) >= (r.targetBloom ?? 6),
+  }));
+
+  const atTarget = details.filter(d => d.atTarget).length;
+
+  return {
+    planId,
+    totalConcepts: details.length,
+    conceptsAtTarget: atTarget,
+    progressPercent: details.length > 0 ? Math.round((atTarget / details.length) * 100) : 0,
+    conceptDetails: details,
+  };
+}
+
+export function getActivePlans(): StudyPlan[] {
+  return getDb()
+    .select()
+    .from(schema.studyPlans)
+    .where(eq(schema.studyPlans.status, 'active'))
+    .orderBy(desc(schema.studyPlans.createdAt))
+    .all();
+}
+
+export function removeConceptFromPlan(planId: string, conceptId: string): void {
+  getDb()
+    .delete(schema.studyPlanConcepts)
+    .where(
+      and(
+        eq(schema.studyPlanConcepts.planId, planId),
+        eq(schema.studyPlanConcepts.conceptId, conceptId),
+      ),
+    )
+    .run();
+}
+
+export function getPlanConceptIds(planId: string): string[] {
+  return getDb()
+    .select({ conceptId: schema.studyPlanConcepts.conceptId })
+    .from(schema.studyPlanConcepts)
+    .where(eq(schema.studyPlanConcepts.planId, planId))
+    .all()
+    .map(r => r.conceptId);
 }
 
 // ====================================================================

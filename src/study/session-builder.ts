@@ -1,6 +1,8 @@
 import {
   getDueActivities,
   getActiveConcepts,
+  getPlanConceptIds,
+  getStudyPlanById,
   type Concept,
   type LearningActivity,
 } from './queries.js';
@@ -74,7 +76,7 @@ function interleaveByConceptId(
 export function buildDailySession(
   options?: SessionOptions,
 ): SessionComposition {
-  const target = options?.targetActivities ?? 20;
+  let target = options?.targetActivities ?? 20;
 
   // 1. Fetch due activities and active concepts
   const dueActivities = getDueActivities();
@@ -92,9 +94,39 @@ export function buildDailySession(
     activeConcepts.map((c) => [c.id, c]),
   );
 
+  // 1b. Plan concept filtering
+  let activitiesToUse = dueActivities;
+  if (options?.planId) {
+    const planConceptIds = new Set(getPlanConceptIds(options.planId));
+    activitiesToUse = dueActivities.filter((a) =>
+      planConceptIds.has(a.conceptId),
+    );
+  }
+
+  // 1c. Exam-prep: increase target when exam is imminent
+  if (options?.planId) {
+    const plan = getStudyPlanById(options.planId);
+    if (plan?.strategy === 'exam-prep' && plan.config) {
+      try {
+        const config = JSON.parse(plan.config as string);
+        if (config.exam_date) {
+          const daysUntilExam = Math.ceil(
+            (new Date(config.exam_date).getTime() - Date.now()) /
+              (1000 * 60 * 60 * 24),
+          );
+          if (daysUntilExam < 7 && !options.targetActivities) {
+            target = 30;
+          }
+        }
+      } catch {
+        /* ignore invalid config */
+      }
+    }
+  }
+
   // 2. Enrich and filter activities
   let enriched: Array<{ activity: LearningActivity; concept: Concept }> = [];
-  for (const activity of dueActivities) {
+  for (const activity of activitiesToUse) {
     const concept = conceptMap.get(activity.conceptId);
     if (!concept) continue; // silently skip orphaned activities
     enriched.push({ activity, concept });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,9 +176,13 @@ function isAiEvalEligible(bloomLevel: number, activityType: string): boolean {
 // ---------------------------------------------------------------------------
 
 export default function StudySessionPage() {
+  const searchParams = useSearchParams();
+  const planId = searchParams.get('planId');
+
   const [phase, setPhase] = useState<Phase>('loading');
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [planTitle, setPlanTitle] = useState<string | null>(null);
 
   // PRE_SESSION
   const [preConfidence, setPreConfidence] = useState<Record<string, number>>({});
@@ -242,12 +247,26 @@ export default function StudySessionPage() {
   }, [cleanupEvalResources]);
 
   // ---------------------------------------------------------------------------
+  // Fetch plan title when planId is present
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (planId) {
+      fetch(`/api/study/plans/${planId}`)
+        .then((r) => r.json())
+        .then((data: { plan?: { title?: string } }) => setPlanTitle(data.plan?.title ?? null))
+        .catch(() => {});
+    }
+  }, [planId]);
+
+  // ---------------------------------------------------------------------------
   // LOADING: fetch session data
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
     if (phase !== 'loading') return;
-    fetch('/api/study/session')
+    const url = planId ? `/api/study/session?planId=${planId}` : '/api/study/session';
+    fetch(url)
       .then((r) => r.json())
       .then((data: { session?: SessionData; error?: string }) => {
         if (data.error) {
@@ -266,7 +285,7 @@ export default function StudySessionPage() {
       .catch((err: unknown) => {
         setLoadError(String(err));
       });
-  }, [phase]);
+  }, [phase, planId]);
 
   // ---------------------------------------------------------------------------
   // PRE_SESSION: begin session
@@ -277,7 +296,11 @@ export default function StudySessionPage() {
     const res = await fetch('/api/study/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preConfidence }),
+      body: JSON.stringify({
+        sessionType: 'daily',
+        preConfidence,
+        planId: planId || undefined,
+      }),
     });
     const data = (await res.json()) as { sessionId?: string; error?: string };
     if (!data.sessionId) return;
@@ -583,6 +606,18 @@ export default function StudySessionPage() {
 
     return (
       <div className="max-w-2xl mx-auto space-y-6">
+        {/* Plan context banner */}
+        {planTitle && (
+          <div className="bg-blue-900/30 border border-blue-800 rounded-lg px-4 py-2 flex items-center justify-between">
+            <span className="text-blue-300 text-sm">
+              Studying: <span className="font-medium text-blue-200">{planTitle}</span>
+            </span>
+            <a href="/study/plan" className="text-blue-400 hover:text-blue-300 text-sm">
+              &larr; Back to plan
+            </a>
+          </div>
+        )}
+
         {/* Header */}
         <div>
           <h2 className="text-xl font-semibold text-gray-100 mb-1">Today&apos;s Session</h2>
@@ -656,6 +691,18 @@ export default function StudySessionPage() {
 
     return (
       <div className="max-w-2xl mx-auto space-y-4">
+        {/* Plan context banner */}
+        {planTitle && (
+          <div className="bg-blue-900/30 border border-blue-800 rounded-lg px-4 py-2 flex items-center justify-between">
+            <span className="text-blue-300 text-sm">
+              Studying: <span className="font-medium text-blue-200">{planTitle}</span>
+            </span>
+            <a href="/study/plan" className="text-blue-400 hover:text-blue-300 text-sm">
+              &larr; Back to plan
+            </a>
+          </div>
+        )}
+
         {/* Progress bar */}
         <div>
           <div className="flex justify-between text-xs text-gray-500 mb-1">
