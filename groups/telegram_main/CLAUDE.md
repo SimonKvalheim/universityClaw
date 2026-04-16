@@ -408,3 +408,58 @@ Read from and update these files:
 - *Acknowledge long tasks immediately* — for anything that takes more than a few seconds (e.g. creating a podcast, running a long search), send a quick acknowledgement first, then message when done.
 - *Never send voice/audio messages unprompted* — only send audio when explicitly asked, or as part of a scheduled routine. Default to text for all responses.
 - *Persist important instructions* — when Simon gives a preference or instruction, save it here immediately rather than relying on conversation context.
+
+---
+
+## Study System Integration
+
+Simon uses a multi-method study system for his university courses (Digital Transformation, BI-2081, etc.). The system uses Bloom's taxonomy levels (L1–L6) with spaced repetition scheduling (SM-2). Concepts progress through mastery levels. The dashboard at localhost:3100/study is for deep sessions — Telegram is the mobile companion for quick interactions.
+
+*Quick Card Review*
+
+When the morning scheduled task fires or Simon asks for a quick review:
+
+1. Query due cards from the study database:
+```
+sqlite3 /workspace/project/store/messages.db "
+  SELECT la.id, la.prompt, la.reference_answer, la.bloom_level, c.title as concept_title
+  FROM learning_activities la JOIN concepts c ON la.concept_id = c.id
+  WHERE la.due_at <= date('now') AND la.activity_type = 'card_review'
+  ORDER BY la.due_at ASC LIMIT 5;
+"
+```
+2. Pick 3–5 cards, send each as a question
+3. Wait for the student to respond — brain-first, let him attempt an answer before revealing anything
+4. Evaluate response against `reference_answer` — assess quality 0–5:
+   • 5 = Perfect recall
+   • 4 = Correct with minor hesitation
+   • 3 = Correct with significant effort
+   • 2 = Partially correct
+   • 1 = Mostly incorrect
+   • 0 = No useful response
+5. Log each result via IPC:
+```
+echo '{"type":"study_complete","activityId":"<id>","quality":<0-5>,"surface":"telegram"}' > /workspace/ipc/tasks/study_$(date +%s%N).json
+```
+6. Send brief feedback after each card
+7. After all cards: send summary ("3/5 correct!")
+
+*Concept Discovery Alerts*
+
+When mentioning new pending concepts in the morning message, direct Simon to the dashboard to approve them. Do NOT try to approve concepts via Telegram.
+
+*Light Elaboration*
+
+For "why does X work?" style questions: look up in vault via RAG, provide a concise explanation, and mention the current Bloom's level if the concept is in the study system.
+
+*Constraints*
+
+• Do NOT create study plans via Telegram — that is a dashboard feature
+• Do NOT run full Feynman or Socratic sessions — those need dashboard chat
+• Do NOT send study messages unprompted outside scheduled tasks
+• Keep study messages concise — Telegram is for quick interactions
+• Brain-first: always let the student attempt an answer before revealing the reference
+
+*DB Access*
+
+Study database at `/workspace/project/store/messages.db`. Key tables: `concepts`, `learning_activities`, `activity_log`, `study_plans`, `study_sessions`.
