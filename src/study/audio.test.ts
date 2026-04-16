@@ -22,11 +22,14 @@ describe('synthesizeAudio', () => {
   it('writes audio to the correct path and returns it on success', async () => {
     const audioData = new Uint8Array([0x49, 0x44, 0x33]).buffer; // fake MP3 bytes
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      arrayBuffer: async () => audioData,
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => audioData,
+      }),
+    );
 
     const outputPath = path.join(tmpDir, 'test-output.mp3');
     const result = await synthesizeAudio('Hello world', outputPath);
@@ -38,11 +41,14 @@ describe('synthesizeAudio', () => {
   });
 
   it('throws on API failure and does not leave a temp file', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: async () => 'Bad Request',
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => 'Bad Request',
+      }),
+    );
 
     const outputPath = path.join(tmpDir, 'fail-output.mp3');
     await expect(synthesizeAudio('test', outputPath)).rejects.toThrow('400');

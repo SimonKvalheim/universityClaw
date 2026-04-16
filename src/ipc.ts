@@ -769,10 +769,7 @@ export async function processTaskIpc(
         break;
       }
       if (!data.script || typeof data.script !== 'string') {
-        logger.error(
-          { sourceGroup },
-          'study_audio_script: missing script',
-        );
+        logger.error({ sourceGroup }, 'study_audio_script: missing script');
         break;
       }
       const validContentTypes = ['summary', 'review_primer', 'weekly_digest'];
@@ -790,7 +787,12 @@ export async function processTaskIpc(
 
       try {
         await synthesizeAudio(data.script, outputPath);
-        const responsesDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'responses');
+        const responsesDir = path.join(
+          DATA_DIR,
+          'ipc',
+          sourceGroup,
+          'responses',
+        );
         fs.mkdirSync(responsesDir, { recursive: true });
         fs.writeFileSync(
           path.join(responsesDir, `audio-${Date.now()}.json`),

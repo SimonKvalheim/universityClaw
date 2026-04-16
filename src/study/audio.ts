@@ -27,7 +27,9 @@ export async function generateAudioScript(
   // Fetch concept data for each ID
   const concepts = conceptIds
     .map((id) => getConceptById(id))
-    .filter((c): c is NonNullable<ReturnType<typeof getConceptById>> => c != null);
+    .filter(
+      (c): c is NonNullable<ReturnType<typeof getConceptById>> => c != null,
+    );
 
   const conceptSummaries = concepts
     .map((c) => {
@@ -54,12 +56,7 @@ export async function generateAudioScript(
     `Target word count: ~${Math.round(targetDurationMinutes * 150)} words.`,
   ].join('\n');
 
-  const tasksDir = path.join(
-    DATA_DIR,
-    'ipc',
-    'study-generator',
-    'tasks',
-  );
+  const tasksDir = path.join(DATA_DIR, 'ipc', 'study-generator', 'tasks');
   fs.mkdirSync(tasksDir, { recursive: true });
 
   const taskFile = path.join(tasksDir, `audio_script_${Date.now()}.json`);
@@ -109,9 +106,7 @@ export async function synthesizeAudio(
 
     if (!response.ok) {
       const body = await response.text().catch(() => '(unreadable)');
-      throw new Error(
-        `TTS API error ${response.status}: ${body}`,
-      );
+      throw new Error(`TTS API error ${response.status}: ${body}`);
     }
 
     const audioBuffer = await response.arrayBuffer();

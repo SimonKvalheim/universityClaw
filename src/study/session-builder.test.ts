@@ -566,19 +566,40 @@ describe('buildDailySession', () => {
     const TODAY_DATE = '2026-04-15';
 
     // Concepts A, B, C with due activities
-    createConcept(makeConcept({ id: 'p-ca', title: 'Plan A', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'p-cb', title: 'Plan B', bloomCeiling: 2 }));
-    createConcept(makeConcept({ id: 'p-cc', title: 'Non-Plan C', bloomCeiling: 2 }));
+    createConcept(
+      makeConcept({ id: 'p-ca', title: 'Plan A', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'p-cb', title: 'Plan B', bloomCeiling: 2 }),
+    );
+    createConcept(
+      makeConcept({ id: 'p-cc', title: 'Non-Plan C', bloomCeiling: 2 }),
+    );
 
     for (let i = 1; i <= 3; i++) {
       createActivity(
-        makeActivity({ id: `pa-${i}`, conceptId: 'p-ca', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `pa-${i}`,
+          conceptId: 'p-ca',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
       createActivity(
-        makeActivity({ id: `pb-${i}`, conceptId: 'p-cb', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `pb-${i}`,
+          conceptId: 'p-cb',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
       createActivity(
-        makeActivity({ id: `pc-${i}`, conceptId: 'p-cc', bloomLevel: 3, activityType: 'elaboration' }),
+        makeActivity({
+          id: `pc-${i}`,
+          conceptId: 'p-cc',
+          bloomLevel: 3,
+          activityType: 'elaboration',
+        }),
       );
     }
 
@@ -614,8 +635,12 @@ describe('buildDailySession', () => {
     const NOW_TS = '2026-04-15T12:00:00.000Z';
 
     // Some activities exist in the DB
-    createConcept(makeConcept({ id: 'ep-c1', title: 'Existing', bloomCeiling: 2 }));
-    createActivity(makeActivity({ id: 'ep-a1', conceptId: 'ep-c1', bloomLevel: 3 }));
+    createConcept(
+      makeConcept({ id: 'ep-c1', title: 'Existing', bloomCeiling: 2 }),
+    );
+    createActivity(
+      makeActivity({ id: 'ep-a1', conceptId: 'ep-c1', bloomLevel: 3 }),
+    );
 
     // Plan with no concepts added
     const plan: NewStudyPlan = {
@@ -643,9 +668,15 @@ describe('buildDailySession', () => {
     createConcept(makeConcept({ id: 'rg-c3', title: 'C3', bloomCeiling: 2 }));
 
     for (let i = 1; i <= 2; i++) {
-      createActivity(makeActivity({ id: `rg-c1-${i}`, conceptId: 'rg-c1', bloomLevel: 3 }));
-      createActivity(makeActivity({ id: `rg-c2-${i}`, conceptId: 'rg-c2', bloomLevel: 3 }));
-      createActivity(makeActivity({ id: `rg-c3-${i}`, conceptId: 'rg-c3', bloomLevel: 3 }));
+      createActivity(
+        makeActivity({ id: `rg-c1-${i}`, conceptId: 'rg-c1', bloomLevel: 3 }),
+      );
+      createActivity(
+        makeActivity({ id: `rg-c2-${i}`, conceptId: 'rg-c2', bloomLevel: 3 }),
+      );
+      createActivity(
+        makeActivity({ id: `rg-c3-${i}`, conceptId: 'rg-c3', bloomLevel: 3 }),
+      );
     }
 
     const result = await buildDailySession();
