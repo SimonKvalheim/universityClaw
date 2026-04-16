@@ -130,3 +130,23 @@ export interface SynthesisOpportunity {
   concepts: Array<{ id: string; title: string; bloomCeiling: number }>;
   automatic: boolean; // true for within-subdomain/domain, false for cross-domain
 }
+
+/** Progress summary for a study plan */
+export interface PlanProgress {
+  planId: string;
+  totalConcepts: number;
+  conceptsAtTarget: number;  // concepts where bloomCeiling >= targetBloom
+  progressPercent: number;   // conceptsAtTarget / totalConcepts * 100
+  conceptDetails: PlanConceptProgress[];
+}
+
+/** Per-concept progress within a plan */
+export interface PlanConceptProgress {
+  conceptId: string;
+  conceptTitle: string;
+  domain: string | null;
+  currentBloomCeiling: number;
+  targetBloom: number;
+  masteryOverall: number;
+  atTarget: boolean;
+}
