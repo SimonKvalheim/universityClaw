@@ -69,6 +69,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import { registerStudyScheduledTasks } from './study/scheduled.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { prepareAttachments, cleanupAttachments } from './attachments.js';
@@ -761,6 +762,16 @@ async function main(): Promise<void> {
   const mainGroupJid = Object.entries(registeredGroups).find(
     ([, g]) => g.isMain,
   )?.[0];
+
+  // Register study scheduled tasks (idempotent)
+  const telegramMainEntry = Object.entries(registeredGroups).find(
+    ([, g]) => g.folder === 'telegram_main'
+  );
+  if (telegramMainEntry) {
+    registerStudyScheduledTasks(telegramMainEntry[0]);
+  } else {
+    logger.warn('telegram_main group not registered — skipping study task registration');
+  }
 
   const pipeline = new IngestionPipeline({
     uploadDir: UPLOAD_DIR,
