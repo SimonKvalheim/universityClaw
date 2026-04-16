@@ -18,21 +18,22 @@ describe('registerStudyScheduledTasks', () => {
     _closeDatabase();
   });
 
-  it('creates 3 tasks', () => {
+  it('creates 4 tasks', () => {
     registerStudyScheduledTasks(TEST_JID);
     const tasks = getAllTasks();
-    expect(tasks).toHaveLength(3);
+    expect(tasks).toHaveLength(4);
     const ids = tasks.map((t) => t.id);
     expect(ids).toContain('study-daily-morning');
     expect(ids).toContain('study-weekly-progress');
     expect(ids).toContain('study-monthly-mastery');
+    expect(ids).toContain('study-sqlite-backup');
   });
 
-  it('is idempotent — calling twice still yields only 3 tasks', () => {
+  it('is idempotent — calling twice still yields only 4 tasks', () => {
     registerStudyScheduledTasks(TEST_JID);
     registerStudyScheduledTasks(TEST_JID);
     const tasks = getAllTasks();
-    expect(tasks).toHaveLength(3);
+    expect(tasks).toHaveLength(4);
   });
 
   it('tasks have correct cron patterns', () => {
@@ -46,6 +47,9 @@ describe('registerStudyScheduledTasks', () => {
 
     const monthly = getTaskById('study-monthly-mastery');
     expect(monthly?.schedule_value).toBe('0 10 1 * *');
+
+    const backup = getTaskById('study-sqlite-backup');
+    expect(backup?.schedule_value).toBe('0 3 * * *');
   });
 
   it('tasks have valid future next_run', () => {
@@ -61,12 +65,13 @@ describe('registerStudyScheduledTasks', () => {
 });
 
 describe('getStudyTaskDefinitions', () => {
-  it('returns 3 definitions with correct IDs', () => {
+  it('returns 4 definitions with correct IDs', () => {
     const defs = getStudyTaskDefinitions(TEST_JID);
-    expect(defs).toHaveLength(3);
+    expect(defs).toHaveLength(4);
     const ids = defs.map((d) => d.id);
     expect(ids).toContain('study-daily-morning');
     expect(ids).toContain('study-weekly-progress');
     expect(ids).toContain('study-monthly-mastery');
+    expect(ids).toContain('study-sqlite-backup');
   });
 });

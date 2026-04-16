@@ -87,6 +87,33 @@ export function getStudyTaskDefinitions(
       groupFolder: 'telegram_main',
       chatJid: mainChatJid,
     },
+    {
+      id: 'study-sqlite-backup',
+      prompt: `Run the following backup commands in your bash sandbox. Execute exactly these commands:
+
+\`\`\`bash
+DB_PATH="/workspace/project/store/messages.db"
+BACKUP_DIR="/workspace/project/store/backups"
+mkdir -p "$BACKUP_DIR"
+TODAY=$(date +%Y-%m-%d)
+BACKUP_FILE="$BACKUP_DIR/messages-$TODAY.db"
+
+# Use SQLite .backup for atomic consistency
+sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"
+
+# Rotate: keep last 7 daily backups
+ls -1t "$BACKUP_DIR"/messages-*.db 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null || true
+
+# Report result
+SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+echo "Backup complete: $BACKUP_FILE ($SIZE)"
+\`\`\`
+
+After running, report the result. If any command fails, report the exact error. Do NOT modify the database or any other files.`,
+      cronExpression: '0 3 * * *',
+      groupFolder: 'telegram_main',
+      chatJid: mainChatJid,
+    },
   ];
 }
 
