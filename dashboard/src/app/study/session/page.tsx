@@ -240,6 +240,16 @@ function StudySessionInner() {
   const evalPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const evalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Suggestion prompt (student-generated activities)
+  const [showSuggestionPrompt, setShowSuggestionPrompt] = useState(false);
+  const [showSuggestionForm, setShowSuggestionForm] = useState(false);
+  const [suggestionSubmitting, setSuggestionSubmitting] = useState(false);
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false);
+  const [suggestionSuccess, setSuggestionSuccess] = useState(false);
+  const [suggestionActivityType, setSuggestionActivityType] = useState('card_review');
+  const [suggestionPromptText, setSuggestionPromptText] = useState('');
+  const [suggestionBloomLevel, setSuggestionBloomLevel] = useState(1);
+
   // POST_SESSION
   const [reflection, setReflection] = useState('');
   const [reflectLoading, setReflectLoading] = useState(false);
@@ -417,6 +427,36 @@ function StudySessionInner() {
         qualities: newQualities,
       };
     });
+
+    // Show suggestion prompt for struggle (0-2) or mastery (5)
+    if (quality <= 2 || quality === 5) {
+      setSuggestionBloomLevel(flat.activity.bloomLevel);
+      setSuggestionActivityType('card_review');
+      setSuggestionPromptText('');
+      setShowSuggestionPrompt(true);
+    }
+  }
+
+  async function handleSuggestionSubmit() {
+    const flat = flatActivities[currentIndex];
+    if (!flat) return;
+    setSuggestionSubmitting(true);
+    try {
+      await fetch('/api/study/suggest-activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conceptId: flat.activity.conceptId,
+          activityType: suggestionActivityType,
+          prompt: suggestionPromptText,
+          bloomLevel: suggestionBloomLevel,
+        }),
+      });
+      setSuggestionSuccess(true);
+      setShowSuggestionForm(false);
+    } finally {
+      setSuggestionSubmitting(false);
+    }
   }
 
   async function handleSkip() {
@@ -469,6 +509,11 @@ function StudySessionInner() {
       setEvaluationMode(null);
       setAiFeedback('');
       setAiQuality(null);
+      setShowSuggestionPrompt(false);
+      setShowSuggestionForm(false);
+      setSuggestionDismissed(false);
+      setSuggestionSuccess(false);
+      setSuggestionPromptText('');
       activityStartTime.current = Date.now();
     }
   }
@@ -1054,16 +1099,137 @@ function StudySessionInner() {
                           </div>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm text-gray-400">
-                            Rated <span className="text-blue-400 font-medium">{selectedQuality}</span> — {QUALITY_LABELS[selectedQuality]}
-                          </p>
-                          <button
-                            onClick={advanceToNext}
-                            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-                          >
-                            Next
-                          </button>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-gray-400">
+                              Rated <span className="text-blue-400 font-medium">{selectedQuality}</span> — {QUALITY_LABELS[selectedQuality]}
+                            </p>
+                            {(!showSuggestionPrompt || suggestionDismissed || suggestionSuccess) && (
+                              <button
+                                onClick={advanceToNext}
+                                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                              >
+                                Next
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Suggestion prompt */}
+                          {showSuggestionPrompt && !suggestionDismissed && !suggestionSuccess && !showSuggestionForm && (
+                            <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 space-y-2">
+                              <p className="text-sm text-gray-300">
+                                {selectedQuality !== null && selectedQuality <= 2
+                                  ? `This was a tough one. Want to create your own question about "${activity.conceptTitle}" to practice later?`
+                                  : `Great work! Want to capture what made this click as a study question?`}
+                              </p>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setShowSuggestionForm(true)}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-700 hover:bg-blue-600 text-white transition-colors"
+                                >
+                                  Yes, create one
+                                </button>
+                                <button
+                                  onClick={() => setSuggestionDismissed(true)}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+                                >
+                                  No thanks
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Suggestion form */}
+                          {showSuggestionForm && !suggestionSuccess && (
+                            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-3">
+                              <p className="text-xs text-gray-500 uppercase tracking-wider">Create a study question</p>
+
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Activity type</label>
+                                <select
+                                  value={suggestionActivityType}
+                                  onChange={(e) => setSuggestionActivityType(e.target.value)}
+                                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-gray-500"
+                                >
+                                  <option value="card_review">Card Review</option>
+                                  <option value="elaboration">Elaboration</option>
+                                  <option value="self_explain">Self Explain</option>
+                                  <option value="comparison">Comparison</option>
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Your study question</label>
+                                <textarea
+                                  value={suggestionPromptText}
+                                  onChange={(e) => setSuggestionPromptText(e.target.value)}
+                                  placeholder="Your study question..."
+                                  rows={3}
+                                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 resize-none focus:outline-none focus:border-gray-500"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Bloom&apos;s level</label>
+                                <div className="flex gap-1.5">
+                                  {([1, 2, 3, 4, 5, 6] as const).map((lvl) => (
+                                    <button
+                                      key={lvl}
+                                      onClick={() => setSuggestionBloomLevel(lvl)}
+                                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                        suggestionBloomLevel === lvl
+                                          ? 'bg-blue-600 text-white'
+                                          : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+                                      }`}
+                                    >
+                                      L{lvl}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 pt-1">
+                                <button
+                                  onClick={handleSuggestionSubmit}
+                                  disabled={suggestionSubmitting || !suggestionPromptText.trim()}
+                                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
+                                >
+                                  {suggestionSubmitting ? 'Saving...' : 'Submit'}
+                                </button>
+                                <button
+                                  onClick={() => { setShowSuggestionForm(false); setSuggestionDismissed(true); }}
+                                  className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Success message */}
+                          {suggestionSuccess && (
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm text-green-400">Activity created!</p>
+                              <button
+                                onClick={advanceToNext}
+                                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Next button when suggestion was dismissed */}
+                          {suggestionDismissed && (
+                            <div className="flex justify-end">
+                              <button
+                                onClick={advanceToNext}
+                                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </>
