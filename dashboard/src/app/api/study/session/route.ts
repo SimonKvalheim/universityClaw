@@ -5,6 +5,7 @@ import {
   getActiveSession,
   updateSession,
 } from '@/lib/study-db';
+import { getPrerequisiteWarnings, getStalenessWarnings } from '@/lib/session-warnings';
 
 export async function GET(request: Request) {
   try {
@@ -22,6 +23,8 @@ export async function GET(request: Request) {
             prompt: full.prompt,
             referenceAnswer: full.reference_answer ?? null,
             cardType: full.card_type ?? null,
+            sourceNotePath: full.source_note_path ?? null,
+            generatedAt: full.generated_at,
           };
         })
         .filter(Boolean),
@@ -30,11 +33,32 @@ export async function GET(request: Request) {
       (sum, b) => sum + b.activities.length,
       0,
     );
+
+    // Extract unique concept IDs from session for prerequisite warnings
+    const conceptIds = [
+      ...new Set(enrichedBlocks.flatMap((b) => b.activities.map((a) => a!.conceptId))),
+    ];
+    const prerequisiteWarnings = getPrerequisiteWarnings(conceptIds);
+
+    // Extract activity staleness data
+    const activityData = enrichedBlocks.flatMap((b) =>
+      b.activities.map((a) => ({
+        activityId: a!.activityId,
+        sourceNotePath: a!.sourceNotePath,
+        generatedAt: a!.generatedAt,
+      })),
+    );
+    const staleActivities = getStalenessWarnings(activityData);
+
     return Response.json({
       session: {
         ...composition,
         blocks: enrichedBlocks,
         totalActivities,
+      },
+      warnings: {
+        prerequisites: prerequisiteWarnings,
+        staleActivities,
       },
     });
   } catch (err) {

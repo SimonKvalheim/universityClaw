@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 
@@ -17,6 +18,9 @@ interface EnrichedActivity {
   prompt: string;
   referenceAnswer: string | null;
   cardType: string | null;
+  sourceNotePath: string | null;
+  generatedAt: string;
+  staleReason?: string;
 }
 
 interface EnrichedBlock {
@@ -29,6 +33,26 @@ interface SessionData {
   totalActivities: number;
   estimatedMinutes: number;
   domainsCovered: string[];
+}
+
+interface PrerequisiteWarning {
+  conceptId: string;
+  conceptTitle: string;
+  weakPrerequisites: Array<{
+    id: string;
+    title: string;
+    masteryOverall: number;
+  }>;
+}
+
+interface StalenessWarning {
+  activityId: string;
+  staleReason: 'source_deleted' | 'source_modified';
+}
+
+interface SessionWarnings {
+  prerequisites: PrerequisiteWarning[];
+  staleActivities: StalenessWarning[];
 }
 
 type Phase = 'loading' | 'pre_session' | 'in_progress' | 'post_session' | 'complete';
@@ -175,7 +199,7 @@ function isAiEvalEligible(bloomLevel: number, activityType: string): boolean {
 // Page component
 // ---------------------------------------------------------------------------
 
-export default function StudySessionPage() {
+function StudySessionInner() {
   const searchParams = useSearchParams();
   const planId = searchParams.get('planId');
 
@@ -183,6 +207,10 @@ export default function StudySessionPage() {
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [planTitle, setPlanTitle] = useState<string | null>(null);
+
+  // Warnings
+  const [warnings, setWarnings] = useState<SessionWarnings>({ prerequisites: [], staleActivities: [] });
+  const [prereqWarningDismissed, setPrereqWarningDismissed] = useState(false);
 
   // PRE_SESSION
   const [preConfidence, setPreConfidence] = useState<Record<string, number>>({});
@@ -268,7 +296,7 @@ export default function StudySessionPage() {
     const url = planId ? `/api/study/session?planId=${planId}` : '/api/study/session';
     fetch(url)
       .then((r) => r.json())
-      .then((data: { session?: SessionData; error?: string }) => {
+      .then((data: { session?: SessionData; warnings?: SessionWarnings; error?: string }) => {
         if (data.error) {
           setLoadError(data.error);
           return;
@@ -278,7 +306,23 @@ export default function StudySessionPage() {
           // No activities — stay on loading phase but show empty state
           setSessionData({ blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] });
         } else {
-          setSessionData(session);
+          // Apply staleReason to activities from warnings
+          const sessionWarnings = data.warnings ?? { prerequisites: [], staleActivities: [] };
+          const staleMap = new Map(
+            sessionWarnings.staleActivities.map((w) => [w.activityId, w.staleReason]),
+          );
+          const sessionWithStale: SessionData = {
+            ...session,
+            blocks: session.blocks.map((block) => ({
+              ...block,
+              activities: block.activities.map((a) => ({
+                ...a,
+                staleReason: staleMap.get(a.activityId),
+              })),
+            })),
+          };
+          setSessionData(sessionWithStale);
+          setWarnings(sessionWarnings);
           setPhase('pre_session');
         }
       })
@@ -618,6 +662,41 @@ export default function StudySessionPage() {
           </div>
         )}
 
+        {/* Prerequisite warning banner */}
+        {!prereqWarningDismissed && warnings.prerequisites.length > 0 && (
+          <div className="rounded-lg border border-amber-800/50 bg-amber-900/20 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1.5 flex-1">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  <span className="text-sm font-medium text-amber-300">Prerequisite gaps detected</span>
+                </div>
+                {warnings.prerequisites.map((w) =>
+                  w.weakPrerequisites.map((prereq) => (
+                    <p key={`${w.conceptId}-${prereq.id}`} className="text-sm text-amber-200/80 ml-6">
+                      <span className="font-medium">{w.conceptTitle}</span> depends on{' '}
+                      <span className="font-medium">{prereq.title}</span>{' '}
+                      <span className="text-amber-400">(mastery: {Math.round(prereq.masteryOverall * 100)}%)</span>
+                      {' '}— consider reviewing first
+                    </p>
+                  )),
+                )}
+              </div>
+              <button
+                onClick={() => setPrereqWarningDismissed(true)}
+                className="text-amber-500 hover:text-amber-300 transition-colors shrink-0 mt-0.5"
+                aria-label="Dismiss warning"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div>
           <h2 className="text-xl font-semibold text-gray-100 mb-1">Today&apos;s Session</h2>
@@ -703,6 +782,41 @@ export default function StudySessionPage() {
           </div>
         )}
 
+        {/* Prerequisite warning banner */}
+        {!prereqWarningDismissed && warnings.prerequisites.length > 0 && (
+          <div className="rounded-lg border border-amber-800/50 bg-amber-900/20 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1.5 flex-1">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  <span className="text-sm font-medium text-amber-300">Prerequisite gaps detected</span>
+                </div>
+                {warnings.prerequisites.map((w) =>
+                  w.weakPrerequisites.map((prereq) => (
+                    <p key={`${w.conceptId}-${prereq.id}`} className="text-sm text-amber-200/80 ml-6">
+                      <span className="font-medium">{w.conceptTitle}</span> depends on{' '}
+                      <span className="font-medium">{prereq.title}</span>{' '}
+                      <span className="text-amber-400">(mastery: {Math.round(prereq.masteryOverall * 100)}%)</span>
+                      {' '}— consider reviewing first
+                    </p>
+                  )),
+                )}
+              </div>
+              <button
+                onClick={() => setPrereqWarningDismissed(true)}
+                className="text-amber-500 hover:text-amber-300 transition-colors shrink-0 mt-0.5"
+                aria-label="Dismiss warning"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Progress bar */}
         <div>
           <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -746,6 +860,16 @@ export default function StudySessionPage() {
             <span className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
               {ACTIVITY_TYPE_LABELS[activity.activityType] ?? activity.activityType}
             </span>
+            {activity.staleReason === 'source_deleted' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-amber-900/50 text-amber-400">
+                Source deleted
+              </span>
+            )}
+            {activity.staleReason === 'source_modified' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-amber-900/50 text-amber-400">
+                Source updated
+              </span>
+            )}
           </div>
 
           {/* Prompt */}
@@ -1091,4 +1215,16 @@ export default function StudySessionPage() {
 
   // Fallback (shouldn't reach)
   return null;
+}
+
+export default function StudySessionPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center py-20">
+        <p className="text-sm text-gray-500">Loading session...</p>
+      </div>
+    }>
+      <StudySessionInner />
+    </Suspense>
+  );
 }
