@@ -103,79 +103,6 @@ function formatDate(iso: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Concept selector sub-component
-// ---------------------------------------------------------------------------
-
-interface ConceptSelectorProps {
-  allConcepts: ConceptSummary[];
-  selected: Set<string>;
-  onToggle: (id: string) => void;
-  onSelectAll: (ids: string[]) => void;
-  excludeIds?: Set<string>;
-}
-
-function ConceptSelector({ allConcepts, selected, onToggle, onSelectAll, excludeIds }: ConceptSelectorProps) {
-  const filtered = excludeIds
-    ? allConcepts.filter((c) => !excludeIds.has(c.id))
-    : allConcepts;
-
-  // Group by domain
-  const domainMap = new Map<string, ConceptSummary[]>();
-  for (const c of filtered) {
-    const key = c.domain ?? 'Uncategorised';
-    if (!domainMap.has(key)) domainMap.set(key, []);
-    domainMap.get(key)!.push(c);
-  }
-
-  if (filtered.length === 0) {
-    return <p className="text-sm text-gray-500">No concepts available.</p>;
-  }
-
-  return (
-    <div className="space-y-4">
-      {Array.from(domainMap.entries()).map(([domain, concepts]) => {
-        const domainIds = concepts.map((c) => c.id);
-        const allSelected = domainIds.every((id) => selected.has(id));
-        return (
-          <div key={domain} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{domain}</span>
-              <button
-                type="button"
-                onClick={() => onSelectAll(allSelected ? [] : domainIds)}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                {allSelected ? 'Deselect all' : 'Select all'}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {concepts.map((c) => (
-                <label
-                  key={c.id}
-                  className={`flex items-center gap-1.5 cursor-pointer text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
-                    selected.has(c.id)
-                      ? 'bg-blue-900/40 border-blue-700 text-blue-200'
-                      : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(c.id)}
-                    onChange={() => onToggle(c.id)}
-                    className="w-3 h-3 accent-blue-500"
-                  />
-                  {c.title}
-                </label>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Page component
 // ---------------------------------------------------------------------------
 
@@ -318,16 +245,6 @@ export default function StudyPlanPage() {
     });
   }
 
-  function handleCreateSelectAll(ids: string[]) {
-    if (ids.length === 0) {
-      // Caller signals deselect (passes empty). We need the domain ids from the toggle.
-      // Since ConceptSelector passes all domain ids when deselecting, this is fine.
-      return;
-    }
-    selectAllCreateDomain(ids);
-  }
-
-  // Revised: ConceptSelector onSelectAll passes full domain ids or [] for deselect
   function handleCreateConceptSelectAll(ids: string[], allDomainIds: string[]) {
     if (ids.length === 0) {
       deselectAllCreateDomain(allDomainIds);

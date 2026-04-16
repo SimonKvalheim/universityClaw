@@ -16,6 +16,23 @@ export async function GET(
   }
 }
 
+// Maps camelCase request keys to snake_case DB columns
+const ALLOWED_FIELDS: Record<string, string> = {
+  title: 'title',
+  strategy: 'strategy',
+  status: 'status',
+  domain: 'domain',
+  course: 'course',
+  learningObjectives: 'learning_objectives',
+  desiredOutcomes: 'desired_outcomes',
+  implementationIntention: 'implementation_intention',
+  obstacle: 'obstacle',
+  studySchedule: 'study_schedule',
+  config: 'config',
+  checkpointIntervalDays: 'checkpoint_interval_days',
+  nextCheckpointAt: 'next_checkpoint_at',
+};
+
 export async function PATCH(
   request: Request,
   ctx: { params: Promise<Record<string, string>> },
@@ -23,7 +40,15 @@ export async function PATCH(
   try {
     const { id } = await ctx.params;
     const body = await request.json();
-    updatePlan(id, body);
+    const safeUpdates: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(body)) {
+      const col = ALLOWED_FIELDS[key];
+      if (col) safeUpdates[col] = value;
+    }
+    if (Object.keys(safeUpdates).length === 0) {
+      return Response.json({ error: 'No valid fields to update' }, { status: 400 });
+    }
+    updatePlan(id, safeUpdates);
     const updated = getPlanById(id);
     return Response.json({ plan: updated });
   } catch (err) {
