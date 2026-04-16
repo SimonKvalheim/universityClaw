@@ -19,6 +19,9 @@ import {
   getActivitiesByConcept,
   getConceptsByDomain,
   getLogsByConceptAndLevel,
+  getDueActivities,
+  getPendingConcepts,
+  getActivePlans,
   type NewLearningActivity,
 } from './study/queries.js';
 import { computeDueDate } from './study/sm2.js';
@@ -326,6 +329,9 @@ export async function processTaskIpc(
     // For study_suggest_activity
     activityType?: string;
     author?: string;
+    // For study_session
+    limit?: number;
+    preferredTypes?: string[];
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -974,6 +980,76 @@ export async function processTaskIpc(
 
       logger.info(
         `study_suggest_activity: conceptId=${data.conceptId}, type=${data.activityType}, bloomLevel=${data.bloomLevel}`,
+      );
+      break;
+    }
+
+    case 'study_session': {
+      const ipcBaseDir = path.join(DATA_DIR, 'ipc');
+      const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+      fs.mkdirSync(responsesDir, { recursive: true });
+      const responseFile = path.join(
+        responsesDir,
+        `session-${Date.now()}.json`,
+      );
+
+      const rawLimit = typeof data.limit === 'number' ? data.limit : 20;
+      const limit = Math.max(1, Math.min(rawLimit, 100));
+      const dueActivities = getDueActivities();
+
+      // Filter by preferred types if specified
+      let filtered = dueActivities;
+      if (
+        Array.isArray(data.preferredTypes) &&
+        data.preferredTypes.length > 0
+      ) {
+        const typeSet = new Set(data.preferredTypes);
+        filtered = dueActivities.filter((a) => typeSet.has(a.activityType));
+      }
+
+      // Limit results
+      const limited = filtered.slice(0, limit);
+
+      // Enrich with concept titles
+      const enriched = limited.map((a) => {
+        const concept = getConceptById(a.conceptId);
+        return {
+          id: a.id,
+          conceptTitle: concept?.title ?? 'Unknown',
+          activityType: a.activityType,
+          bloomLevel: a.bloomLevel,
+          dueAt: a.dueAt,
+          prompt: a.prompt,
+        };
+      });
+
+      // Get pending concepts count and active plans
+      const pendingConcepts = getPendingConcepts();
+      const activePlans = getActivePlans();
+
+      fs.writeFileSync(
+        responseFile,
+        JSON.stringify({
+          type: 'session_summary',
+          dueCount: dueActivities.length,
+          pendingConceptCount: pendingConcepts.length,
+          activePlanCount: activePlans.length,
+          dueActivities: enriched,
+          activePlans: activePlans.map((p) => ({
+            id: p.id,
+            title: p.title,
+            status: p.status,
+          })),
+        }),
+      );
+
+      logger.info(
+        {
+          sourceGroup,
+          dueCount: dueActivities.length,
+          returned: enriched.length,
+        },
+        'study_session: wrote session summary',
       );
       break;
     }
