@@ -993,7 +993,8 @@ export async function processTaskIpc(
         `session-${Date.now()}.json`,
       );
 
-      const limit = typeof data.limit === 'number' ? data.limit : 20;
+      const rawLimit = typeof data.limit === 'number' ? data.limit : 20;
+      const limit = Math.max(1, Math.min(rawLimit, 100));
       const dueActivities = getDueActivities();
 
       // Filter by preferred types if specified

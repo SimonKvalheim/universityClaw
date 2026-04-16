@@ -12,13 +12,13 @@ export const MORNING_STUDY_PROMPT = `You are Mr. Rogers, a personal university t
 
 Query the study database at /workspace/project/store/messages.db and do the following:
 
-1. Count learning_activities where due_at <= date('now') and status != 'completed' (due today or overdue).
-2. Count concepts where status = 'pending_approval' (awaiting review).
-3. Check study_plans where status = 'active' for any next_checkpoint_at within the next 2 days.
+1. Count due activities: SELECT count(*) FROM learning_activities WHERE due_at <= date('now')
+2. Count pending concepts: SELECT count(*) FROM concepts WHERE status = 'pending'
+3. Check plan checkpoints: SELECT title, next_checkpoint_at FROM study_plans WHERE status = 'active' AND next_checkpoint_at <= date('now', '+2 days')
 
 Then send a morning study message to the chat. Keep it to 3–5 lines. Use Telegram-friendly formatting (bold with *, no Markdown headers). Example structure:
 - How many activities are due (or "you're all caught up!")
-- Any pending concepts to review
+- Any pending concepts to review on the dashboard
 - Any plan checkpoints coming up soon
 
 If there are between 3 and 5 card_review activities due, offer to start a quick review session right now.`;
@@ -27,10 +27,13 @@ export const WEEKLY_PROGRESS_PROMPT = `You are Mr. Rogers, a personal university
 
 Query the study database at /workspace/project/store/messages.db:
 
-1. From activity_log: count entries where completed_at >= datetime('now', '-7 days'). Break down by activity_type and bloom_level (Bloom distribution).
-2. From concepts: show how many moved from 'pending_approval' → 'active' or 'mastered' in the past 7 days.
-3. From study_plans where status = 'active': show plan title, percent complete (completed_checkpoints / total_checkpoints), and next_checkpoint_at.
-4. Look for concepts at bloom_level >= 4 that share a domain — flag as synthesis opportunities.
+1. Activity this week: SELECT count(*) FROM activity_log WHERE reviewed_at >= date('now', '-7 days')
+   Bloom distribution: SELECT bloom_level, count(*) FROM activity_log WHERE reviewed_at >= date('now', '-7 days') GROUP BY bloom_level
+   Average quality: SELECT avg(quality) FROM activity_log WHERE reviewed_at >= date('now', '-7 days')
+2. Concept progression: SELECT count(*) FROM concepts WHERE status = 'active' AND created_at >= date('now', '-7 days') (recently approved concepts)
+3. Active plans: SELECT title, status, next_checkpoint_at FROM study_plans WHERE status = 'active'
+   Plan progress: for each plan, count concepts at target bloom via study_plan_concepts joined with concepts (bloom_ceiling >= target_bloom)
+4. Synthesis opportunities: SELECT title, domain, bloom_ceiling FROM concepts WHERE bloom_ceiling >= 4 AND status = 'active' ORDER BY domain — flag domains with 2+ concepts at bloom_ceiling >= 4
 
 Write a concise weekly summary (6–10 lines, Telegram formatting). Highlight what went well, what areas need attention, and one actionable suggestion for the coming week.`;
 
@@ -38,12 +41,13 @@ export const MONTHLY_MASTERY_PROMPT = `You are Mr. Rogers, a personal university
 
 Query the study database at /workspace/project/store/messages.db for a comprehensive mastery snapshot:
 
-1. For each concept: title, current bloom_level, last activity completion date, total activities completed vs. generated.
-2. Detect knowledge decay: concepts with no activity_log entry in the past 30 days that are not 'mastered' — flag these.
-3. Growth trajectory: compare bloom_level distribution now vs. 30 days ago (use activity_log timestamps as a proxy).
-4. Study plans: for each active plan show title, status, days since last checkpoint, and whether the plan is on track.
+1. All active concepts: SELECT title, domain, bloom_ceiling, mastery_overall, last_activity_at FROM concepts WHERE status = 'active' ORDER BY domain, mastery_overall DESC
+2. Decay detection: concepts with no recent activity — SELECT c.title, c.domain, c.bloom_ceiling, c.last_activity_at FROM concepts c WHERE c.status = 'active' AND (c.last_activity_at IS NULL OR c.last_activity_at < date('now', '-30 days')) — flag these as at risk of forgetting
+3. Growth trajectory: bloom_ceiling distribution — SELECT bloom_ceiling, count(*) FROM concepts WHERE status = 'active' GROUP BY bloom_ceiling
+   Monthly activity volume: SELECT strftime('%Y-%m', reviewed_at) as month, count(*) FROM activity_log GROUP BY month ORDER BY month DESC LIMIT 3
+4. Plan status: SELECT title, status, next_checkpoint_at FROM study_plans WHERE status = 'active'
 
-Write a monthly mastery report (8–12 lines, Telegram formatting). Cover: top mastered concepts, areas of decay risk, overall growth trend, and a recommended focus area for the coming month.`;
+Write a monthly mastery report (8–12 lines, Telegram formatting). Cover: highest mastery concepts, areas of decay risk, overall growth trend, and a recommended focus area for the coming month.`;
 
 // ============================================================
 // Task definition type

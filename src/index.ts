@@ -768,7 +768,14 @@ async function main(): Promise<void> {
     ([, g]) => g.folder === 'telegram_main',
   );
   if (telegramMainEntry) {
-    registerStudyScheduledTasks(telegramMainEntry[0]);
+    try {
+      registerStudyScheduledTasks(telegramMainEntry[0]);
+    } catch (err) {
+      logger.error(
+        { err },
+        'Failed to register study scheduled tasks — continuing startup',
+      );
+    }
   } else {
     logger.warn(
       'telegram_main group not registered — skipping study task registration',
