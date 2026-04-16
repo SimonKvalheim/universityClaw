@@ -9,7 +9,7 @@
 
 import { eq, and, lte, asc, desc, count, sql, inArray, isNull, gte } from 'drizzle-orm';
 import { getDb } from './db/index';
-import { concepts, learning_activities, study_sessions, activity_log, study_plans, study_plan_concepts } from './db/schema';
+import { concepts, learning_activities, study_sessions, activity_log, study_plans, study_plan_concepts, concept_prerequisites, activity_concepts } from './db/schema';
 import {
   sm2,
   computeDueDate,
@@ -1234,4 +1234,233 @@ export function pearsonCorrelation(
   const den = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
   if (den === 0) return 0;
   return num / den;
+}
+
+// ---------------------------------------------------------------------------
+// Concept detail
+// ---------------------------------------------------------------------------
+
+export interface ConceptDetail {
+  id: string;
+  title: string;
+  domain: string | null;
+  subdomain: string | null;
+  course: string | null;
+  vaultNotePath: string | null;
+  status: string;
+  bloomCeiling: number;
+  masteryOverall: number;
+  masteryL1: number;
+  masteryL2: number;
+  masteryL3: number;
+  masteryL4: number;
+  masteryL5: number;
+  masteryL6: number;
+  createdAt: string;
+  lastActivityAt: string | null;
+  dueCount: number;
+  totalActivities: number;
+  activities: Array<{
+    id: string;
+    activityType: string;
+    bloomLevel: number;
+    dueAt: string;
+    masteryState: string;
+    author: string;
+  }>;
+  recentLogs: Array<{
+    id: string;
+    activityType: string;
+    bloomLevel: number;
+    quality: number;
+    evaluationMethod: string;
+    reviewedAt: string;
+  }>;
+  methodEffectiveness: Array<{
+    activityType: string;
+    avgQuality: number;
+    count: number;
+  }>;
+  relatedConcepts: Array<{
+    id: string;
+    title: string;
+    role: string;
+  }>;
+  prerequisites: Array<{
+    id: string;
+    title: string;
+    bloomCeiling: number;
+    masteryOverall: number;
+  }>;
+}
+
+/**
+ * Full concept detail including mastery breakdown, activity history, method
+ * effectiveness, related concepts, and prerequisites. Returns null if not found.
+ */
+export function getConceptDetail(id: string): ConceptDetail | null {
+  const db = getDb();
+
+  // 1. Concept row
+  const concept = db
+    .select()
+    .from(concepts)
+    .where(eq(concepts.id, id))
+    .get();
+  if (!concept) return null;
+
+  // 2. All activities for this concept
+  const activityRows = db
+    .select()
+    .from(learning_activities)
+    .where(eq(learning_activities.concept_id, id))
+    .orderBy(asc(learning_activities.bloom_level))
+    .all();
+
+  // 3. Due count
+  const today = new Date().toISOString();
+  const dueRow = db
+    .select({ cnt: count(learning_activities.id) })
+    .from(learning_activities)
+    .where(
+      and(
+        eq(learning_activities.concept_id, id),
+        lte(learning_activities.due_at, today),
+      ),
+    )
+    .get();
+  const dueCount = dueRow?.cnt ?? 0;
+
+  // 4. Recent logs (last 20)
+  const logRows = db
+    .select()
+    .from(activity_log)
+    .where(eq(activity_log.concept_id, id))
+    .orderBy(desc(activity_log.reviewed_at))
+    .limit(20)
+    .all();
+
+  // 5. Method effectiveness: group activity_log by activity_type
+  const methodRows = db
+    .select({
+      activityType: activity_log.activity_type,
+      avgQuality: sql<number>`avg(${activity_log.quality})`,
+      cnt: count(),
+    })
+    .from(activity_log)
+    .where(eq(activity_log.concept_id, id))
+    .groupBy(activity_log.activity_type)
+    .orderBy(desc(sql<number>`avg(${activity_log.quality})`))
+    .all();
+
+  // 6. Related concepts: activity_ids for this concept → activity_concepts → concepts
+  const activityIds = activityRows.map((a) => a.id);
+  let relatedConcepts: ConceptDetail['relatedConcepts'] = [];
+  if (activityIds.length > 0) {
+    const acRows = db
+      .select({
+        concept_id: activity_concepts.concept_id,
+        role: activity_concepts.role,
+      })
+      .from(activity_concepts)
+      .where(inArray(activity_concepts.activity_id, activityIds))
+      .all();
+
+    const relatedIds = acRows
+      .map((r) => r.concept_id)
+      .filter((cid) => cid !== id);
+
+    if (relatedIds.length > 0) {
+      const roleMap = new Map<string, string>();
+      for (const r of acRows) {
+        if (r.concept_id !== id) roleMap.set(r.concept_id, r.role ?? 'related');
+      }
+
+      const relatedRows = db
+        .select({ id: concepts.id, title: concepts.title })
+        .from(concepts)
+        .where(inArray(concepts.id, relatedIds))
+        .all();
+
+      relatedConcepts = relatedRows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        role: roleMap.get(r.id) ?? 'related',
+      }));
+    }
+  }
+
+  // 7. Prerequisites: concept_prerequisites → concepts
+  const prereqLinks = db
+    .select({ prerequisite_id: concept_prerequisites.prerequisite_id })
+    .from(concept_prerequisites)
+    .where(eq(concept_prerequisites.concept_id, id))
+    .all();
+
+  let prerequisites: ConceptDetail['prerequisites'] = [];
+  if (prereqLinks.length > 0) {
+    const prereqIds = prereqLinks.map((r) => r.prerequisite_id);
+    const prereqRows = db
+      .select({
+        id: concepts.id,
+        title: concepts.title,
+        bloom_ceiling: concepts.bloom_ceiling,
+        mastery_overall: concepts.mastery_overall,
+      })
+      .from(concepts)
+      .where(inArray(concepts.id, prereqIds))
+      .all();
+
+    prerequisites = prereqRows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      bloomCeiling: r.bloom_ceiling ?? 0,
+      masteryOverall: r.mastery_overall ?? 0,
+    }));
+  }
+
+  return {
+    id: concept.id,
+    title: concept.title,
+    domain: concept.domain ?? null,
+    subdomain: concept.subdomain ?? null,
+    course: concept.course ?? null,
+    vaultNotePath: concept.vault_note_path ?? null,
+    status: concept.status ?? 'active',
+    bloomCeiling: concept.bloom_ceiling ?? 0,
+    masteryOverall: concept.mastery_overall ?? 0,
+    masteryL1: concept.mastery_L1 ?? 0,
+    masteryL2: concept.mastery_L2 ?? 0,
+    masteryL3: concept.mastery_L3 ?? 0,
+    masteryL4: concept.mastery_L4 ?? 0,
+    masteryL5: concept.mastery_L5 ?? 0,
+    masteryL6: concept.mastery_L6 ?? 0,
+    createdAt: concept.created_at,
+    lastActivityAt: concept.last_activity_at ?? null,
+    dueCount,
+    totalActivities: activityRows.length,
+    activities: activityRows.map((a) => ({
+      id: a.id,
+      activityType: a.activity_type,
+      bloomLevel: a.bloom_level,
+      dueAt: a.due_at,
+      masteryState: a.mastery_state ?? 'new',
+      author: a.author ?? 'system',
+    })),
+    recentLogs: logRows.map((l) => ({
+      id: l.id,
+      activityType: l.activity_type,
+      bloomLevel: l.bloom_level,
+      quality: l.quality,
+      evaluationMethod: l.evaluation_method ?? 'self_rated',
+      reviewedAt: l.reviewed_at,
+    })),
+    methodEffectiveness: methodRows.map((m) => ({
+      activityType: m.activityType,
+      avgQuality: m.avgQuality,
+      count: m.cnt,
+    })),
+    relatedConcepts,
+    prerequisites,
+  };
 }

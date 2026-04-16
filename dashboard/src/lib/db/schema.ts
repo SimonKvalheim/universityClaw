@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const ingestion_jobs = sqliteTable('ingestion_jobs', {
@@ -129,3 +129,18 @@ export const study_plan_concepts = sqliteTable('study_plan_concepts', {
   target_bloom: integer('target_bloom').default(6),
   sort_order: integer('sort_order').default(0),
 });
+
+export const concept_prerequisites = sqliteTable('concept_prerequisites', {
+  concept_id: text('concept_id').notNull(),
+  prerequisite_id: text('prerequisite_id').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.concept_id, table.prerequisite_id] }),
+]);
+
+export const activity_concepts = sqliteTable('activity_concepts', {
+  activity_id: text('activity_id').notNull(),
+  concept_id: text('concept_id').notNull(),
+  role: text('role').default('related'),
+}, (table) => [
+  primaryKey({ columns: [table.activity_id, table.concept_id] }),
+]);
