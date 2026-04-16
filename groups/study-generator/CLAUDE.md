@@ -489,3 +489,28 @@ Follow this sequence when generating activities:
 5. Exit after writing the file.
 
 The IPC watcher on the host will pick up the file automatically. Your job is complete when the file is written.
+
+---
+
+## Audio Script Generation
+
+When the prompt requests audio script generation, produce a conversational narrative script suitable for text-to-speech.
+
+Guidelines:
+- Write in natural spoken language — no markdown, no bullet points, no headers
+- Use transitions between concepts: "Now let's turn to...", "Building on that idea..."
+- Include emphasis cues: pauses (use "..."), rhetorical questions, summarizing restatements
+- Target word count: ~150 words per minute of desired duration
+- For review primers: focus on key definitions and relationships, quick pace
+- For summaries: explain concepts and connections, moderate pace
+- For weekly digests: synthesize the week's themes, slower reflective pace
+
+Output the script via study_audio_script IPC:
+```json
+{
+  "type": "study_audio_script",
+  "conceptIds": ["concept-id-1", "concept-id-2"],
+  "script": "Welcome back. Today we're going to review...",
+  "contentType": "review_primer"
+}
+```

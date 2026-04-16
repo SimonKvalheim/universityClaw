@@ -422,12 +422,15 @@ export function getPlanProgress(planId: string): PlanProgress | null {
       targetBloom: schema.studyPlanConcepts.targetBloom,
     })
     .from(schema.studyPlanConcepts)
-    .innerJoin(schema.concepts, eq(schema.studyPlanConcepts.conceptId, schema.concepts.id))
+    .innerJoin(
+      schema.concepts,
+      eq(schema.studyPlanConcepts.conceptId, schema.concepts.id),
+    )
     .where(eq(schema.studyPlanConcepts.planId, planId))
     .orderBy(asc(schema.studyPlanConcepts.sortOrder))
     .all();
 
-  const details: PlanConceptProgress[] = rows.map(r => ({
+  const details: PlanConceptProgress[] = rows.map((r) => ({
     conceptId: r.conceptId,
     conceptTitle: r.conceptTitle,
     domain: r.domain,
@@ -437,13 +440,14 @@ export function getPlanProgress(planId: string): PlanProgress | null {
     atTarget: (r.bloomCeiling ?? 0) >= (r.targetBloom ?? 6),
   }));
 
-  const atTarget = details.filter(d => d.atTarget).length;
+  const atTarget = details.filter((d) => d.atTarget).length;
 
   return {
     planId,
     totalConcepts: details.length,
     conceptsAtTarget: atTarget,
-    progressPercent: details.length > 0 ? Math.round((atTarget / details.length) * 100) : 0,
+    progressPercent:
+      details.length > 0 ? Math.round((atTarget / details.length) * 100) : 0,
     conceptDetails: details,
   };
 }
@@ -475,7 +479,7 @@ export function getPlanConceptIds(planId: string): string[] {
     .from(schema.studyPlanConcepts)
     .where(eq(schema.studyPlanConcepts.planId, planId))
     .all()
-    .map(r => r.conceptId);
+    .map((r) => r.conceptId);
 }
 
 // ====================================================================

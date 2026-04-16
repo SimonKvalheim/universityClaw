@@ -9,7 +9,7 @@
 
 import { eq, and, lte, asc, desc, count, sql, inArray, isNull, gte } from 'drizzle-orm';
 import { getDb } from './db/index';
-import { concepts, learning_activities, study_sessions, activity_log, study_plans, study_plan_concepts } from './db/schema';
+import { concepts, learning_activities, study_sessions, activity_log, study_plans, study_plan_concepts, concept_prerequisites, activity_concepts } from './db/schema';
 import {
   sm2,
   computeDueDate,
@@ -262,6 +262,7 @@ export interface CompleteActivityInput {
   responseText?: string;
   responseTimeMs?: number;
   confidenceRating?: number;
+  scaffoldingLevel?: number;
   surface?: string;
 }
 
@@ -354,6 +355,7 @@ export function completeActivity(input: CompleteActivityInput): CompleteActivity
         response_text: input.responseText ?? null,
         response_time_ms: input.responseTimeMs ?? null,
         confidence_rating: input.confidenceRating ?? null,
+        scaffolding_level: input.scaffoldingLevel ?? 0,
         evaluation_method: 'self_rated',
         ai_quality: null,
         ai_feedback: null,
@@ -1022,4 +1024,447 @@ export function removeConceptFromPlan(planId: string, conceptId: string): void {
       ),
     )
     .run();
+}
+
+// ---------------------------------------------------------------------------
+// Analytics queries
+// ---------------------------------------------------------------------------
+
+export interface RetentionRate {
+  retentionRate: number;
+  totalReviews: number;
+  correctReviews: number;
+}
+
+/**
+ * Fraction of activity_log entries in the last `days` days with quality >= 3.
+ */
+export function getRetentionRate(days: number): RetentionRate {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      quality: activity_log.quality,
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .all();
+
+  const totalReviews = rows.length;
+  const correctReviews = rows.filter((r) => r.quality >= 3).length;
+  const retentionRate = totalReviews === 0 ? 0 : correctReviews / totalReviews;
+
+  return { retentionRate, totalReviews, correctReviews };
+}
+
+export interface BloomDistributionItem {
+  bloomLevel: number;
+  count: number;
+  percentage: number;
+}
+
+/**
+ * Count of activity_log entries grouped by bloom_level for the last `days` days.
+ */
+export function getBloomDistribution(days: number): BloomDistributionItem[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      bloomLevel: activity_log.bloom_level,
+      cnt: count(),
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .groupBy(activity_log.bloom_level)
+    .orderBy(asc(activity_log.bloom_level))
+    .all();
+
+  const total = rows.reduce((sum, r) => sum + r.cnt, 0);
+
+  return rows.map((r) => ({
+    bloomLevel: r.bloomLevel,
+    count: r.cnt,
+    percentage: total === 0 ? 0 : (r.cnt / total) * 100,
+  }));
+}
+
+export interface MethodEffectivenessItem {
+  activityType: string;
+  avgQuality: number;
+  count: number;
+}
+
+/**
+ * Average quality and count of reviews grouped by activity_type, ordered by
+ * average quality descending. Filtered to the last `days` days.
+ */
+export function getMethodEffectiveness(days: number): MethodEffectivenessItem[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      activityType: activity_log.activity_type,
+      avgQuality: sql<number>`avg(${activity_log.quality})`,
+      cnt: count(),
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .groupBy(activity_log.activity_type)
+    .orderBy(desc(sql<number>`avg(${activity_log.quality})`))
+    .all();
+
+  return rows.map((r) => ({
+    activityType: r.activityType,
+    avgQuality: r.avgQuality,
+    count: r.cnt,
+  }));
+}
+
+export interface TimeSeriesItem {
+  date: string;
+  count: number;
+  avgQuality: number;
+}
+
+/**
+ * Daily activity counts and average quality for the last `days` days.
+ * Days with no activity are filled with zero-count entries.
+ */
+export function getActivityTimeSeries(days: number): TimeSeriesItem[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      date: sql<string>`date(${activity_log.reviewed_at})`,
+      cnt: count(),
+      avgQuality: sql<number>`avg(${activity_log.quality})`,
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .groupBy(sql`date(${activity_log.reviewed_at})`)
+    .orderBy(asc(sql`date(${activity_log.reviewed_at})`))
+    .all();
+
+  // Build a map of existing results
+  const resultMap = new Map<string, { count: number; avgQuality: number }>();
+  for (const r of rows) {
+    resultMap.set(r.date, { count: r.cnt, avgQuality: r.avgQuality });
+  }
+
+  // Fill gaps: produce one entry per day from cutoff to today
+  const msPerDay = 86400000;
+  const today = new Date();
+  const series: TimeSeriesItem[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * msPerDay);
+    const dateStr = d.toISOString().slice(0, 10);
+    const existing = resultMap.get(dateStr);
+    series.push({
+      date: dateStr,
+      count: existing?.count ?? 0,
+      avgQuality: existing?.avgQuality ?? 0,
+    });
+  }
+
+  return series;
+}
+
+export interface CalibrationData {
+  calibrationScore: number | null;
+  dataPoints: number;
+}
+
+/**
+ * Pearson correlation between confidence_rating and quality for the last
+ * `days` days. Returns null calibrationScore when fewer than 5 data points.
+ */
+export function getCalibrationData(days: number): CalibrationData {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      confidence: activity_log.confidence_rating,
+      quality: activity_log.quality,
+    })
+    .from(activity_log)
+    .where(
+      and(
+        gte(activity_log.reviewed_at, cutoff),
+        sql`${activity_log.confidence_rating} IS NOT NULL`,
+      ),
+    )
+    .all();
+
+  // Filter out any null confidence_rating values that may have slipped through
+  const pts = rows.filter((r) => r.confidence !== null) as {
+    confidence: number;
+    quality: number;
+  }[];
+
+  if (pts.length < 5) {
+    return { calibrationScore: null, dataPoints: pts.length };
+  }
+
+  return { calibrationScore: pearsonCorrelation(pts), dataPoints: pts.length };
+}
+
+/**
+ * Compute Pearson r between confidence and quality for the given data points.
+ * Exported for unit testing.
+ */
+export function pearsonCorrelation(
+  pts: { confidence: number; quality: number }[],
+): number {
+  const n = pts.length;
+  let sumX = 0,
+    sumY = 0,
+    sumXY = 0,
+    sumX2 = 0,
+    sumY2 = 0;
+  for (const { confidence: x, quality: y } of pts) {
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumX2 += x * x;
+    sumY2 += y * y;
+  }
+  const num = n * sumXY - sumX * sumY;
+  const den = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+  if (den === 0) return 0;
+  return num / den;
+}
+
+// ---------------------------------------------------------------------------
+// Concept detail
+// ---------------------------------------------------------------------------
+
+export interface ConceptDetail {
+  id: string;
+  title: string;
+  domain: string | null;
+  subdomain: string | null;
+  course: string | null;
+  vaultNotePath: string | null;
+  status: string;
+  bloomCeiling: number;
+  masteryOverall: number;
+  masteryL1: number;
+  masteryL2: number;
+  masteryL3: number;
+  masteryL4: number;
+  masteryL5: number;
+  masteryL6: number;
+  createdAt: string;
+  lastActivityAt: string | null;
+  dueCount: number;
+  totalActivities: number;
+  activities: Array<{
+    id: string;
+    activityType: string;
+    bloomLevel: number;
+    dueAt: string;
+    masteryState: string;
+    author: string;
+  }>;
+  recentLogs: Array<{
+    id: string;
+    activityType: string;
+    bloomLevel: number;
+    quality: number;
+    evaluationMethod: string;
+    reviewedAt: string;
+  }>;
+  methodEffectiveness: Array<{
+    activityType: string;
+    avgQuality: number;
+    count: number;
+  }>;
+  relatedConcepts: Array<{
+    id: string;
+    title: string;
+    role: string;
+  }>;
+  prerequisites: Array<{
+    id: string;
+    title: string;
+    bloomCeiling: number;
+    masteryOverall: number;
+  }>;
+}
+
+/**
+ * Full concept detail including mastery breakdown, activity history, method
+ * effectiveness, related concepts, and prerequisites. Returns null if not found.
+ */
+export function getConceptDetail(id: string): ConceptDetail | null {
+  const db = getDb();
+
+  // 1. Concept row
+  const concept = db
+    .select()
+    .from(concepts)
+    .where(eq(concepts.id, id))
+    .get();
+  if (!concept) return null;
+
+  // 2. All activities for this concept
+  const activityRows = db
+    .select()
+    .from(learning_activities)
+    .where(eq(learning_activities.concept_id, id))
+    .orderBy(asc(learning_activities.bloom_level))
+    .all();
+
+  // 3. Due count
+  const today = new Date().toISOString();
+  const dueRow = db
+    .select({ cnt: count(learning_activities.id) })
+    .from(learning_activities)
+    .where(
+      and(
+        eq(learning_activities.concept_id, id),
+        lte(learning_activities.due_at, today),
+      ),
+    )
+    .get();
+  const dueCount = dueRow?.cnt ?? 0;
+
+  // 4. Recent logs (last 20)
+  const logRows = db
+    .select()
+    .from(activity_log)
+    .where(eq(activity_log.concept_id, id))
+    .orderBy(desc(activity_log.reviewed_at))
+    .limit(20)
+    .all();
+
+  // 5. Method effectiveness: group activity_log by activity_type
+  const methodRows = db
+    .select({
+      activityType: activity_log.activity_type,
+      avgQuality: sql<number>`avg(${activity_log.quality})`,
+      cnt: count(),
+    })
+    .from(activity_log)
+    .where(eq(activity_log.concept_id, id))
+    .groupBy(activity_log.activity_type)
+    .orderBy(desc(sql<number>`avg(${activity_log.quality})`))
+    .all();
+
+  // 6. Related concepts: activity_ids for this concept → activity_concepts → concepts
+  const activityIds = activityRows.map((a) => a.id);
+  let relatedConcepts: ConceptDetail['relatedConcepts'] = [];
+  if (activityIds.length > 0) {
+    const acRows = db
+      .select({
+        concept_id: activity_concepts.concept_id,
+        role: activity_concepts.role,
+      })
+      .from(activity_concepts)
+      .where(inArray(activity_concepts.activity_id, activityIds))
+      .all();
+
+    const relatedIds = acRows
+      .map((r) => r.concept_id)
+      .filter((cid) => cid !== id);
+
+    if (relatedIds.length > 0) {
+      const roleMap = new Map<string, string>();
+      for (const r of acRows) {
+        if (r.concept_id !== id) roleMap.set(r.concept_id, r.role ?? 'related');
+      }
+
+      const relatedRows = db
+        .select({ id: concepts.id, title: concepts.title })
+        .from(concepts)
+        .where(inArray(concepts.id, relatedIds))
+        .all();
+
+      relatedConcepts = relatedRows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        role: roleMap.get(r.id) ?? 'related',
+      }));
+    }
+  }
+
+  // 7. Prerequisites: concept_prerequisites → concepts
+  const prereqLinks = db
+    .select({ prerequisite_id: concept_prerequisites.prerequisite_id })
+    .from(concept_prerequisites)
+    .where(eq(concept_prerequisites.concept_id, id))
+    .all();
+
+  let prerequisites: ConceptDetail['prerequisites'] = [];
+  if (prereqLinks.length > 0) {
+    const prereqIds = prereqLinks.map((r) => r.prerequisite_id);
+    const prereqRows = db
+      .select({
+        id: concepts.id,
+        title: concepts.title,
+        bloom_ceiling: concepts.bloom_ceiling,
+        mastery_overall: concepts.mastery_overall,
+      })
+      .from(concepts)
+      .where(inArray(concepts.id, prereqIds))
+      .all();
+
+    prerequisites = prereqRows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      bloomCeiling: r.bloom_ceiling ?? 0,
+      masteryOverall: r.mastery_overall ?? 0,
+    }));
+  }
+
+  return {
+    id: concept.id,
+    title: concept.title,
+    domain: concept.domain ?? null,
+    subdomain: concept.subdomain ?? null,
+    course: concept.course ?? null,
+    vaultNotePath: concept.vault_note_path ?? null,
+    status: concept.status ?? 'active',
+    bloomCeiling: concept.bloom_ceiling ?? 0,
+    masteryOverall: concept.mastery_overall ?? 0,
+    masteryL1: concept.mastery_L1 ?? 0,
+    masteryL2: concept.mastery_L2 ?? 0,
+    masteryL3: concept.mastery_L3 ?? 0,
+    masteryL4: concept.mastery_L4 ?? 0,
+    masteryL5: concept.mastery_L5 ?? 0,
+    masteryL6: concept.mastery_L6 ?? 0,
+    createdAt: concept.created_at,
+    lastActivityAt: concept.last_activity_at ?? null,
+    dueCount,
+    totalActivities: activityRows.length,
+    activities: activityRows.map((a) => ({
+      id: a.id,
+      activityType: a.activity_type,
+      bloomLevel: a.bloom_level,
+      dueAt: a.due_at,
+      masteryState: a.mastery_state ?? 'new',
+      author: a.author ?? 'system',
+    })),
+    recentLogs: logRows.map((l) => ({
+      id: l.id,
+      activityType: l.activity_type,
+      bloomLevel: l.bloom_level,
+      quality: l.quality,
+      evaluationMethod: l.evaluation_method ?? 'self_rated',
+      reviewedAt: l.reviewed_at,
+    })),
+    methodEffectiveness: methodRows.map((m) => ({
+      activityType: m.activityType,
+      avgQuality: m.avgQuality,
+      count: m.cnt,
+    })),
+    relatedConcepts,
+    prerequisites,
+  };
 }

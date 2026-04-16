@@ -14,6 +14,15 @@ const BLOOM_LABELS: Record<number, string> = {
 
 const MASTERY_THRESHOLD = 10.0;
 
+const BLOOM_COLORS: Record<number, string> = {
+  1: 'bg-blue-300',
+  2: 'bg-blue-400',
+  3: 'bg-blue-500',
+  4: 'bg-blue-600',
+  5: 'bg-blue-700',
+  6: 'bg-blue-800',
+};
+
 interface PlanSummary {
   id: string;
   title: string;
@@ -35,6 +44,44 @@ interface SessionPreview {
   domainsCovered: string[];
 }
 
+interface RetentionRate {
+  retentionRate: number;
+  totalReviews: number;
+  correctReviews: number;
+}
+
+interface BloomDistributionItem {
+  bloomLevel: number;
+  count: number;
+  percentage: number;
+}
+
+interface MethodEffectivenessItem {
+  activityType: string;
+  avgQuality: number;
+  count: number;
+}
+
+interface ActivityTimeSeriesItem {
+  date: string;
+  count: number;
+  avgQuality: number;
+}
+
+interface Calibration {
+  calibrationScore: number | null;
+  dataPoints: number;
+}
+
+interface StudyStats {
+  retentionRate: RetentionRate;
+  bloomDistribution: BloomDistributionItem[];
+  methodEffectiveness: MethodEffectivenessItem[];
+  activityTimeSeries: ActivityTimeSeriesItem[];
+  calibration: Calibration;
+  period: { days: number; from: string; to: string };
+}
+
 export default function StudyPage() {
   const [concepts, setConcepts] = useState<ConceptSummary[]>([]);
   const [pendingGroups, setPendingGroups] = useState<PendingGroup[]>([]);
@@ -43,6 +90,10 @@ export default function StudyPage() {
   const [streak, setStreak] = useState<number>(0);
   const [activePlans, setActivePlans] = useState<PlanSummary[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<7 | 30 | 9999>(7);
+  const [analyticsData, setAnalyticsData] = useState<StudyStats | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -78,9 +129,26 @@ export default function StudyPage() {
     }
   }, []);
 
+  const fetchAnalytics = useCallback(async (days: number) => {
+    setAnalyticsLoading(true);
+    try {
+      const res = await fetch(`/api/study/stats?days=${days}`);
+      const data = await res.json() as StudyStats;
+      setAnalyticsData(data);
+    } catch {
+      // silently fail
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    fetchAnalytics(analyticsPeriod);
+  }, [fetchAnalytics, analyticsPeriod]);
 
   const approveDomain = useCallback(async (domain: string) => {
     await fetch('/api/study/concepts/approve', {
@@ -118,6 +186,36 @@ export default function StudyPage() {
       }
     }
   }
+
+  // Compute analytics summary values
+  const totalActivities = analyticsData
+    ? analyticsData.activityTimeSeries.reduce((sum, d) => sum + d.count, 0)
+    : 0;
+
+  const avgQuality = analyticsData && analyticsData.activityTimeSeries.length > 0
+    ? analyticsData.activityTimeSeries.reduce((sum, d) => sum + d.avgQuality * d.count, 0) /
+      Math.max(1, totalActivities)
+    : null;
+
+  const retentionPct = analyticsData ? Math.round(analyticsData.retentionRate.retentionRate * 100) : null;
+  const calibrationPct = analyticsData?.calibration.calibrationScore != null
+    ? Math.round(analyticsData.calibration.calibrationScore * 100)
+    : null;
+
+  const retentionColor =
+    retentionPct == null
+      ? 'text-gray-400'
+      : retentionPct > 80
+        ? 'text-green-400'
+        : retentionPct > 60
+          ? 'text-yellow-400'
+          : 'text-red-400';
+
+  const PERIOD_OPTIONS: Array<{ label: string; value: 7 | 30 | 9999 }> = [
+    { label: '7 days', value: 7 },
+    { label: '30 days', value: 30 },
+    { label: 'All time', value: 9999 },
+  ];
 
   return (
     <div className="max-w-5xl space-y-8">
@@ -212,7 +310,133 @@ export default function StudyPage() {
         )}
       </section>
 
-      {/* Section 2 — Pending Approval */}
+      {/* Section 2 — Analytics */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Analytics</h3>
+          <div className="flex gap-1">
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setAnalyticsPeriod(opt.value)}
+                className={`text-xs px-3 py-1 rounded-md transition-colors ${
+                  analyticsPeriod === opt.value
+                    ? 'bg-blue-700 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:text-gray-300'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {analyticsLoading ? (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-8 text-center">
+            <p className="text-sm text-gray-500">Loading analytics...</p>
+          </div>
+        ) : analyticsData ? (
+          <div className="space-y-4">
+            {/* Summary cards */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+                <p className="text-xs text-gray-500 mb-1">Retention rate</p>
+                <p className={`text-2xl font-semibold ${retentionColor}`}>
+                  {retentionPct != null ? `${retentionPct}%` : '—'}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {analyticsData.retentionRate.correctReviews}/{analyticsData.retentionRate.totalReviews} reviews
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+                <p className="text-xs text-gray-500 mb-1">Activities</p>
+                <p className="text-2xl font-semibold text-gray-100">{totalActivities}</p>
+                <p className="text-xs text-gray-600 mt-0.5">this period</p>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+                <p className="text-xs text-gray-500 mb-1">Avg quality</p>
+                <p className="text-2xl font-semibold text-gray-100">
+                  {avgQuality != null ? `${avgQuality.toFixed(1)} / 5` : '—'}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">per activity</p>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+                <p className="text-xs text-gray-500 mb-1">Calibration</p>
+                <p className="text-2xl font-semibold text-gray-100">
+                  {calibrationPct != null ? `${calibrationPct}%` : '—'}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {analyticsData.calibration.dataPoints} data pts
+                </p>
+              </div>
+            </div>
+
+            {/* Bloom's distribution */}
+            {analyticsData.bloomDistribution.length > 0 && (
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-2">
+                <p className="text-xs text-gray-500 uppercase tracking-wider">Bloom&apos;s distribution</p>
+                <div className="flex h-5 rounded overflow-hidden">
+                  {analyticsData.bloomDistribution.map((item) => (
+                    <div
+                      key={item.bloomLevel}
+                      className={`${BLOOM_COLORS[item.bloomLevel] ?? 'bg-blue-500'}`}
+                      style={{ width: `${item.percentage}%` }}
+                      title={`L${item.bloomLevel}: ${item.count} (${Math.round(item.percentage)}%)`}
+                    />
+                  ))}
+                </div>
+                <div className="flex">
+                  {analyticsData.bloomDistribution.map((item) => (
+                    <div
+                      key={item.bloomLevel}
+                      style={{ width: `${item.percentage}%` }}
+                      className="text-center overflow-hidden"
+                    >
+                      <span className="text-xs text-gray-500 whitespace-nowrap">
+                        {item.percentage >= 8 ? `L${item.bloomLevel} ${Math.round(item.percentage)}%` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Method effectiveness */}
+            {analyticsData.methodEffectiveness.length > 0 && (
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3">
+                <p className="text-xs text-gray-500 uppercase tracking-wider">Method effectiveness</p>
+                <div className="space-y-2">
+                  {analyticsData.methodEffectiveness.map((method) => (
+                    <div key={method.activityType} className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-300">{method.activityType}</span>
+                        <span className="text-xs text-gray-500">
+                          {method.avgQuality.toFixed(1)} / 5 · {method.count} activities
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-600 rounded-full"
+                          style={{ width: `${(method.avgQuality / 5) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-8 text-center">
+            <p className="text-sm text-gray-500">No analytics data available.</p>
+          </div>
+        )}
+      </section>
+
+      {/* Section 3 — Pending Approval */}
       {pendingGroups.length > 0 && (
         <section className="space-y-4">
           <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Pending Approval</h3>
@@ -254,7 +478,7 @@ export default function StudyPage() {
         </section>
       )}
 
-      {/* Section 3 — Active Concepts */}
+      {/* Section 4 — Active Concepts */}
       <section className="space-y-4">
         <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Active Concepts</h3>
         {concepts.length === 0 ? (
@@ -286,7 +510,12 @@ export default function StudyPage() {
                   return (
                     <tr key={concept.id} className="hover:bg-gray-900 transition-colors">
                       <td className="px-4 py-3 text-gray-100">
-                        <span className="font-medium">{concept.title}</span>
+                        <a
+                          href={`/study/concepts/${concept.id}`}
+                          className="font-medium text-blue-400 hover:text-blue-300 transition-colors"
+                        >
+                          {concept.title}
+                        </a>
                         {concept.subdomain && (
                           <span className="ml-1.5 text-xs text-gray-500">{concept.subdomain}</span>
                         )}

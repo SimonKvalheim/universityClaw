@@ -18,22 +18,23 @@ describe('registerStudyScheduledTasks', () => {
     _closeDatabase();
   });
 
-  it('creates 4 tasks', () => {
+  it('creates 5 tasks', () => {
     registerStudyScheduledTasks(TEST_JID);
     const tasks = getAllTasks();
-    expect(tasks).toHaveLength(4);
+    expect(tasks).toHaveLength(5);
     const ids = tasks.map((t) => t.id);
     expect(ids).toContain('study-daily-morning');
     expect(ids).toContain('study-weekly-progress');
     expect(ids).toContain('study-monthly-mastery');
     expect(ids).toContain('study-sqlite-backup');
+    expect(ids).toContain('study-audio-primer');
   });
 
-  it('is idempotent — calling twice still yields only 4 tasks', () => {
+  it('is idempotent — calling twice still yields only 5 tasks', () => {
     registerStudyScheduledTasks(TEST_JID);
     registerStudyScheduledTasks(TEST_JID);
     const tasks = getAllTasks();
-    expect(tasks).toHaveLength(4);
+    expect(tasks).toHaveLength(5);
   });
 
   it('tasks have correct cron patterns', () => {
@@ -50,6 +51,9 @@ describe('registerStudyScheduledTasks', () => {
 
     const backup = getTaskById('study-sqlite-backup');
     expect(backup?.schedule_value).toBe('0 3 * * *');
+
+    const audioPrimer = getTaskById('study-audio-primer');
+    expect(audioPrimer?.schedule_value).toBe('0 6 * * *');
   });
 
   it('tasks have valid future next_run', () => {
@@ -65,13 +69,14 @@ describe('registerStudyScheduledTasks', () => {
 });
 
 describe('getStudyTaskDefinitions', () => {
-  it('returns 4 definitions with correct IDs', () => {
+  it('returns 5 definitions with correct IDs', () => {
     const defs = getStudyTaskDefinitions(TEST_JID);
-    expect(defs).toHaveLength(4);
+    expect(defs).toHaveLength(5);
     const ids = defs.map((d) => d.id);
     expect(ids).toContain('study-daily-morning');
     expect(ids).toContain('study-weekly-progress');
     expect(ids).toContain('study-monthly-mastery');
     expect(ids).toContain('study-sqlite-backup');
+    expect(ids).toContain('study-audio-primer');
   });
 });

@@ -49,6 +49,26 @@ Query the study database at /workspace/project/store/messages.db for a comprehen
 
 Write a monthly mastery report (8–12 lines, Telegram formatting). Cover: highest mastery concepts, areas of decay risk, overall growth trend, and a recommended focus area for the coming month.`;
 
+export const AUDIO_PRIMER_PROMPT = `You are Mr. Rogers, a personal university teaching assistant. This is the daily audio review primer task (06:00).
+
+1. Check if there are due activities today:
+   SELECT count(*) FROM learning_activities WHERE due_at <= date('now')
+
+2. If there are 3+ due activities, generate a brief audio review primer:
+   - Get the titles and domains of concepts with due activities:
+     SELECT DISTINCT c.title, c.domain FROM concepts c
+     JOIN learning_activities la ON la.concept_id = c.id
+     WHERE la.due_at <= date('now') AND c.status = 'active'
+   - Write a 2-3 minute conversational audio script covering the key points
+   - Output via study_audio_script IPC:
+     echo '{"type":"study_audio_script","conceptIds":["<id1>","<id2>"],"script":"<your script>","contentType":"review_primer"}' > /workspace/ipc/tasks/audio_primer_$(date +%s).json
+
+3. If there are fewer than 3 due activities, skip audio generation.
+
+4. If an audio file was recently generated (check /workspace/project/data/audio/ for files from today), send it to the chat with a brief message like "Here is a quick audio review of today's concepts. Listen while you get ready!"
+
+Keep any text messages concise. Use Telegram formatting (*bold*, no ## headings).`;
+
 // ============================================================
 // Task definition type
 // ============================================================
@@ -88,6 +108,13 @@ export function getStudyTaskDefinitions(
       id: 'study-monthly-mastery',
       prompt: MONTHLY_MASTERY_PROMPT,
       cronExpression: '0 10 1 * *',
+      groupFolder: 'telegram_main',
+      chatJid: mainChatJid,
+    },
+    {
+      id: 'study-audio-primer',
+      prompt: AUDIO_PRIMER_PROMPT,
+      cronExpression: '0 6 * * *',
       groupFolder: 'telegram_main',
       chatJid: mainChatJid,
     },
