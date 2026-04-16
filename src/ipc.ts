@@ -41,6 +41,7 @@ import {
   computeOverallMastery,
 } from './study/mastery.js';
 import { RegisteredGroup } from './types.js';
+import { synthesizeAudio } from './study/audio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -332,6 +333,9 @@ export async function processTaskIpc(
     // For study_session
     limit?: number;
     preferredTypes?: string[];
+    // For study_audio_script
+    conceptIds?: string[];
+    contentType?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -751,6 +755,59 @@ export async function processTaskIpc(
         logger.error(
           { err, conceptId: data.conceptId, bloomLevel },
           'study_generation_request: generateActivities threw',
+        );
+      }
+      break;
+    }
+
+    case 'study_audio_script': {
+      if (!Array.isArray(data.conceptIds) || data.conceptIds.length === 0) {
+        logger.error(
+          { sourceGroup },
+          'study_audio_script: missing or empty conceptIds',
+        );
+        break;
+      }
+      if (!data.script || typeof data.script !== 'string') {
+        logger.error(
+          { sourceGroup },
+          'study_audio_script: missing script',
+        );
+        break;
+      }
+      const validContentTypes = ['summary', 'review_primer', 'weekly_digest'];
+      const contentType =
+        data.contentType != null && validContentTypes.includes(data.contentType)
+          ? data.contentType
+          : 'summary';
+
+      const audioDir = path.join(DATA_DIR, 'audio');
+      fs.mkdirSync(audioDir, { recursive: true });
+      const outputPath = path.join(
+        audioDir,
+        `${contentType}-${Date.now()}.mp3`,
+      );
+
+      try {
+        await synthesizeAudio(data.script, outputPath);
+        const responsesDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'responses');
+        fs.mkdirSync(responsesDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(responsesDir, `audio-${Date.now()}.json`),
+          JSON.stringify({
+            type: 'audio_ready',
+            audioPath: outputPath,
+            contentType,
+          }),
+        );
+        logger.info(
+          { outputPath, contentType },
+          'study_audio_script: TTS synthesis complete',
+        );
+      } catch (err) {
+        logger.error(
+          { err, contentType },
+          'study_audio_script: TTS synthesis failed',
         );
       }
       break;
