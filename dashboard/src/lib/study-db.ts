@@ -7,9 +7,9 @@
  * mapped to camelCase response interfaces.
  */
 
-import { eq, and, lte, asc, desc, count, sql, inArray, isNull } from 'drizzle-orm';
+import { eq, and, lte, asc, desc, count, sql, inArray, isNull, gte } from 'drizzle-orm';
 import { getDb } from './db/index';
-import { concepts, learning_activities, study_sessions, activity_log } from './db/schema';
+import { concepts, learning_activities, study_sessions, activity_log, study_plans, study_plan_concepts } from './db/schema';
 import {
   sm2,
   computeDueDate,
@@ -691,4 +691,333 @@ export function getLogByActivityIdAndMethod(
     )
     .orderBy(desc(activity_log.reviewed_at))
     .get();
+}
+
+// ---------------------------------------------------------------------------
+// Plan interfaces
+// ---------------------------------------------------------------------------
+
+export interface PlanSummary {
+  id: string;
+  title: string;
+  domain: string | null;
+  course: string | null;
+  strategy: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  nextCheckpointAt: string | null;
+  conceptCount: number;
+  progressPercent: number;
+}
+
+export interface PlanDetail extends PlanSummary {
+  learningObjectives: string | null;
+  desiredOutcomes: string | null;
+  implementationIntention: string | null;
+  obstacle: string | null;
+  studySchedule: string | null;
+  config: string | null;
+  checkpointIntervalDays: number;
+  concepts: PlanConceptRow[];
+}
+
+export interface PlanConceptRow {
+  conceptId: string;
+  title: string;
+  domain: string | null;
+  bloomCeiling: number;
+  targetBloom: number;
+  masteryOverall: number;
+  atTarget: boolean;
+}
+
+export interface NewPlan {
+  id: string;
+  title: string;
+  domain?: string;
+  course?: string;
+  strategy?: string;
+  learningObjectives?: string;
+  desiredOutcomes?: string;
+  implementationIntention?: string;
+  obstacle?: string;
+  studySchedule?: string;
+  config?: string;
+  checkpointIntervalDays?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Plan CRUD functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert a new plan and its concept associations in a transaction.
+ */
+export function createPlan(plan: NewPlan, conceptIds: string[], targetBloom?: number): void {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const checkpointDays = plan.checkpointIntervalDays ?? 14;
+  const checkpointDate = new Date(Date.now() + checkpointDays * 86400000).toISOString().slice(0, 10);
+
+  db.transaction((tx) => {
+    tx.insert(study_plans).values({
+      id: plan.id,
+      title: plan.title,
+      domain: plan.domain ?? null,
+      course: plan.course ?? null,
+      strategy: plan.strategy ?? 'open',
+      learning_objectives: plan.learningObjectives ?? null,
+      desired_outcomes: plan.desiredOutcomes ?? null,
+      implementation_intention: plan.implementationIntention ?? null,
+      obstacle: plan.obstacle ?? null,
+      study_schedule: plan.studySchedule ?? null,
+      config: plan.config ?? null,
+      checkpoint_interval_days: checkpointDays,
+      next_checkpoint_at: checkpointDate,
+      created_at: now,
+      updated_at: now,
+      status: 'active',
+    }).run();
+
+    for (let i = 0; i < conceptIds.length; i++) {
+      tx.insert(study_plan_concepts).values({
+        plan_id: plan.id,
+        concept_id: conceptIds[i],
+        target_bloom: targetBloom ?? 6,
+        sort_order: i,
+      }).run();
+    }
+  });
+}
+
+/**
+ * Helper: build PlanSummary for a plan row, given its concept join rows.
+ */
+function buildPlanSummary(
+  row: typeof study_plans.$inferSelect,
+  conceptJoins: Array<{ target_bloom: number | null; bloom_ceiling: number | null }>,
+): PlanSummary {
+  const conceptCount = conceptJoins.length;
+  const atTargetCount = conceptJoins.filter(
+    (c) => (c.bloom_ceiling ?? 0) >= (c.target_bloom ?? 6),
+  ).length;
+  const progressPercent = conceptCount === 0 ? 0 : Math.round((atTargetCount / conceptCount) * 100);
+
+  return {
+    id: row.id,
+    title: row.title,
+    domain: row.domain ?? null,
+    course: row.course ?? null,
+    strategy: row.strategy,
+    status: row.status ?? 'active',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    nextCheckpointAt: row.next_checkpoint_at ?? null,
+    conceptCount,
+    progressPercent,
+  };
+}
+
+/**
+ * List all plans with concept counts and progress percentages.
+ */
+export function getAllPlans(): PlanSummary[] {
+  const db = getDb();
+
+  const planRows = db.select().from(study_plans).orderBy(desc(study_plans.created_at)).all();
+  if (planRows.length === 0) return [];
+
+  const planIds = planRows.map((p) => p.id);
+
+  const joins = db
+    .select({
+      plan_id: study_plan_concepts.plan_id,
+      target_bloom: study_plan_concepts.target_bloom,
+      bloom_ceiling: concepts.bloom_ceiling,
+    })
+    .from(study_plan_concepts)
+    .leftJoin(concepts, eq(study_plan_concepts.concept_id, concepts.id))
+    .where(inArray(study_plan_concepts.plan_id, planIds))
+    .all();
+
+  const joinsByPlan = new Map<string, typeof joins>();
+  for (const j of joins) {
+    if (!joinsByPlan.has(j.plan_id)) joinsByPlan.set(j.plan_id, []);
+    joinsByPlan.get(j.plan_id)!.push(j);
+  }
+
+  return planRows.map((row) => buildPlanSummary(row, joinsByPlan.get(row.id) ?? []));
+}
+
+/**
+ * List active plans only.
+ */
+export function getActivePlans(): PlanSummary[] {
+  const db = getDb();
+
+  const planRows = db
+    .select()
+    .from(study_plans)
+    .where(eq(study_plans.status, 'active'))
+    .orderBy(desc(study_plans.created_at))
+    .all();
+  if (planRows.length === 0) return [];
+
+  const planIds = planRows.map((p) => p.id);
+
+  const joins = db
+    .select({
+      plan_id: study_plan_concepts.plan_id,
+      target_bloom: study_plan_concepts.target_bloom,
+      bloom_ceiling: concepts.bloom_ceiling,
+    })
+    .from(study_plan_concepts)
+    .leftJoin(concepts, eq(study_plan_concepts.concept_id, concepts.id))
+    .where(inArray(study_plan_concepts.plan_id, planIds))
+    .all();
+
+  const joinsByPlan = new Map<string, typeof joins>();
+  for (const j of joins) {
+    if (!joinsByPlan.has(j.plan_id)) joinsByPlan.set(j.plan_id, []);
+    joinsByPlan.get(j.plan_id)!.push(j);
+  }
+
+  return planRows.map((row) => buildPlanSummary(row, joinsByPlan.get(row.id) ?? []));
+}
+
+/**
+ * Full plan detail including concept rows. Returns null if not found.
+ */
+export function getPlanById(id: string): PlanDetail | null {
+  const db = getDb();
+
+  const row = db.select().from(study_plans).where(eq(study_plans.id, id)).get();
+  if (!row) return null;
+
+  const joinRows = db
+    .select({
+      concept_id: study_plan_concepts.concept_id,
+      target_bloom: study_plan_concepts.target_bloom,
+      sort_order: study_plan_concepts.sort_order,
+      title: concepts.title,
+      domain: concepts.domain,
+      bloom_ceiling: concepts.bloom_ceiling,
+      mastery_overall: concepts.mastery_overall,
+    })
+    .from(study_plan_concepts)
+    .leftJoin(concepts, eq(study_plan_concepts.concept_id, concepts.id))
+    .where(eq(study_plan_concepts.plan_id, id))
+    .orderBy(asc(study_plan_concepts.sort_order))
+    .all();
+
+  const conceptRows: PlanConceptRow[] = joinRows.map((j) => {
+    const targetBloom = j.target_bloom ?? 6;
+    const bloomCeiling = j.bloom_ceiling ?? 0;
+    return {
+      conceptId: j.concept_id,
+      title: j.title ?? j.concept_id,
+      domain: j.domain ?? null,
+      bloomCeiling,
+      targetBloom,
+      masteryOverall: j.mastery_overall ?? 0,
+      atTarget: bloomCeiling >= targetBloom,
+    };
+  });
+
+  const summary = buildPlanSummary(
+    row,
+    joinRows.map((j) => ({ target_bloom: j.target_bloom, bloom_ceiling: j.bloom_ceiling })),
+  );
+
+  return {
+    ...summary,
+    learningObjectives: row.learning_objectives ?? null,
+    desiredOutcomes: row.desired_outcomes ?? null,
+    implementationIntention: row.implementation_intention ?? null,
+    obstacle: row.obstacle ?? null,
+    studySchedule: row.study_schedule ?? null,
+    config: row.config ?? null,
+    checkpointIntervalDays: row.checkpoint_interval_days ?? 14,
+    concepts: conceptRows,
+  };
+}
+
+/**
+ * Update arbitrary plan fields. Always sets updated_at to now.
+ */
+export function updatePlan(id: string, updates: Record<string, unknown>): void {
+  const db = getDb();
+  db.update(study_plans)
+    .set({ ...updates, updated_at: new Date().toISOString() })
+    .where(eq(study_plans.id, id))
+    .run();
+}
+
+/**
+ * Returns the concept IDs associated with a plan (used by session builder).
+ */
+export function getPlanConceptIds(planId: string): string[] {
+  const db = getDb();
+  const rows = db
+    .select({ concept_id: study_plan_concepts.concept_id })
+    .from(study_plan_concepts)
+    .where(eq(study_plan_concepts.plan_id, planId))
+    .orderBy(asc(study_plan_concepts.sort_order))
+    .all();
+  return rows.map((r) => r.concept_id);
+}
+
+/**
+ * Batch add concepts to a plan. Skips duplicates via check-before-insert.
+ * New entries are appended after the current max sort_order.
+ */
+export function addConceptsToPlan(planId: string, conceptIds: string[], targetBloom?: number): void {
+  if (conceptIds.length === 0) return;
+  const db = getDb();
+
+  // Get existing concept IDs for this plan
+  const existing = db
+    .select({ concept_id: study_plan_concepts.concept_id })
+    .from(study_plan_concepts)
+    .where(eq(study_plan_concepts.plan_id, planId))
+    .all();
+  const existingSet = new Set(existing.map((r) => r.concept_id));
+
+  // Get current max sort_order
+  const maxRow = db
+    .select({ max_order: sql<number>`coalesce(max(${study_plan_concepts.sort_order}), -1)` })
+    .from(study_plan_concepts)
+    .where(eq(study_plan_concepts.plan_id, planId))
+    .get();
+  let nextOrder = (maxRow?.max_order ?? -1) + 1;
+
+  const toInsert = conceptIds.filter((cid) => !existingSet.has(cid));
+  if (toInsert.length === 0) return;
+
+  db.transaction((tx) => {
+    for (const conceptId of toInsert) {
+      tx.insert(study_plan_concepts).values({
+        plan_id: planId,
+        concept_id: conceptId,
+        target_bloom: targetBloom ?? 6,
+        sort_order: nextOrder++,
+      }).run();
+    }
+  });
+}
+
+/**
+ * Remove a single concept from a plan.
+ */
+export function removeConceptFromPlan(planId: string, conceptId: string): void {
+  const db = getDb();
+  db.delete(study_plan_concepts)
+    .where(
+      and(
+        eq(study_plan_concepts.plan_id, planId),
+        eq(study_plan_concepts.concept_id, conceptId),
+      ),
+    )
+    .run();
 }
