@@ -765,12 +765,14 @@ async function main(): Promise<void> {
 
   // Register study scheduled tasks (idempotent)
   const telegramMainEntry = Object.entries(registeredGroups).find(
-    ([, g]) => g.folder === 'telegram_main'
+    ([, g]) => g.folder === 'telegram_main',
   );
   if (telegramMainEntry) {
     registerStudyScheduledTasks(telegramMainEntry[0]);
   } else {
-    logger.warn('telegram_main group not registered — skipping study task registration');
+    logger.warn(
+      'telegram_main group not registered — skipping study task registration',
+    );
   }
 
   const pipeline = new IngestionPipeline({
