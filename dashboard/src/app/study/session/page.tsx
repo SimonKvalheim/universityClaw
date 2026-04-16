@@ -21,6 +21,8 @@ interface EnrichedActivity {
   sourceNotePath: string | null;
   generatedAt: string;
   staleReason?: string;
+  scaffoldingLevel: number;
+  hint: string | null;
 }
 
 interface EnrichedBlock {
@@ -240,6 +242,9 @@ function StudySessionInner() {
   const evalPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const evalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Hint display
+  const [showHint, setShowHint] = useState(false);
+
   // Suggestion prompt (student-generated activities)
   const [showSuggestionPrompt, setShowSuggestionPrompt] = useState(false);
   const [showSuggestionForm, setShowSuggestionForm] = useState(false);
@@ -411,6 +416,7 @@ function StudySessionInner() {
         sessionId,
         responseText,
         responseTimeMs,
+        scaffoldingLevel: flat.activity.scaffoldingLevel ?? 0,
       }),
     });
     const result = (await res.json()) as CompletionResult;
@@ -475,6 +481,7 @@ function StudySessionInner() {
         sessionId,
         responseText: '',
         responseTimeMs,
+        scaffoldingLevel: flat.activity.scaffoldingLevel ?? 0,
       }),
     });
 
@@ -514,6 +521,7 @@ function StudySessionInner() {
       setSuggestionDismissed(false);
       setSuggestionSuccess(false);
       setSuggestionPromptText('');
+      setShowHint(false);
       activityStartTime.current = Date.now();
     }
   }
@@ -919,6 +927,28 @@ function StudySessionInner() {
 
           {/* Prompt */}
           <p className="text-gray-100 text-base leading-relaxed">{activity.prompt}</p>
+
+          {/* Scaffolding hint */}
+          {activity.scaffoldingLevel >= 1 && activity.hint && !submitted && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowHint((v) => !v)}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  {showHint ? 'Hide hint' : 'Need a hint?'}
+                </button>
+                <span className="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-400">
+                  L{activity.scaffoldingLevel}
+                </span>
+              </div>
+              {showHint && (
+                <p className="mt-2 p-3 rounded-lg bg-gray-800/50 text-sm text-gray-300 italic">
+                  {activity.hint}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Socratic: redirect instead of in-session activity */}
           {isSocratic ? (

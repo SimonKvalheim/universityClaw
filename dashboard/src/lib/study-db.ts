@@ -262,6 +262,7 @@ export interface CompleteActivityInput {
   responseText?: string;
   responseTimeMs?: number;
   confidenceRating?: number;
+  scaffoldingLevel?: number;
   surface?: string;
 }
 
@@ -354,6 +355,7 @@ export function completeActivity(input: CompleteActivityInput): CompleteActivity
         response_text: input.responseText ?? null,
         response_time_ms: input.responseTimeMs ?? null,
         confidence_rating: input.confidenceRating ?? null,
+        scaffolding_level: input.scaffoldingLevel ?? 0,
         evaluation_method: 'self_rated',
         ai_quality: null,
         ai_feedback: null,

@@ -18,6 +18,7 @@ export async function POST(request: Request) {
       responseText: body.responseText,
       responseTimeMs: body.responseTimeMs,
       confidenceRating: body.confidenceRating,
+      scaffoldingLevel: typeof body.scaffoldingLevel === 'number' ? body.scaffoldingLevel : undefined,
       surface: 'dashboard_ui',
     });
 
