@@ -468,7 +468,7 @@ export default function StudySessionPage() {
         const res = await fetch(
           `/api/study/evaluate/${sessionId}/result?activityId=${encodeURIComponent(activityId)}`,
         );
-        const data = (await res.json()) as { status?: string; quality?: number; feedback?: string };
+        const data = (await res.json()) as { status?: string; quality?: number; aiFeedback?: string };
         if (data.status === 'complete') {
           clearInterval(pollInterval);
           evalPollRef.current = null;
@@ -479,7 +479,7 @@ export default function StudySessionPage() {
             eventSourceRef.current = null;
           }
           if (data.quality !== undefined) setAiQuality(data.quality);
-          if (data.feedback) setAiFeedback(data.feedback);
+          if (data.aiFeedback) setAiFeedback(data.aiFeedback);
 
           // Accumulate stats using the AI-reported quality (or 3 as a neutral fallback)
           const quality = data.quality ?? 3;
