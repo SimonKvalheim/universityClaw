@@ -7,6 +7,7 @@ import { logger } from '../logger.js';
 import { getRecentlyCompletedJobs } from '../db.js';
 
 const JID_PREFIX = 'web:review:';
+const STUDY_PREFIX = 'web:study:';
 const CORS_ORIGIN = `http://localhost:${DASHBOARD_PORT}`;
 
 // Buffer agent responses per draft for SSE consumers
@@ -113,6 +114,98 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     });
   }
 
+  function handleStudyMessage(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) {
+    let body = '';
+    let size = 0;
+    let aborted = false;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY && !aborted) {
+        aborted = true;
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      try {
+        const parsed = JSON.parse(body) as {
+          sessionId?: string;
+          text?: string;
+        };
+        if (!parsed.sessionId || !parsed.text) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing sessionId or text' }));
+          return;
+        }
+
+        const chatJid = `${STUDY_PREFIX}${parsed.sessionId}`;
+        const msg = {
+          id: randomUUID(),
+          chat_jid: chatJid,
+          sender: 'web-user',
+          sender_name: 'Web User',
+          content: parsed.text,
+          timestamp: new Date().toISOString(),
+          is_from_me: false,
+        };
+
+        // Ensure chat record exists before storing the message (FK constraint)
+        opts.onChatMetadata(
+          chatJid,
+          msg.timestamp,
+          `Study: ${parsed.sessionId}`,
+          'web',
+          false,
+        );
+        opts.onMessage(chatJid, msg);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, messageId: msg.id }));
+      } catch (err) {
+        logger.error({ err }, 'Web channel study message handling failed');
+        const status =
+          (err as any)?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' ? 500 : 400;
+        const msg = status === 500 ? 'Internal error' : 'Invalid JSON';
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: msg }));
+      }
+    });
+  }
+
+  function handleStudySSE(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    sessionId: string,
+  ) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': CORS_ORIGIN,
+    });
+    res.write(':\n\n'); // SSE comment to establish connection
+
+    if (!sseClients.has(sessionId)) sseClients.set(sessionId, new Set());
+    sseClients.get(sessionId)!.add(res);
+
+    // Send any buffered responses
+    const pending = getPendingResponses(sessionId);
+    for (const text of pending) {
+      res.write(`data: ${JSON.stringify({ type: 'message', text })}\n\n`);
+    }
+
+    req.on('close', () => {
+      sseClients.get(sessionId)?.delete(res);
+    });
+  }
+
   async function handleRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -172,6 +265,42 @@ export function createWebChannel(opts: ChannelOpts): Channel {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/study-message') {
+      handleStudyMessage(req, res);
+      return;
+    }
+
+    // GET /study-stream/:sessionId (UUID format only)
+    const studyStreamMatch = url.pathname.match(
+      /^\/study-stream\/([a-f0-9-]{36})$/,
+    );
+    if (req.method === 'GET' && studyStreamMatch) {
+      handleStudySSE(req, res, studyStreamMatch[1]);
+      return;
+    }
+
+    // POST /study-close/:sessionId — signal the study session container to shut down
+    const studyCloseMatch = url.pathname.match(
+      /^\/study-close\/([a-f0-9-]{36})$/,
+    );
+    if (req.method === 'POST' && studyCloseMatch) {
+      const sessionId = studyCloseMatch[1];
+      opts.onStudyClosed?.(sessionId);
+      // Clean up SSE clients and response buffers for this session
+      const clients = sseClients.get(sessionId);
+      if (clients) {
+        for (const client of clients) {
+          client.write(`data: ${JSON.stringify({ type: 'closed' })}\n\n`);
+          client.end();
+        }
+        sseClients.delete(sessionId);
+      }
+      responseBuffers.delete(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
     res.writeHead(404);
     res.end('Not found');
   }
@@ -194,10 +323,12 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     },
 
     async sendMessage(jid: string, text: string) {
-      const draftId = jid.replace(JID_PREFIX, '');
+      const id = jid.startsWith(STUDY_PREFIX)
+        ? jid.replace(STUDY_PREFIX, '')
+        : jid.replace(JID_PREFIX, '');
 
       // Push to SSE clients
-      const clients = sseClients.get(draftId);
+      const clients = sseClients.get(id);
       if (clients && clients.size > 0) {
         const data = `data: ${JSON.stringify({ type: 'message', text })}\n\n`;
         for (const client of clients) {
@@ -206,8 +337,8 @@ export function createWebChannel(opts: ChannelOpts): Channel {
       }
 
       // Also buffer for clients that connect later (capped to prevent memory growth)
-      if (!responseBuffers.has(draftId)) responseBuffers.set(draftId, []);
-      const buf = responseBuffers.get(draftId)!;
+      if (!responseBuffers.has(id)) responseBuffers.set(id, []);
+      const buf = responseBuffers.get(id)!;
       buf.push(text);
       if (buf.length > 50) buf.splice(0, buf.length - 50);
     },
@@ -217,7 +348,7 @@ export function createWebChannel(opts: ChannelOpts): Channel {
     },
 
     ownsJid(jid: string) {
-      return jid.startsWith(JID_PREFIX);
+      return jid.startsWith(JID_PREFIX) || jid.startsWith(STUDY_PREFIX);
     },
 
     async disconnect() {

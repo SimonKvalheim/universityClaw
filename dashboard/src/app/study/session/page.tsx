@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +31,8 @@ interface SessionData {
 }
 
 type Phase = 'loading' | 'pre_session' | 'in_progress' | 'post_session' | 'complete';
+
+type EvaluationMode = 'choosing' | 'evaluating' | 'result' | 'self_rate' | null;
 
 interface FlatActivity {
   activity: EnrichedActivity;
@@ -147,6 +149,27 @@ function calibrationColor(predicted: number, actual: number): string {
   return 'text-blue-400'; // underconfident
 }
 
+/** Returns number of textarea rows for a given activity type */
+function textAreaRows(activityType: string): number {
+  switch (activityType) {
+    case 'synthesis':
+      return 10;
+    case 'concept_map':
+      return 8;
+    case 'self_explain':
+    case 'comparison':
+    case 'case_analysis':
+      return 6;
+    default:
+      return 4;
+  }
+}
+
+/** Whether AI evaluation is eligible for this activity */
+function isAiEvalEligible(bloomLevel: number, activityType: string): boolean {
+  return bloomLevel >= 3 && activityType !== 'card_review';
+}
+
 // ---------------------------------------------------------------------------
 // Page component
 // ---------------------------------------------------------------------------
@@ -176,6 +199,14 @@ export default function StudySessionPage() {
   const activityStartTime = useRef<number>(Date.now());
   const sessionStartTime = useRef<number>(Date.now());
 
+  // AI Evaluation state
+  const [evaluationMode, setEvaluationMode] = useState<EvaluationMode>(null);
+  const [aiFeedback, setAiFeedback] = useState<string>('');
+  const [aiQuality, setAiQuality] = useState<number | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const evalPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const evalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // POST_SESSION
   const [reflection, setReflection] = useState('');
   const [reflectLoading, setReflectLoading] = useState(false);
@@ -183,6 +214,32 @@ export default function StudySessionPage() {
 
   // COMPLETE — store final stats snapshot
   const [completeStats, setCompleteStats] = useState<SessionStats | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Cleanup helpers for AI eval
+  // ---------------------------------------------------------------------------
+
+  const cleanupEvalResources = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (evalPollRef.current) {
+      clearInterval(evalPollRef.current);
+      evalPollRef.current = null;
+    }
+    if (evalTimeoutRef.current) {
+      clearTimeout(evalTimeoutRef.current);
+      evalTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupEvalResources();
+    };
+  }, [cleanupEvalResources]);
 
   // ---------------------------------------------------------------------------
   // LOADING: fetch session data
@@ -232,6 +289,9 @@ export default function StudySessionPage() {
     setResponseText('');
     setSubmitted(false);
     setSelectedQuality(null);
+    setEvaluationMode(null);
+    setAiFeedback('');
+    setAiQuality(null);
     sessionStartTime.current = Date.now();
     activityStartTime.current = Date.now();
     setPhase('in_progress');
@@ -246,6 +306,15 @@ export default function StudySessionPage() {
       return;
     }
     setSubmitted(true);
+
+    const flat = flatActivities[currentIndex];
+    if (!flat) return;
+    const { bloomLevel, activityType } = flat.activity;
+
+    if (isAiEvalEligible(bloomLevel, activityType)) {
+      setEvaluationMode('choosing');
+    }
+    // else evaluationMode stays null → existing self-rate flow
   }
 
   async function handleQualityRating(quality: number) {
@@ -318,6 +387,7 @@ export default function StudySessionPage() {
   }
 
   function advanceToNext() {
+    cleanupEvalResources();
     const nextIndex = currentIndex + 1;
     if (nextIndex >= flatActivities.length) {
       // End of session → post_session
@@ -329,8 +399,119 @@ export default function StudySessionPage() {
       setSubmitted(false);
       setSelectedQuality(null);
       setLastResult(null);
+      setEvaluationMode(null);
+      setAiFeedback('');
+      setAiQuality(null);
       activityStartTime.current = Date.now();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // AI Evaluation flow
+  // ---------------------------------------------------------------------------
+
+  async function handleAiEvaluate() {
+    if (!sessionId) return;
+    const flat = flatActivities[currentIndex];
+    if (!flat) return;
+    const { activityId, conceptId, bloomLevel, prompt, referenceAnswer } = flat.activity;
+
+    cleanupEvalResources();
+    setEvaluationMode('evaluating');
+    setAiFeedback('');
+    setAiQuality(null);
+
+    // Open SSE stream
+    const es = new EventSource(`/api/study/chat/stream/${sessionId}`);
+    eventSourceRef.current = es;
+
+    es.addEventListener('message', (event: MessageEvent) => {
+      try {
+        const parsed = JSON.parse(event.data as string) as { type?: string; text?: string };
+        if (parsed.type === 'message' && parsed.text) {
+          setAiFeedback((prev) => prev + parsed.text);
+        }
+      } catch {
+        // ignore parse errors
+      }
+    });
+
+    es.addEventListener('error', () => {
+      // SSE errors are non-fatal — polling will still resolve the result
+    });
+
+    // Send evaluation request
+    try {
+      await fetch('/api/study/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          activityId,
+          responseText,
+          conceptId,
+          bloomLevel,
+          prompt,
+          referenceAnswer,
+        }),
+      });
+    } catch {
+      // If request fails, fall back
+      setEvaluationMode('self_rate');
+      cleanupEvalResources();
+      return;
+    }
+
+    // Poll for result every 2s
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(
+          `/api/study/evaluate/${sessionId}/result?activityId=${encodeURIComponent(activityId)}`,
+        );
+        const data = (await res.json()) as { status?: string; quality?: number; aiFeedback?: string };
+        if (data.status === 'complete') {
+          clearInterval(pollInterval);
+          evalPollRef.current = null;
+          clearTimeout(evalTimeoutRef.current!);
+          evalTimeoutRef.current = null;
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+          }
+          if (data.quality !== undefined) setAiQuality(data.quality);
+          if (data.aiFeedback) setAiFeedback(data.aiFeedback);
+
+          // Accumulate stats using the AI-reported quality (or 3 as a neutral fallback)
+          const quality = data.quality ?? 3;
+          setSessionStats((prev) => {
+            const newQualities = [...prev.qualities, quality];
+            const avg = newQualities.reduce((s, q) => s + q, 0) / newQualities.length;
+            return {
+              activitiesCompleted: prev.activitiesCompleted + 1,
+              avgQuality: avg,
+              totalTimeMs: Date.now() - sessionStartTime.current,
+              qualities: newQualities,
+            };
+          });
+
+          setEvaluationMode('result');
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }, 2000);
+    evalPollRef.current = pollInterval;
+
+    // Timeout after 60s → fall back to self-rate
+    const timeout = setTimeout(() => {
+      cleanupEvalResources();
+      setEvaluationMode('self_rate');
+    }, 60_000);
+    evalTimeoutRef.current = timeout;
+  }
+
+  function handleChooseSelfRate() {
+    setEvaluationMode('self_rate');
   }
 
   // ---------------------------------------------------------------------------
@@ -470,6 +651,8 @@ export default function StudySessionPage() {
       flatActivities[currentIndex - 1].blockIndex !== current.blockIndex;
 
     const isCardReview = activity.activityType === 'card_review';
+    const isSocratic = activity.activityType === 'socratic';
+    const aiEligible = isAiEvalEligible(activity.bloomLevel, activity.activityType);
 
     return (
       <div className="max-w-2xl mx-auto space-y-4">
@@ -521,37 +704,19 @@ export default function StudySessionPage() {
           {/* Prompt */}
           <p className="text-gray-100 text-base leading-relaxed">{activity.prompt}</p>
 
-          {/* Response area (pre-submission) */}
-          {!submitted && (
+          {/* Socratic: redirect instead of in-session activity */}
+          {isSocratic ? (
             <div className="space-y-3">
-              {isCardReview ? (
-                <input
-                  type="text"
-                  value={responseText}
-                  onChange={(e) => setResponseText(e.target.value)}
-                  placeholder="Your answer..."
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-gray-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSubmit();
-                  }}
-                />
-              ) : (
-                <textarea
-                  value={responseText}
-                  onChange={(e) => setResponseText(e.target.value)}
-                  placeholder="Write your response..."
-                  rows={4}
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 resize-none focus:outline-none focus:border-gray-500"
-                />
-              )}
-
+              <p className="text-sm text-gray-400">
+                This activity is best completed as a dialogue.
+              </p>
               <div className="flex gap-2">
-                <button
-                  onClick={handleSubmit}
-                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                <a
+                  href={`/study/chat?conceptId=${encodeURIComponent(activity.conceptId)}&method=Socratic`}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors text-center"
                 >
-                  Submit
-                </button>
+                  Open in Study Chat
+                </a>
                 <button
                   onClick={handleSkip}
                   className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors"
@@ -560,65 +725,186 @@ export default function StudySessionPage() {
                 </button>
               </div>
             </div>
-          )}
+          ) : (
+            <>
+              {/* Response area (pre-submission) */}
+              {!submitted && (
+                <div className="space-y-3">
+                  {isCardReview ? (
+                    <input
+                      type="text"
+                      value={responseText}
+                      onChange={(e) => setResponseText(e.target.value)}
+                      placeholder="Your answer..."
+                      className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-gray-500"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSubmit();
+                      }}
+                    />
+                  ) : (
+                    <textarea
+                      value={responseText}
+                      onChange={(e) => setResponseText(e.target.value)}
+                      placeholder="Write your response..."
+                      rows={textAreaRows(activity.activityType)}
+                      className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 resize-none focus:outline-none focus:border-gray-500"
+                    />
+                  )}
 
-          {/* Post-submission: reference answer + self-rating */}
-          {submitted && (
-            <div className="space-y-4">
-              {/* Reference answer */}
-              {activity.referenceAnswer && (
-                <div className="border-t border-gray-700 bg-gray-800 mt-4 p-4 rounded-lg">
-                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Reference Answer</p>
-                  <p className="text-sm text-gray-200 leading-relaxed">{activity.referenceAnswer}</p>
-                </div>
-              )}
-
-              {/* Advancement notice */}
-              {lastResult?.advancement && (
-                <div className="bg-blue-950/40 border border-blue-800 rounded-lg p-3">
-                  <p className="text-sm text-blue-300">
-                    Bloom level advanced: L{lastResult.advancement.previousCeiling} → L{lastResult.advancement.newCeiling} for &quot;{lastResult.advancement.conceptTitle}&quot;
-                  </p>
-                </div>
-              )}
-
-              {/* De-escalation hint */}
-              {lastResult?.deEscalation && (
-                <div className="bg-amber-950/30 border border-amber-800/50 rounded-lg p-3">
-                  <p className="text-sm text-amber-300">{lastResult.deEscalation}</p>
-                </div>
-              )}
-
-              {/* Self-rating */}
-              {selectedQuality === null ? (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500 uppercase tracking-wider">Rate your recall</p>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {([0, 1, 2, 3, 4, 5] as const).map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => handleQualityRating(q)}
-                        className="flex-1 min-w-0 py-2 rounded-full text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors"
-                      >
-                        {q}: {QUALITY_LABELS[q]}
-                      </button>
-                    ))}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSubmit}
+                      className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                    >
+                      Submit
+                    </button>
+                    <button
+                      onClick={handleSkip}
+                      className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors"
+                    >
+                      Skip
+                    </button>
                   </div>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-gray-400">
-                    Rated <span className="text-blue-400 font-medium">{selectedQuality}</span> — {QUALITY_LABELS[selectedQuality]}
-                  </p>
-                  <button
-                    onClick={advanceToNext}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-                  >
-                    Next
-                  </button>
+              )}
+
+              {/* Post-submission area */}
+              {submitted && (
+                <div className="space-y-4">
+
+                  {/* ---- EVALUATION MODE: choosing ---- */}
+                  {evaluationMode === 'choosing' && (
+                    <div className="space-y-3">
+                      <p className="text-xs text-gray-500 uppercase tracking-wider">How would you like to evaluate?</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleAiEvaluate}
+                          className="flex-1 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                        >
+                          AI Evaluate
+                        </button>
+                        <button
+                          onClick={handleChooseSelfRate}
+                          className="flex-1 py-2 rounded-lg text-sm font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
+                        >
+                          Self-Rate
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ---- EVALUATION MODE: evaluating (AI in progress) ---- */}
+                  {evaluationMode === 'evaluating' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-sm text-gray-400">
+                        <svg className="animate-spin h-4 w-4 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span>AI is evaluating your response...</span>
+                      </div>
+                      {aiFeedback && (
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{aiFeedback}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ---- EVALUATION MODE: result (AI done) ---- */}
+                  {evaluationMode === 'result' && (
+                    <div className="space-y-3">
+                      {aiQuality !== null && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500 uppercase tracking-wider">AI Score</span>
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-900/60 border border-indigo-700 text-indigo-300 text-sm font-medium">
+                            {aiQuality} / 5
+                          </span>
+                        </div>
+                      )}
+                      {aiFeedback && (
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1.5">AI Feedback</p>
+                          <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{aiFeedback}</p>
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={advanceToNext}
+                          className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ---- EVALUATION MODE: self_rate (chosen or timeout fallback) ---- */}
+                  {(evaluationMode === 'self_rate' || (!aiEligible && evaluationMode === null)) && (
+                    <>
+                      {/* Reference answer */}
+                      {activity.referenceAnswer && (
+                        <div className="border-t border-gray-700 bg-gray-800 mt-4 p-4 rounded-lg">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Reference Answer</p>
+                          <p className="text-sm text-gray-200 leading-relaxed">{activity.referenceAnswer}</p>
+                        </div>
+                      )}
+
+                      {/* Advancement notice */}
+                      {lastResult?.advancement && (
+                        <div className="bg-blue-950/40 border border-blue-800 rounded-lg p-3">
+                          <p className="text-sm text-blue-300">
+                            Bloom level advanced: L{lastResult.advancement.previousCeiling} → L{lastResult.advancement.newCeiling} for &quot;{lastResult.advancement.conceptTitle}&quot;
+                          </p>
+                        </div>
+                      )}
+
+                      {/* De-escalation hint */}
+                      {lastResult?.deEscalation && (
+                        <div className="bg-amber-950/30 border border-amber-800/50 rounded-lg p-3">
+                          <p className="text-sm text-amber-300">{lastResult.deEscalation}</p>
+                        </div>
+                      )}
+
+                      {/* Self-rating buttons */}
+                      {selectedQuality === null ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider">Rate your recall</p>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {([0, 1, 2, 3, 4, 5] as const).map((q) => (
+                              <button
+                                key={q}
+                                onClick={() => handleQualityRating(q)}
+                                className="flex-1 min-w-0 py-2 rounded-full text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors"
+                              >
+                                {q}: {QUALITY_LABELS[q]}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm text-gray-400">
+                            Rated <span className="text-blue-400 font-medium">{selectedQuality}</span> — {QUALITY_LABELS[selectedQuality]}
+                          </p>
+                          <button
+                            onClick={advanceToNext}
+                            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* ---- evaluationMode === null && aiEligible: choosing not yet shown
+                       This shouldn't happen — handleSubmit sets choosing immediately.
+                       Guard for completeness only. ---- */}
+
                 </div>
               )}
-            </div>
+            </>
           )}
         </div>
       </div>

@@ -10,6 +10,7 @@ export interface ChannelOpts {
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
   onDraftClosed?: (draftId: string) => void;
+  onStudyClosed?: (sessionId: string) => void;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

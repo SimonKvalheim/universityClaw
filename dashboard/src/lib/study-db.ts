@@ -267,6 +267,7 @@ export interface CompleteActivityInput {
 export interface CompleteActivityResult {
   logEntryId: string;
   newDueAt: string;
+  conceptId: string;
   bloomCeilingBefore: number;
   bloomCeilingAfter: number;
 }
@@ -412,7 +413,7 @@ export function completeActivity(input: CompleteActivityInput): CompleteActivity
         .run();
     }
 
-    return { logEntryId, newDueAt, bloomCeilingBefore, bloomCeilingAfter };
+    return { logEntryId, newDueAt, conceptId: activity.concept_id, bloomCeilingBefore, bloomCeilingAfter };
   });
 }
 
@@ -427,18 +428,8 @@ export function completeActivity(input: CompleteActivityInput): CompleteActivity
 export function processCompletion(input: CompleteActivityInput): CompletionResult {
   const db = getDb();
 
-  // Look up activity first to get concept_id (throws if not found)
-  const activity = db
-    .select()
-    .from(learning_activities)
-    .where(eq(learning_activities.id, input.activityId))
-    .get();
-  if (!activity) throw new Error(`Activity not found: ${input.activityId}`);
-
-  const conceptId = activity.concept_id;
-
   // Delegate to completeActivity — runs full SM-2 + mastery update atomically
-  const { logEntryId, newDueAt, bloomCeilingBefore, bloomCeilingAfter } =
+  const { logEntryId, newDueAt, conceptId, bloomCeilingBefore, bloomCeilingAfter } =
     completeActivity(input);
 
   let advancement: CompletionResult['advancement'] = null;
@@ -678,4 +669,26 @@ export function getLogsBySession(sessionId: string): LogRow[] {
     .where(eq(activity_log.session_id, sessionId))
     .orderBy(asc(activity_log.reviewed_at))
     .all();
+}
+
+/**
+ * Most recent activity_log entry for a given activityId and evaluation method.
+ * Used by the AI evaluation polling endpoint to detect when the agent has
+ * written back an ai_evaluated result for a specific activity.
+ */
+export function getLogByActivityIdAndMethod(
+  activityId: string,
+  method: string,
+): LogRow | undefined {
+  return getDb()
+    .select()
+    .from(activity_log)
+    .where(
+      and(
+        eq(activity_log.activity_id, activityId),
+        eq(activity_log.evaluation_method, method),
+      ),
+    )
+    .orderBy(desc(activity_log.reviewed_at))
+    .get();
 }

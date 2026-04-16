@@ -79,6 +79,9 @@ export { escapeXml, formatMessages } from './router.js';
 const REVIEW_AGENT_JID = 'web:review:__agent__';
 const WEB_REVIEW_PREFIX = 'web:review:';
 
+const STUDY_AGENT_JID = 'web:study:__agent__';
+const WEB_STUDY_PREFIX = 'web:study:';
+
 /**
  * Build review context for a web:review:{draftId} chat.
  * Reads the draft file and source document metadata so the agent
@@ -121,6 +124,18 @@ function buildReviewContext(chatJid: string): string {
   }
 }
 
+/**
+ * Build study context for a web:study:{sessionId} chat.
+ * Called on the first message of a session as a hook for future context enrichment
+ * (concept state, prior session history). Currently returns empty string — the
+ * dashboard API route already prepends [CONTEXT] to the first message payload.
+ */
+function buildStudyContext(chatJid: string): string {
+  if (studySessionsInitialized.has(chatJid)) return '';
+  studySessionsInitialized.add(chatJid);
+  return '';
+}
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -133,6 +148,14 @@ const queue = new GroupQueue();
 // Track active web review JIDs so the message loop can query for them.
 // Populated when onMessage is called with a web:review:* JID.
 const activeWebReviewJids = new Set<string>();
+
+// Track active web study JIDs so the message loop can query for them.
+// Populated when onMessage is called with a web:study:* JID.
+const activeWebStudyJids = new Set<string>();
+
+// Track study sessions that have already received their initial context injection.
+// Used by buildStudyContext() to detect first-message vs. subsequent messages.
+const studySessionsInitialized = new Set<string>();
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -257,6 +280,12 @@ function findGroupForJid(chatJid: string): RegisteredGroup | undefined {
   ) {
     return registeredGroups[REVIEW_AGENT_JID];
   }
+  if (
+    chatJid.startsWith(WEB_STUDY_PREFIX) &&
+    registeredGroups[STUDY_AGENT_JID]
+  ) {
+    return registeredGroups[STUDY_AGENT_JID];
+  }
   return undefined;
 }
 
@@ -301,12 +330,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const reviewContext = chatJid.startsWith(WEB_REVIEW_PREFIX)
     ? buildReviewContext(chatJid)
     : '';
+  // For web study chats, hook for first-message context enrichment
+  const studyContext = chatJid.startsWith(WEB_STUDY_PREFIX)
+    ? buildStudyContext(chatJid)
+    : '';
   const attachmentPaths = prepareAttachments(
     missedMessages,
     group.folder,
     GROUPS_DIR,
   );
-  const prompt = reviewContext + formatMessages(missedMessages, TIMEZONE);
+  const prompt =
+    reviewContext + studyContext + formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -491,6 +525,10 @@ async function startMessageLoop(): Promise<void> {
       const jids = Object.keys(registeredGroups);
       // Include active web review JIDs so per-draft messages are fetched
       for (const webJid of activeWebReviewJids) {
+        if (!jids.includes(webJid)) jids.push(webJid);
+      }
+      // Include active web study JIDs so per-session messages are fetched
+      for (const webJid of activeWebStudyJids) {
         if (!jids.includes(webJid)) jids.push(webJid);
       }
       const { messages, newTimestamp } = getNewMessages(
@@ -689,6 +727,28 @@ async function main(): Promise<void> {
     });
   }
 
+  // Ensure study agent group exists
+  if (!registeredGroups[STUDY_AGENT_JID]) {
+    registerGroup(STUDY_AGENT_JID, {
+      name: 'Study Agent',
+      folder: 'study',
+      trigger: '',
+      added_at: new Date().toISOString(),
+      requiresTrigger: false,
+      isMain: false,
+      containerConfig: {
+        additionalMounts: [
+          {
+            hostPath: join(process.cwd(), 'vault'),
+            containerPath: 'vault',
+            readonly: true,
+          },
+        ],
+        allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'],
+      },
+    });
+  }
+
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
   for (const [jid, group] of Object.entries(registeredGroups)) {
@@ -814,6 +874,10 @@ async function main(): Promise<void> {
       if (chatJid.startsWith(WEB_REVIEW_PREFIX)) {
         activeWebReviewJids.add(chatJid);
       }
+      // Track web study JIDs so the message loop polls for them
+      if (chatJid.startsWith(WEB_STUDY_PREFIX)) {
+        activeWebStudyJids.add(chatJid);
+      }
     },
     onDraftClosed: (draftId: string) => {
       const chatJid = `${WEB_REVIEW_PREFIX}${draftId}`;
@@ -823,6 +887,16 @@ async function main(): Promise<void> {
       );
       queue.closeStdin(chatJid);
       activeWebReviewJids.delete(chatJid);
+    },
+    onStudyClosed: (sessionId: string) => {
+      const chatJid = `${WEB_STUDY_PREFIX}${sessionId}`;
+      logger.info(
+        { sessionId, chatJid },
+        'Study session closed, shutting down study agent',
+      );
+      queue.closeStdin(chatJid);
+      activeWebStudyJids.delete(chatJid);
+      studySessionsInitialized.delete(chatJid);
     },
     onChatMetadata: (
       chatJid: string,
