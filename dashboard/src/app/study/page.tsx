@@ -14,6 +14,14 @@ const BLOOM_LABELS: Record<number, string> = {
 
 const MASTERY_THRESHOLD = 10.0;
 
+interface PlanSummary {
+  id: string;
+  title: string;
+  strategy: string;
+  status: string;
+  progressPercent: number;
+}
+
 interface SessionPreview {
   blocks: Array<{
     type: string;
@@ -33,26 +41,36 @@ export default function StudyPage() {
   const [stats, setStats] = useState<ConceptStats | null>(null);
   const [session, setSession] = useState<SessionPreview | null>(null);
   const [streak, setStreak] = useState<number>(0);
+  const [activePlans, setActivePlans] = useState<PlanSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [conceptsRes, pendingRes, sessionRes, streakRes] = await Promise.all([
+      const [conceptsRes, pendingRes, sessionRes, streakRes, plansRes] = await Promise.all([
         fetch('/api/study/concepts'),
         fetch('/api/study/concepts/pending'),
         fetch('/api/study/session'),
         fetch('/api/study/streak'),
+        fetch('/api/study/plans'),
       ]);
       const conceptsData = await conceptsRes.json() as { concepts: ConceptSummary[]; stats: ConceptStats };
       const pendingData = await pendingRes.json() as { groups: PendingGroup[] };
       const sessionData = await sessionRes.json() as { session: SessionPreview };
       const streakData = await streakRes.json() as { streak: number };
+      const plansData = await plansRes.json() as { plans: PlanSummary[] };
       setConcepts(conceptsData.concepts ?? []);
       setStats(conceptsData.stats ?? null);
       setPendingGroups(pendingData.groups ?? []);
       setSession(sessionData.session ?? null);
       setStreak(streakData.streak ?? 0);
+      const allPlans: PlanSummary[] = plansData.plans ?? [];
+      setActivePlans(
+        allPlans
+          .filter((p) => p.status === 'active')
+          .sort((a, b) => b.progressPercent - a.progressPercent)
+          .slice(0, 3),
+      );
     } catch {
       // silently fail; data stays stale
     } finally {
@@ -150,7 +168,51 @@ export default function StudyPage() {
         </div>
       </section>
 
-      {/* Section 1 — Pending Approval */}
+      {/* Section 1 — Plans */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+            Plans
+            {activePlans.length > 0 && (
+              <span className="ml-2 text-gray-600 normal-case font-normal">({activePlans.length} active)</span>
+            )}
+          </h3>
+          <a
+            href="/study/plan"
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            View All Plans →
+          </a>
+        </div>
+        {activePlans.length === 0 ? (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 text-center">
+            <p className="text-sm text-gray-500">No active plans. <a href="/study/plan" className="text-blue-400 hover:text-blue-300">Create one →</a></p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {activePlans.map((plan) => (
+              <a
+                key={plan.id}
+                href={`/study/plan`}
+                className="flex items-center gap-4 rounded-lg border border-gray-800 bg-gray-900 p-3 hover:border-gray-700 transition-colors"
+              >
+                <span className="text-sm text-gray-100 font-medium min-w-0 truncate flex-1">{plan.title}</span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full"
+                      style={{ width: `${Math.min(100, Math.max(0, plan.progressPercent))}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-500 w-8 text-right">{Math.round(plan.progressPercent)}%</span>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Section 2 — Pending Approval */}
       {pendingGroups.length > 0 && (
         <section className="space-y-4">
           <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Pending Approval</h3>
@@ -192,7 +254,7 @@ export default function StudyPage() {
         </section>
       )}
 
-      {/* Section 2 — Active Concepts */}
+      {/* Section 3 — Active Concepts */}
       <section className="space-y-4">
         <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Active Concepts</h3>
         {concepts.length === 0 ? (
