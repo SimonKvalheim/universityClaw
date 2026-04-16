@@ -6,9 +6,11 @@ import {
   updateSession,
 } from '@/lib/study-db';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const composition = buildSessionComposition();
+    const url = new URL(request.url);
+    const planId = url.searchParams.get('planId') ?? undefined;
+    const composition = buildSessionComposition({ planId });
     const enrichedBlocks = composition.blocks.map((block) => ({
       ...block,
       activities: block.activities
@@ -45,6 +47,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       sessionType?: string;
       preConfidence?: Record<string, number>;
+      planId?: string;
     };
 
     // End any orphaned active session
@@ -62,6 +65,7 @@ export async function POST(request: Request) {
         ? JSON.stringify(body.preConfidence)
         : undefined,
       surface: 'dashboard_ui',
+      planId: body.planId,
     });
     return Response.json({ sessionId });
   } catch (err) {

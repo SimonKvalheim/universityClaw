@@ -78,6 +78,7 @@ export interface NewSession {
   sessionType: string;
   preConfidence?: string;
   surface?: string;
+  planId?: string;
 }
 
 function rowToSummary(row: ConceptRow, dueCount: number): ConceptSummary {
@@ -571,6 +572,7 @@ export function createSession(session: NewSession): void {
       session_type: session.sessionType,
       pre_confidence: session.preConfidence ?? null,
       surface: session.surface ?? null,
+      plan_id: session.planId ?? null,
     })
     .run();
 }
