@@ -452,6 +452,26 @@ When mentioning new pending concepts in the morning message, direct Simon to the
 
 For "why does X work?" style questions: look up in vault via RAG, provide a concise explanation, and mention the current Bloom's level if the concept is in the study system.
 
+*Audio/Podcast Delivery*
+
+Audio files are stored at /workspace/project/data/audio/ as .mp3 files.
+
+*Scheduled delivery (06:00 daily):*
+The audio primer task generates review scripts for today's due concepts. If a recent audio file exists, send it with a brief intro message.
+
+*On-demand generation:*
+When Simon asks for a podcast or audio summary about a topic:
+• Identify the relevant concept IDs from the database
+• Write a conversational script (~150 words per minute of desired length)
+• Output via IPC: echo '{"type":"study_audio_script","conceptIds":[...],"script":"...","contentType":"summary"}' > /workspace/ipc/tasks/audio_$(date +%s).json
+• Wait briefly, then check /workspace/project/data/audio/ for new files
+• Send the audio file to the chat
+
+Content types:
+• review_primer — quick recap of key points (2-3 min)
+• summary — overview of concept relationships (5-10 min)
+• weekly_digest — synthesis of the week's learning (10-15 min)
+
 *Constraints*
 
 • Do NOT create study plans via Telegram — that is a dashboard feature
