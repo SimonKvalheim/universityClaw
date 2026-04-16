@@ -1023,3 +1023,215 @@ export function removeConceptFromPlan(planId: string, conceptId: string): void {
     )
     .run();
 }
+
+// ---------------------------------------------------------------------------
+// Analytics queries
+// ---------------------------------------------------------------------------
+
+export interface RetentionRate {
+  retentionRate: number;
+  totalReviews: number;
+  correctReviews: number;
+}
+
+/**
+ * Fraction of activity_log entries in the last `days` days with quality >= 3.
+ */
+export function getRetentionRate(days: number): RetentionRate {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      quality: activity_log.quality,
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .all();
+
+  const totalReviews = rows.length;
+  const correctReviews = rows.filter((r) => r.quality >= 3).length;
+  const retentionRate = totalReviews === 0 ? 0 : correctReviews / totalReviews;
+
+  return { retentionRate, totalReviews, correctReviews };
+}
+
+export interface BloomDistributionItem {
+  bloomLevel: number;
+  count: number;
+  percentage: number;
+}
+
+/**
+ * Count of activity_log entries grouped by bloom_level for the last `days` days.
+ */
+export function getBloomDistribution(days: number): BloomDistributionItem[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      bloomLevel: activity_log.bloom_level,
+      cnt: count(),
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .groupBy(activity_log.bloom_level)
+    .orderBy(asc(activity_log.bloom_level))
+    .all();
+
+  const total = rows.reduce((sum, r) => sum + r.cnt, 0);
+
+  return rows.map((r) => ({
+    bloomLevel: r.bloomLevel,
+    count: r.cnt,
+    percentage: total === 0 ? 0 : r.cnt / total,
+  }));
+}
+
+export interface MethodEffectivenessItem {
+  activityType: string;
+  avgQuality: number;
+  count: number;
+}
+
+/**
+ * Average quality and count of reviews grouped by activity_type, ordered by
+ * average quality descending.
+ */
+export function getMethodEffectiveness(): MethodEffectivenessItem[] {
+  const db = getDb();
+
+  const rows = db
+    .select({
+      activityType: activity_log.activity_type,
+      avgQuality: sql<number>`avg(${activity_log.quality})`,
+      cnt: count(),
+    })
+    .from(activity_log)
+    .groupBy(activity_log.activity_type)
+    .orderBy(desc(sql<number>`avg(${activity_log.quality})`))
+    .all();
+
+  return rows.map((r) => ({
+    activityType: r.activityType,
+    avgQuality: r.avgQuality,
+    count: r.cnt,
+  }));
+}
+
+export interface TimeSeriesItem {
+  date: string;
+  count: number;
+  avgQuality: number;
+}
+
+/**
+ * Daily activity counts and average quality for the last `days` days.
+ * Days with no activity are filled with zero-count entries.
+ */
+export function getActivityTimeSeries(days: number): TimeSeriesItem[] {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      date: sql<string>`date(${activity_log.reviewed_at})`,
+      cnt: count(),
+      avgQuality: sql<number>`avg(${activity_log.quality})`,
+    })
+    .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
+    .groupBy(sql`date(${activity_log.reviewed_at})`)
+    .orderBy(asc(sql`date(${activity_log.reviewed_at})`))
+    .all();
+
+  // Build a map of existing results
+  const resultMap = new Map<string, { count: number; avgQuality: number }>();
+  for (const r of rows) {
+    resultMap.set(r.date, { count: r.cnt, avgQuality: r.avgQuality });
+  }
+
+  // Fill gaps: produce one entry per day from cutoff to today
+  const msPerDay = 86400000;
+  const today = new Date();
+  const series: TimeSeriesItem[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * msPerDay);
+    const dateStr = d.toISOString().slice(0, 10);
+    const existing = resultMap.get(dateStr);
+    series.push({
+      date: dateStr,
+      count: existing?.count ?? 0,
+      avgQuality: existing?.avgQuality ?? 0,
+    });
+  }
+
+  return series;
+}
+
+export interface CalibrationData {
+  calibrationScore: number | null;
+  dataPoints: number;
+}
+
+/**
+ * Pearson correlation between confidence_rating and quality for the last
+ * `days` days. Returns null calibrationScore when fewer than 5 data points.
+ */
+export function getCalibrationData(days: number): CalibrationData {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  const rows = db
+    .select({
+      confidence: activity_log.confidence_rating,
+      quality: activity_log.quality,
+    })
+    .from(activity_log)
+    .where(
+      and(
+        gte(activity_log.reviewed_at, cutoff),
+        sql`${activity_log.confidence_rating} IS NOT NULL`,
+      ),
+    )
+    .all();
+
+  // Filter out any null confidence_rating values that may have slipped through
+  const pts = rows.filter((r) => r.confidence !== null) as {
+    confidence: number;
+    quality: number;
+  }[];
+
+  if (pts.length < 5) {
+    return { calibrationScore: null, dataPoints: pts.length };
+  }
+
+  return { calibrationScore: pearsonCorrelation(pts), dataPoints: pts.length };
+}
+
+/**
+ * Compute Pearson r between confidence and quality for the given data points.
+ * Exported for unit testing.
+ */
+export function pearsonCorrelation(
+  pts: { confidence: number; quality: number }[],
+): number {
+  const n = pts.length;
+  let sumX = 0,
+    sumY = 0,
+    sumXY = 0,
+    sumX2 = 0,
+    sumY2 = 0;
+  for (const { confidence: x, quality: y } of pts) {
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumX2 += x * x;
+    sumY2 += y * y;
+  }
+  const num = n * sumXY - sumX * sumY;
+  const den = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+  if (den === 0) return 0;
+  return num / den;
+}
