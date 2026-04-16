@@ -74,8 +74,11 @@ export default function StudyChatPage() {
         } else if (list.length > 0) {
           setSelectedConceptId(list[0].id);
         }
-        if (qMethod && METHODS.includes(qMethod)) {
-          setSelectedMethod(qMethod);
+        const matchedMethod = qMethod
+          ? METHODS.find((m) => m.toLowerCase() === qMethod.toLowerCase())
+          : undefined;
+        if (matchedMethod) {
+          setSelectedMethod(matchedMethod);
         }
       })
       .catch(() => {

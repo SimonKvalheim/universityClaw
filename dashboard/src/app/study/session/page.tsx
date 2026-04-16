@@ -712,7 +712,7 @@ export default function StudySessionPage() {
               </p>
               <div className="flex gap-2">
                 <a
-                  href={`/study/chat?conceptId=${encodeURIComponent(activity.conceptId)}&method=socratic`}
+                  href={`/study/chat?conceptId=${encodeURIComponent(activity.conceptId)}&method=Socratic`}
                   className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors text-center"
                 >
                   Open in Study Chat
