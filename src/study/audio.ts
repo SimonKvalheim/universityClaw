@@ -33,15 +33,7 @@ export async function generateAudioScript(
 
   const conceptSummaries = concepts
     .map((c) => {
-      const overallMastery = Math.max(
-        c.masteryL1 ?? 0,
-        c.masteryL2 ?? 0,
-        c.masteryL3 ?? 0,
-        c.masteryL4 ?? 0,
-        c.masteryL5 ?? 0,
-        c.masteryL6 ?? 0,
-      );
-      return `- ${c.title} (domain: ${c.domain ?? 'unknown'}, mastery: ${overallMastery.toFixed(2)})`;
+      return `- ${c.title} (domain: ${c.domain ?? 'unknown'}, mastery: ${(c.masteryOverall ?? 0).toFixed(2)})`;
     })
     .join('\n');
 

@@ -23,7 +23,7 @@ export async function GET(request: Request) {
       await Promise.all([
         Promise.resolve(getRetentionRate(days)),
         Promise.resolve(getBloomDistribution(days)),
-        Promise.resolve(getMethodEffectiveness()),
+        Promise.resolve(getMethodEffectiveness(days)),
         Promise.resolve(getActivityTimeSeries(days)),
         Promise.resolve(getCalibrationData(days)),
       ]);

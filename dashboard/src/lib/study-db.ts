@@ -1087,7 +1087,7 @@ export function getBloomDistribution(days: number): BloomDistributionItem[] {
   return rows.map((r) => ({
     bloomLevel: r.bloomLevel,
     count: r.cnt,
-    percentage: total === 0 ? 0 : r.cnt / total,
+    percentage: total === 0 ? 0 : (r.cnt / total) * 100,
   }));
 }
 
@@ -1099,10 +1099,11 @@ export interface MethodEffectivenessItem {
 
 /**
  * Average quality and count of reviews grouped by activity_type, ordered by
- * average quality descending.
+ * average quality descending. Filtered to the last `days` days.
  */
-export function getMethodEffectiveness(): MethodEffectivenessItem[] {
+export function getMethodEffectiveness(days: number): MethodEffectivenessItem[] {
   const db = getDb();
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
 
   const rows = db
     .select({
@@ -1111,6 +1112,7 @@ export function getMethodEffectiveness(): MethodEffectivenessItem[] {
       cnt: count(),
     })
     .from(activity_log)
+    .where(gte(activity_log.reviewed_at, cutoff))
     .groupBy(activity_log.activity_type)
     .orderBy(desc(sql<number>`avg(${activity_log.quality})`))
     .all();

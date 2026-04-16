@@ -101,6 +101,8 @@ export function getStalenessWarnings(
     if (!activity.sourceNotePath) continue;
 
     const absolutePath = path.resolve(vaultDir, activity.sourceNotePath);
+    const resolvedVaultDir = path.resolve(vaultDir);
+    if (!absolutePath.startsWith(resolvedVaultDir + path.sep) && absolutePath !== resolvedVaultDir) continue;
 
     try {
       const stat = fs.statSync(absolutePath);
