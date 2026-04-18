@@ -249,8 +249,7 @@ async function buildContainerArgs(
   args.push('-e', `LIGHTRAG_URL=${containerLightragUrl}`);
 
   // Gemini API key for STT (on host) and TTS (synthesize_speech tool in container).
-  // This bypasses the OneCLI gateway intentionally — it matches the direct env
-  // injection pattern the previous Mistral key used.
+  // Injected directly as an env var, bypassing the OneCLI gateway intentionally.
   const geminiKey =
     process.env.GEMINI_API_KEY ||
     readEnvFile(['GEMINI_API_KEY']).GEMINI_API_KEY;
