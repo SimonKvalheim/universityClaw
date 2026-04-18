@@ -16,7 +16,8 @@ export const SUBSYSTEMS: SubsystemEntry[] = [
   },
   {
     path: 'src/study/',
-    purpose: 'Study engine, session builder, SM-2 spacing, scaffolding, audio pipeline.',
+    purpose:
+      'Study engine, session builder, SM-2 spacing, scaffolding, audio pipeline.',
   },
   {
     path: 'src/vault/',
@@ -24,15 +25,18 @@ export const SUBSYSTEMS: SubsystemEntry[] = [
   },
   {
     path: 'src/channels/',
-    purpose: 'Channel registry and per-channel adapters (telegram, web, slack, etc.).',
+    purpose:
+      'Channel registry and per-channel adapters (telegram, web, slack, etc.).',
   },
   {
     path: 'src/profile/',
-    purpose: 'Student profile: progress tracking, knowledge map, study-log rotation.',
+    purpose:
+      'Student profile: progress tracking, knowledge map, study-log rotation.',
   },
   {
     path: 'src/db/schema/',
-    purpose: 'Canonical Drizzle schema (snake_case SQL columns, camelCase TS properties).',
+    purpose:
+      'Canonical Drizzle schema (snake_case SQL columns, camelCase TS properties).',
   },
   {
     path: 'src/voice/',
