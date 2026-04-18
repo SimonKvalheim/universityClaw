@@ -486,159 +486,63 @@ const GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
 const GEMINI_TTS_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`;
 ```
 
-- [ ] **Step 3: Replace the `synthesize_speech` tool handler**
+- [ ] **Step 3: Replace the `synthesize_speech` tool handler — load-bearing bits verbatim, composition up to you**
 
-Replace the entire `server.tool('synthesize_speech', ...)` block with the Gemini-backed version. The new handler adds `style_prompt`, uses the two helpers, wraps PCM as WAV, and adds Gemini-specific error branches (`finishReason` / `promptFeedback` logging, modality-mismatch text-instead-of-audio).
+Replace the entire `server.tool('synthesize_speech', ...)` call. Two parts are load-bearing and MUST be exactly as shown (wire format + tool contract): the Zod schema and the `fetch` invocation. Everything else is composition — write it however reads cleanly; the invariants you must preserve are listed after the verbatim blocks.
+
+**Verbatim — Zod schema** (wire-level; MCP clients depend on these strings and keys):
 
 ```ts
-server.tool(
-  'synthesize_speech',
-  'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
-  {
-    text: z
-      .string()
-      .max(50000)
-      .describe(
-        'Text to synthesize. You can embed Gemini audio tags like [warmly], [slowly], [whispering], [excitedly] inline to color specific moments within the speech.',
-      ),
-    style_prompt: z
-      .string()
-      .optional()
-      .describe(
-        'Natural-language whole-utterance style directive, e.g. "Say warmly and slowly" or "Speak with calm encouragement". Prepended to the text before synthesis. Use style_prompt for whole-utterance tone; use [inline tags] inside text for moment-specific expression.',
-      ),
-  },
-  async (args) => {
-    if (!args.text || args.text.trim().length === 0) {
-      return {
-        content: [{ type: 'text' as const, text: 'Error: text cannot be empty.' }],
-        isError: true,
-      };
-    }
-    if (args.text.length > TTS_MAX_TEXT_LENGTH) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `Error: text too long (${args.text.length} chars, max ${TTS_MAX_TEXT_LENGTH}).`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return {
-        content: [
-          { type: 'text' as const, text: 'Error: GEMINI_API_KEY is not set in the container environment.' },
-        ],
-        isError: true,
-      };
-    }
-
-    try {
-      const body = buildGeminiTtsRequest({
-        text: args.text,
-        stylePrompt: args.style_prompt,
-        voiceName: GEMINI_TTS_VOICE,
-      });
-
-      const response = await fetch(GEMINI_TTS_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(300_000),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => 'unknown error');
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Error: TTS service returned ${response.status}: ${errText}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const responseJson = (await response.json()) as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: string; inlineData?: { data?: string } }> };
-          finishReason?: string;
-        }>;
-        promptFeedback?: { blockReason?: string };
-      };
-
-      const part = responseJson.candidates?.[0]?.content?.parts?.[0];
-      const audioB64 = part?.inlineData?.data;
-
-      if (!audioB64) {
-        // Distinguish "model returned text instead of audio" from "missing entirely"
-        if (part?.text) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Error: TTS model returned text instead of audio (modality negotiation failed). Model said: ${part.text}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        const finishReason = responseJson.candidates?.[0]?.finishReason;
-        const blockReason = responseJson.promptFeedback?.blockReason;
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Error: TTS response missing inlineData.data. finishReason=${finishReason ?? 'unknown'} blockReason=${blockReason ?? 'none'}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const pcm = Buffer.from(audioB64, 'base64');
-      const wavBuffer = pcmToWav(pcm);
-
-      fs.mkdirSync(AUDIO_DIR, { recursive: true });
-      const random = Math.random().toString(36).slice(2, 6);
-      const filename = `tts-${Date.now()}-${random}.wav`;
-      const filepath = path.join(AUDIO_DIR, filename);
-      fs.writeFileSync(filepath, wavBuffer);
-
-      // 24kHz × 1 channel × 2 bytes/sample = 48000 bytes/sec
-      const durationSeconds = Math.max(0, Math.round((wavBuffer.length - 44) / 48000));
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              path: filepath,
-              duration_seconds: durationSeconds,
-            }),
-          },
-        ],
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: [
-          { type: 'text' as const, text: `Error: TTS request failed: ${message}` },
-        ],
-        isError: true,
-      };
-    }
-  },
-);
+{
+  text: z
+    .string()
+    .max(50000)
+    .describe(
+      'Text to synthesize. You can embed Gemini audio tags like [warmly], [slowly], [whispering], [excitedly] inline to color specific moments within the speech.',
+    ),
+  style_prompt: z
+    .string()
+    .optional()
+    .describe(
+      'Natural-language whole-utterance style directive, e.g. "Say warmly and slowly" or "Speak with calm encouragement". Prepended to the text before synthesis. Use style_prompt for whole-utterance tone; use [inline tags] inside text for moment-specific expression.',
+    ),
+}
 ```
+
+The tool description string (second arg to `server.tool`) stays as today: `'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.'`
+
+**Verbatim — the Gemini fetch** (wire format; a typo here fails silently with a 400):
+
+```ts
+const response = await fetch(GEMINI_TTS_URL, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-goog-api-key': apiKey,
+  },
+  body: JSON.stringify(
+    buildGeminiTtsRequest({
+      text: args.text,
+      stylePrompt: args.style_prompt,
+      voiceName: GEMINI_TTS_VOICE,
+    }),
+  ),
+  signal: AbortSignal.timeout(300_000),
+});
+```
+
+**Invariants you must preserve** (compose the rest however reads best — extract helpers, unify error shapes, rename locals; you own the handler's structure):
+
+- **Input validation** (pre-fetch): empty/whitespace-only `text` → error `"Error: text cannot be empty."`. `text.length > TTS_MAX_TEXT_LENGTH` → error `"Error: text too long (${len} chars, max ${TTS_MAX_TEXT_LENGTH})."`. Missing `process.env.GEMINI_API_KEY` → error `"Error: GEMINI_API_KEY is not set in the container environment."`. All three return `{ isError: true, content: [...] }` — match the shape used by the current tool.
+- **HTTP failure**: `!response.ok` → error `"Error: TTS service returned ${status}: ${body}"` where body is `await response.text()` with a defensive catch.
+- **Response extraction**: the audio is at `candidates[0].content.parts[0].inlineData.data` (base64). Anything else that's there on the part is not audio.
+- **Modality-mismatch branch** (REQUIRED, do not omit): if `parts[0]` contains a `text` field instead of `inlineData`, return a DISTINCT error message that includes the model's returned text — do not collapse this into the generic "missing inlineData" path. Rationale: this is the single most informative diagnostic when the preview model's modality negotiation breaks.
+- **Missing-audio branch with diagnostics** (REQUIRED): when `inlineData.data` is absent and no fallback `text` is present, return an error that logs both `candidates[0].finishReason` and `promptFeedback.blockReason` (use "unknown" / "none" when either is absent). This is the only way the user diagnoses safety blocks.
+- **PCM → WAV → disk**: decode base64 → `pcmToWav` → write to `path.join(AUDIO_DIR, \`tts-${Date.now()}-${random}.wav\`)` where `random = Math.random().toString(36).slice(2, 6)`. `fs.mkdirSync(AUDIO_DIR, { recursive: true })` first.
+- **Return shape** (DO NOT CHANGE — `send_voice` and `src/ipc.ts` depend on it): `{ content: [{ type: 'text', text: JSON.stringify({ path, duration_seconds }) }] }`. `duration_seconds = Math.max(0, Math.round((wavBuffer.length - 44) / 48000))`.
+- **Outer `try/catch`**: thrown errors → `"Error: TTS request failed: ${message}"`.
+
+The constant `TTS_MAX_TEXT_LENGTH` is already defined at the top of the file (kept from the Mistral version). `AUDIO_DIR` likewise.
 
 - [ ] **Step 4: Confirm no `MISTRAL` string remains in this file**
 
@@ -709,64 +613,43 @@ Near the top of the file (below the imports, above the exports), add:
 const GEMINI_STT_MODEL = 'gemini-2.5-flash-lite';
 ```
 
-- [ ] **Step 3: Replace the STT body inside the `message:voice` handler**
+- [ ] **Step 3: Replace the STT body inside the `message:voice` handler — fetch verbatim, surrounding flow up to you**
 
-The current Mistral block is the `try { const audioData = fs.readFileSync(...); const formData = new FormData(); ... fetch('https://api.mistral.ai/v1/audio/transcriptions', ...) ...}` block. Replace it with a Gemini inline-base64 equivalent.
+The current Mistral block (read the handler first — look for `const formData = new FormData();` and the `fetch('https://api.mistral.ai/v1/audio/transcriptions', ...)` call) is the inner `try { ... } finally { fs.unlink(localPath, () => {}); }` body. Replace only that inner body. The outer download/file-handling and the `transcribedText` → `storeNonText(ctx, transcribedText)` flow stay as-is.
 
-Inside the outer `try { ... const file = await ctx.getFile(); ... await file.download(localPath); try { ... } finally { fs.unlink(localPath, () => {}); } }` structure, the inner try/finally block should look like this after the change:
+**Verbatim — the Gemini fetch** (wire format; do not alter keys, header case, or path shape):
 
 ```ts
-try {
-  if (!this.geminiApiKey) {
-    logger.warn('Skipping transcription — no GEMINI_API_KEY');
-  } else {
-    const audioData = fs.readFileSync(localPath);
-    const base64Audio = audioData.toString('base64');
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_STT_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': this.geminiApiKey,
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { inlineData: { mimeType: 'audio/ogg', data: base64Audio } },
-                { text: 'Generate a transcript of this speech.' },
-              ],
-            },
+const response = await fetch(
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_STT_MODEL}:generateContent`,
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': this.geminiApiKey,
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { inlineData: { mimeType: 'audio/ogg', data: audioData.toString('base64') } },
+            { text: 'Generate a transcript of this speech.' },
           ],
-        }),
-        signal: AbortSignal.timeout(60_000),
-      },
-    );
-
-    if (response.ok) {
-      const result = (await response.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      };
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (text) {
-        transcribedText = `[Voice]: ${text}`;
-      }
-    } else {
-      const errText = await response.text().catch(() => '');
-      logger.error(
-        { status: response.status, body: errText },
-        'Gemini STT request failed',
-      );
-    }
-  }
-} finally {
-  fs.unlink(localPath, () => {});
-}
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(60_000),
+  },
+);
 ```
 
-The surrounding `transcribedText` variable, outer try/catch, `storeNonText(ctx, transcribedText)` call, and error-log structure all stay as-is.
+**Invariants you must preserve** (compose the surrounding logic however reads best):
+
+- **Missing key short-circuit**: if `!this.geminiApiKey`, log `"Skipping transcription — no GEMINI_API_KEY"` via `logger.warn` and skip the fetch entirely. Do not attempt the POST. `transcribedText` retains its default `"[Voice message (transcription failed)]"` value.
+- **Response extraction**: transcript is at `candidates[0].content.parts[0].text`. Trim it. If truthy, set `transcribedText = \`[Voice]: ${text}\`` — the `[Voice]:` prefix is load-bearing; the agent uses it to recognize audio origin.
+- **Non-2xx branch**: `logger.error({ status: response.status, body: errText }, 'Gemini STT request failed')` where `errText = await response.text().catch(() => '')`. Leaves `transcribedText` at its failure-default so the agent sees the failure placeholder.
+- **File cleanup**: `fs.unlink(localPath, () => {})` runs in the `finally` regardless of branch taken.
+- **No new exception surface**: the outer try/catch (around `ctx.getFile()` / `file.download()` / inner block) is kept intact. Do not add new try/catches around the fetch — let thrown errors bubble to the existing outer catch, which already logs and leaves `transcribedText` at the failure-default.
 
 - [ ] **Step 4: Update the `registerChannel` callback at the bottom of the file**
 
@@ -990,18 +873,30 @@ git commit -m "docs(arch): replace Mistral node with Gemini in architecture diag
 **Files:**
 - Modify: `docs/speech.md`
 
-**Rewrite scope:** The entire file. Keep the high-level sections ("How It Works", "Architecture Decisions", "Configuration", "Components", "Error Handling", "Cost", "Limitations", "Security") but rewrite each section for Gemini. Key changes:
+**Rewrite scope:** The entire file. Structure the new doc in this section order (same top-level shape as today, so readers who know the old doc don't get lost):
 
-- **Intro sentence:** describe both paths as using Gemini.
-- **STT flow:** update the endpoint, auth header, model name, request shape (inline base64 JSON, not multipart).
-- **TTS flow:** update the endpoint, auth header, model name, describe PCM → WAV wrap in container.
-- **Architecture Decisions:** remove "Why a cloud API for TTS" (obsolete historical decision). Keep "Why STT runs on the host (not in container)" (still applies). Add a short section: "Why wrap PCM as WAV in the container" — preserves the existing host ffmpeg pipeline contract.
-- **Configuration table:** replace `MISTRAL_API_KEY` row with `GEMINI_API_KEY` row.
-- **Error Handling:** update all timeouts (TTS timeout is 300s, not 60s — previously stale), update text-length limit (50000, not 5000 — previously stale), add Gemini-specific rows: `finishReason` / `promptFeedback` logging, modality-mismatch error.
-- **Cost:** Gemini rates. Per spec: TTS $1/M text input tokens, $20/M audio output tokens; STT = input-text priced at `gemini-2.5-flash-lite` rates (look up the current price from Google Cloud pricing when rewriting). If current pricing can't be confirmed cheaply, write the rate card with a footnote citing the Gemini pricing page as the source.
-- **Limitations:** remove "No Norwegian TTS" (now supported). Add "No mid-conversation voice swap" and "No streaming TTS".
-- **Components:** Unchanged except for the security note about the API key.
-- **Security:** Update references from `MISTRAL_API_KEY` to `GEMINI_API_KEY`; note the same direct-env pattern.
+1. **Intro** — one sentence: both inbound (STT) and outbound (TTS) audio use Google Gemini cloud APIs.
+2. **How It Works**
+   - `### Inbound: Voice Message → Text (STT)` — prose + the STT ASCII flow block (Telegram voice → host download → POST to Gemini `generateContent` at `gemini-2.5-flash-lite` with `inlineData` `audio/ogg` + prompt → transcript → `[Voice]: ...` to agent → temp cleanup).
+   - `### Outbound: Agent → Voice Message (TTS)` — prose + the TTS ASCII flow block (agent calls `synthesize_speech(text, style_prompt?)` → container POSTs Gemini `generateContent` at `gemini-3.1-flash-tts-preview` → base64 PCM → `pcmToWav` → `/workspace/group/audio/*.wav` → `send_voice` IPC → host ffmpeg WAV→OGG → Telegram voice bubble → cleanup).
+3. **Architecture Decisions** (subsections, in this order):
+   - `### Why STT runs on the host (not in container)` — retained from the old doc (same rationale).
+   - `### Why wrap PCM as WAV in the container` — new. Gemini returns raw 24kHz s16le mono PCM. We prepend a 44-byte RIFF/WAVE header in-container so the existing host IPC contract + ffmpeg invocation do not change; intermediate `.wav` files remain playable standalone, which helps debugging.
+   - Do NOT include "Why a cloud API for TTS" — that decision is obsolete history.
+4. **Configuration** — single-row table: `GEMINI_API_KEY` (host `.env`), purpose: "STT authentication (Telegram channel) and TTS (passed into containers as env var)". State that no local binaries/model files are needed.
+5. **Components**
+   - `### Host Dependencies` — `ffmpeg` (WAV→OGG conversion), `@grammyjs/files` (voice downloads). Same as today.
+   - `### Files` — updated table: `src/channels/telegram.ts`, `src/ipc.ts`, `src/index.ts`, `src/types.ts`, `container/agent-runner/src/ipc-mcp-stdio.ts`, plus the new `container/agent-runner/src/pcm-to-wav.ts` and `container/agent-runner/src/gemini-tts-request.ts` helpers.
+6. **Error Handling** — the rows from the spec §"Error handling" (including the new Gemini rows: `finishReason`/`promptFeedback` logging, modality-mismatch text-instead-of-audio). Use the correct timeouts (STT 60s, TTS 300s) and the correct text-length limit (50000 chars). Do not carry forward the old doc's stale "5000 chars" or "TTS timeout (60s)" phrasings.
+7. **Cost** — per spec: TTS $1/M text-input tokens, $20/M audio-output tokens (batch: half). STT priced at `gemini-2.5-flash-lite` input-audio rates. If you can confirm current audio-input pricing cheaply during the rewrite, include concrete per-minute and per-voice-reply estimates; otherwise write the rate card as above and add a footnote: `*Pricing confirmed at https://ai.google.dev/pricing on {date}; check the live page for current rates.*`
+8. **Limitations** — remove "No Norwegian TTS" (Gemini supports `nb` and `nn`). Add:
+   - "No mid-conversation voice swap" (voice is a compile-time constant).
+   - "No streaming TTS" (audio is fully generated before sending).
+   - Retain "Only Telegram has voice support" (still true).
+   - Retain "No voice cloning" (still true, rewording optional).
+9. **Security** — update references to use `GEMINI_API_KEY`. Retain the existing bullets about path restriction, IPC path validation, and authorization model. Add one line: key injection bypasses OneCLI intentionally, matching the prior Mistral pattern.
+
+Do not carry over any sentence that mentions Mistral or Voxtral. Do not retain the "Why a cloud API for TTS" section.
 
 - [ ] **Step 1: Rewrite the file end-to-end**
 
@@ -1038,19 +933,23 @@ limitation; Gemini supports nb and nn."
 
 **Files:** None to modify in this task (it's a verification task). If this task finds a stray reference, open a new task to fix it; do not silently patch.
 
-- [ ] **Step 1: Search for any `MISTRAL` / `mistral` reference outside the historical plans**
+- [ ] **Step 1: Search for any `MISTRAL` / `mistral` reference outside the historical plans and build artifacts**
 
 Run:
 ```
 grep -rn -i mistral . \
   --include='*.ts' --include='*.tsx' --include='*.js' --include='*.json' \
   --include='*.md' --include='*.sh' --include='.env.example' \
-  | grep -v docs/superpowers/plans/ \
-  | grep -v docs/superpowers/specs/2026-04-12- \
-  | grep -v docs/superpowers/specs/2026-04-18-gemini- \
-  | grep -v node_modules
+  --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git \
+  --exclude-dir=.next --exclude-dir=data --exclude-dir=store \
+  | grep -v 'docs/superpowers/plans/' \
+  | grep -v 'docs/superpowers/specs/2026-04-12-' \
+  | grep -v 'docs/superpowers/specs/2026-04-18-gemini-'
 ```
-Expected: Empty. Any hit that is NOT in `node_modules` or the excluded historical paths is a bug that needs a fix.
+
+Expected: Empty. Anything that surfaces is a live reference that the preceding tasks missed.
+
+**Excluded (intentionally):** `node_modules/`, `dist/` and other build output, `.git/`, `.next/`, `data/` (LightRAG working dir), `store/` (binary SQLite). Historical plan and spec docs are excluded by the trailing `grep -v` filters because the migration spec explicitly lists them as "Docs left alone".
 
 - [ ] **Step 2: If anything surfaces, file it as a follow-up**
 
@@ -1096,12 +995,16 @@ Expected: Exits 0.
 Run: `npm test`
 Expected: All tests pass.
 
-- [ ] **Step 4: Rebuild the container**
+- [ ] **Step 4: Rebuild the container (prune builder first — default for this PR)**
 
-Per `CLAUDE.md`: the builder cache is aggressive. If the container's Gemini-backed `ipc-mcp-stdio.ts` doesn't behave as expected after a normal rebuild, prune the builder and retry.
+Per `CLAUDE.md`: the builder cache is aggressive and `--no-cache` alone does NOT invalidate COPY steps. Since this migration rewrites a container-side file (`ipc-mcp-stdio.ts`) AND adds two new source files (`pcm-to-wav.ts`, `gemini-tts-request.ts`) that must land in the image, prune the builder before rebuilding rather than treating the prune as a fallback.
 
-Run: `./container/build.sh`
-Expected: Build succeeds. Note the image tag.
+Run:
+```
+docker builder prune -af
+./container/build.sh
+```
+Expected: Build succeeds and the new helper files appear in the compiled image. Note the image tag.
 
 - [ ] **Step 5: Restart NanoClaw**
 
@@ -1119,7 +1022,7 @@ Run each check and tick it off only after observing the expected behavior:
 - [ ] Send a Norwegian voice note → transcript is Norwegian with accented characters (æ, ø, å) rendered correctly as UTF-8.
 - [ ] Ask agent to speak → receive a Telegram voice bubble that plays, has a waveform, and sounds like the Kore voice.
 - [ ] Ask agent to speak Norwegian → plays Norwegian audio.
-- [ ] Ask agent to speak using `style_prompt: "Say warmly and slowly"` → tone is noticeably warmer and slower.
+- [ ] Ask agent to speak using `style_prompt: "Say warmly and slowly"` → tone is noticeably warmer and slower. **A/B check** (turns the subjective call into an observable one): first ask the agent to speak the same sentence WITHOUT `style_prompt`, then WITH it. Listen to both back-to-back. The two must audibly differ; if they sound identical the `style_prompt` prepend path is broken.
 - [ ] Ask agent to speak with inline `[whispering]` / `[slowly]` tags → tags honored at the tagged position.
 - [ ] Temporarily unset `GEMINI_API_KEY` and restart; send a voice note → `[Voice message (transcription failed)]`. Ask agent to speak → text-only fallback with sensible error message. Restore `GEMINI_API_KEY` and restart.
 
