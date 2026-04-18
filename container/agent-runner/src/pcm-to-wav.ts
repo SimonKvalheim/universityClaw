@@ -1,14 +1,16 @@
-// Gemini TTS returns raw 24kHz mono 16-bit little-endian PCM, but the host
-// ffmpeg WAV→OGG pipeline expects a WAV file on disk. This helper prepends
-// the standard 44-byte RIFF/WAVE header so the downstream pipeline works
-// unchanged.
+/**
+ * Gemini TTS returns raw 24kHz mono 16-bit little-endian PCM, but the host
+ * ffmpeg WAV→OGG pipeline expects a WAV file on disk. This helper prepends
+ * the standard 44-byte RIFF/WAVE header so the downstream pipeline works
+ * unchanged.
+ */
 
 export function pcmToWav(pcm: Buffer): Buffer {
-  const sampleRate = 24000;
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
-  const blockAlign = numChannels * (bitsPerSample / 8);
+  const SAMPLE_RATE = 24000;
+  const CHANNELS = 1;
+  const BITS_PER_SAMPLE = 16;
+  const BYTE_RATE = SAMPLE_RATE * CHANNELS * (BITS_PER_SAMPLE / 8);
+  const BLOCK_ALIGN = CHANNELS * (BITS_PER_SAMPLE / 8);
 
   const header = Buffer.alloc(44);
 
@@ -21,11 +23,11 @@ export function pcmToWav(pcm: Buffer): Buffer {
   header.write('fmt ', 12, 'ascii');
   header.writeUInt32LE(16, 16); // fmt chunk size (PCM)
   header.writeUInt16LE(1, 20); // audio format (PCM = 1)
-  header.writeUInt16LE(numChannels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
+  header.writeUInt16LE(CHANNELS, 22);
+  header.writeUInt32LE(SAMPLE_RATE, 24);
+  header.writeUInt32LE(BYTE_RATE, 28);
+  header.writeUInt16LE(BLOCK_ALIGN, 32);
+  header.writeUInt16LE(BITS_PER_SAMPLE, 34);
 
   // data sub-chunk
   header.write('data', 36, 'ascii');
