@@ -248,12 +248,14 @@ async function buildContainerArgs(
     .replace('127.0.0.1', 'host.docker.internal');
   args.push('-e', `LIGHTRAG_URL=${containerLightragUrl}`);
 
-  // Mistral API key for TTS (synthesize_speech tool in container)
-  const mistralKey =
-    process.env.MISTRAL_API_KEY ||
-    readEnvFile(['MISTRAL_API_KEY']).MISTRAL_API_KEY;
-  if (mistralKey) {
-    args.push('-e', `MISTRAL_API_KEY=${mistralKey}`);
+  // Gemini API key for STT (on host) and TTS (synthesize_speech tool in container).
+  // This bypasses the OneCLI gateway intentionally — it matches the direct env
+  // injection pattern the previous Mistral key used.
+  const geminiKey =
+    process.env.GEMINI_API_KEY ||
+    readEnvFile(['GEMINI_API_KEY']).GEMINI_API_KEY;
+  if (geminiKey) {
+    args.push('-e', `GEMINI_API_KEY=${geminiKey}`);
   }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
