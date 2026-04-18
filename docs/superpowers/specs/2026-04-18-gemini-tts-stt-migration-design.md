@@ -9,7 +9,7 @@
 
 - Replace Mistral cloud APIs with Gemini across both audio paths.
 - Enable Norwegian TTS (Mistral did not support it; Gemini supports `nb` and `nn`).
-- Expose utterance-level style control to the agent via an optional `style_prompt` parameter.
+- Expose whole-utterance style control to the agent via an optional `style_prompt` parameter.
 - Preserve the host-side WAV → OGG Opus conversion pipeline untouched. Migration stays localized to the two provider-facing surfaces.
 - Standardize the env variable name to `GEMINI_API_KEY`.
 
@@ -69,12 +69,20 @@ Telegram voice (.oga)
 
 No language hint is sent. Gemini auto-detects Norwegian / English / other from the audio itself. The `[Voice]:` prefix is preserved so the agent knows the input originated from audio.
 
+### STT model choice & fallback
+
+Primary model: `gemini-2.5-flash-lite` — cheapest, suitable for short voice notes. Google's audio-understanding docs list multimodal input support for the 2.5 Flash family, but the public model cards do not explicitly enumerate `lite` against the audio modality. If `lite` returns a 400 on audio input during smoke testing, the implementer should swap the STT model constant to `gemini-2.5-flash` (documented multimodal, stable, ~3-5x cost on voice-note-sized inputs). Isolate this as a single named constant (`GEMINI_STT_MODEL`) at the top of the voice handler so the swap is a one-line change.
+
+### Inline audio size limit
+
+Gemini's `inlineData` cap is 20 MB per request. Telegram voice notes are Opus-encoded and typically well under 1 MB for several-minute recordings, so this is not a practical concern — but the spec acknowledges the cap. No explicit size guard is added; if a voice note somehow exceeds 20 MB, Gemini's 400 is caught by the existing non-2xx error branch and the agent receives `[Voice message (transcription failed)]`.
+
 ## TTS — data flow
 
 ```
 Agent calls synthesize_speech({ text, style_prompt? })
   → container builds prompt text:
-       style_prompt ? `${style_prompt}: ${text}` : text
+       (style_prompt && style_prompt.trim()) ? `${style_prompt.trim()}: ${text}` : text
   → POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent
      headers: x-goog-api-key: $GEMINI_API_KEY
      body:
@@ -124,7 +132,7 @@ The existing duration estimate formula (`(fileSize - 44) / 48000`) remains corre
     'within the speech.'
   ),
   style_prompt: z.string().optional().describe(
-    'Natural-language utterance-level style directive, e.g. "Say warmly ' +
+    'Natural-language whole-utterance style directive, e.g. "Say warmly ' +
     'and slowly" or "Speak with calm encouragement". Prepended to the text ' +
     'before synthesis. Use style_prompt for whole-utterance tone; use ' +
     '[inline tags] inside text for moment-specific expression.'
@@ -132,15 +140,19 @@ The existing duration estimate formula (`(fileSize - 44) / 48000`) remains corre
 }
 ```
 
+`style_prompt` is treated as absent when it is undefined, empty, or whitespace-only — in all three cases the prompt is just `text`. Otherwise it is trimmed and prepended as `"{style_prompt}: {text}"`. The `text` cap of 50000 chars is retained; at English/Norwegian token ratios this fits Gemini's 32k token context window with headroom.
+
 Returned JSON is unchanged: `{ path, duration_seconds }`.
 
-`send_voice` is unchanged. `TTS_MAX_TEXT_LENGTH` stays at 50000. The voice is hardcoded to a module-level constant:
+`send_voice` is unchanged. The TTS model and voice are hardcoded module-level constants:
 
 ```ts
 // Voice is a single prebuilt. To try another, change this constant.
 // Kore is a balanced multilingual default. Other good starting points:
 // "Charon", "Puck", "Zephyr", "Aoede". Full list: 30 prebuilts in Gemini TTS docs.
 const GEMINI_TTS_VOICE = "Kore";
+// TTS model is currently a preview. If it is deprecated or promoted to GA,
+// swap this constant — that is the only coupling point to the preview name.
 const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const GEMINI_TTS_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`;
 ```
@@ -166,7 +178,7 @@ GEMINI_API_KEY=
 
 ### `src/container-runner.ts`
 
-Replace the Mistral key injection (lines 251-257) with:
+Replace the Mistral-key injection block (the `process.env.MISTRAL_API_KEY || readEnvFile(...)` block that pushes `-e MISTRAL_API_KEY=...` into `args`) with the equivalent Gemini block:
 
 ```ts
 const geminiKey =
@@ -176,6 +188,8 @@ if (geminiKey) {
   args.push('-e', `GEMINI_API_KEY=${geminiKey}`);
 }
 ```
+
+Comment above the block mentions both TTS (container) and the fact that key injection bypasses OneCLI — matching the pre-existing Mistral pattern. This is intentional: the Gemini key uses the same direct env-injection approach Mistral used; it does not route through OneCLI.
 
 ### `src/channels/telegram.ts`
 
@@ -195,7 +209,7 @@ if (geminiKey) {
 
 ## Error handling
 
-Same categories and fallback behavior as the current Mistral integration — no new failure modes are introduced.
+Same categories and fallback behavior as the current Mistral integration, plus two Gemini-specific branches for safety blocks and modality mismatches.
 
 | Condition | Behavior |
 |---|---|
@@ -203,7 +217,8 @@ Same categories and fallback behavior as the current Mistral integration — no 
 | `GEMINI_API_KEY` missing (TTS) | MCP tool returns error with `isError: true`; agent falls back to text |
 | Gemini STT non-2xx / timeout (60s) | Log error with status + body, agent receives `[Voice message (transcription failed)]` |
 | Gemini TTS non-2xx / timeout (300s) | MCP tool returns error with body; agent falls back to text |
-| TTS response missing `candidates[0].content.parts[0].inlineData.data` | MCP tool returns error (analog of the current `audio_data` missing check) |
+| TTS response missing `candidates[0].content.parts[0].inlineData.data` | MCP tool returns error; before returning, log `candidates[0].finishReason` and top-level `promptFeedback.blockReason` if present so the cause (safety block, max tokens, modality mismatch) is diagnosable |
+| TTS response `parts[0]` contains `text` instead of `inlineData` (modality negotiation failure) | MCP tool returns an error distinguishing this from a missing-data error, logging the returned text for debugging |
 | Empty / oversized text | Rejected in-tool before API call (unchanged) |
 | ffmpeg / IPC path validation | Unchanged — WAV output preserves the current invariant |
 
@@ -213,9 +228,9 @@ Timeouts: STT `60_000`, TTS `300_000`. Unchanged from the current Mistral integr
 
 | File | Change |
 |---|---|
-| `docs/speech.md` | Full rewrite. Replace provider name, endpoints, flow diagrams. Remove "No Norwegian TTS" limitation. Update cost table with Gemini rates. Keep the "Why STT on host" rationale (still applies). Drop the "Why a cloud API for TTS" rationale (obsolete history). |
+| `docs/speech.md` | Full rewrite. Replace provider name, endpoints, flow diagrams. Remove "No Norwegian TTS" limitation. Update cost table with Gemini rates. Keep the "Why STT on host" rationale (still applies). Drop the "Why a cloud API for TTS" rationale (obsolete history). Also correct pre-existing staleness: `docs/speech.md` currently says "Text too long (>5000 chars)" (actual `TTS_MAX_TEXT_LENGTH` is 50000) and "TTS timeout (60s)" (actual is 300s). Fix both while rewriting. |
 | `docs/ARCHITECTURE.md` | Mermaid: `mistral["Mistral API<br/>(TTS / STT)"]` → `gemini["Gemini API<br/>(TTS / STT)"]`. Edge label `"audio synthesis"` → `"audio synthesis + transcription"`. |
-| `CLAUDE.md` | Env var table row (line 175): `MISTRAL_API_KEY` → `GEMINI_API_KEY`, purpose updated. |
+| `CLAUDE.md` | Env var table row (currently near line 175): `MISTRAL_API_KEY` → `GEMINI_API_KEY`, purpose updated. |
 | `.env.example` | Provider block swap. |
 
 ## Docs left alone
@@ -225,6 +240,7 @@ Historical specs and plans are not rewritten. Active-reference docs above are th
 - `docs/superpowers/specs/2026-04-12-multi-method-study-system-design.md` — historical design, leave as-is.
 - `docs/superpowers/plans/2026-04-13-study-system-master-plan.md` — historical plan, leave as-is.
 - `docs/superpowers/plans/2026-04-16-s8b-audio-scaffolding.md` — historical plan, leave as-is.
+- `container/skills/` — reviewed, no Mistral or Voxtral references. No changes.
 
 ## Testing
 
@@ -238,7 +254,7 @@ No existing Vitest coverage of the Mistral paths to port. Strategy: unit-test th
 ### Manual smoke tests (checklist, run before merging)
 
 1. Send a short English voice note to Telegram → agent receives `[Voice]: ...` with correct transcript.
-2. Send a Norwegian voice note → transcript is Norwegian.
+2. Send a Norwegian voice note → transcript is Norwegian with accented characters (æ, ø, å) rendered correctly as UTF-8.
 3. Ask agent to speak → receive a Telegram voice bubble that plays, has a waveform, and sounds like the Kore voice.
 4. Ask agent to speak Norwegian → plays Norwegian audio.
 5. Ask agent to speak using `style_prompt: "Say warmly and slowly"` → tone is noticeably warmer and slower.
@@ -254,7 +270,10 @@ No existing Vitest coverage of the Mistral paths to port. Strategy: unit-test th
 ## Rollout
 
 1. Merge on `feat/gemini-tts-stt-migration` via PR to `SimonKvalheim/universityClaw`.
-2. User updates local `.env` (rename `google_api_key` → `GEMINI_API_KEY`, delete `MISTRAL_API_KEY`) before pulling.
+2. **One-time user-visible migration step** — before pulling, update local `.env`:
+   - Rename the existing lowercase `google_api_key` entry to `GEMINI_API_KEY` (same value).
+   - Delete `MISTRAL_API_KEY`.
+   The new name is what every runtime code path (host + container) will look for. No code path reads `google_api_key` today, so there is no silent break on other consumers.
 3. Rebuild container: `./container/build.sh`.
 4. Restart NanoClaw.
 5. Run the manual smoke checklist.
