@@ -1267,7 +1267,9 @@ export interface ConceptDetail {
   activities: Array<{
     id: string;
     activityType: string;
+    prompt: string;
     bloomLevel: number;
+    cardType: string | null;
     dueAt: string;
     masteryState: string;
     author: string;
@@ -1446,7 +1448,9 @@ export function getConceptDetail(id: string): ConceptDetail | null {
     activities: activityRows.map((a) => ({
       id: a.id,
       activityType: a.activity_type,
+      prompt: a.prompt,
       bloomLevel: a.bloom_level,
+      cardType: a.card_type ?? null,
       dueAt: a.due_at,
       masteryState: a.mastery_state ?? 'new',
       author: a.author ?? 'system',

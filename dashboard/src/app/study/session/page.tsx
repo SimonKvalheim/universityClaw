@@ -204,6 +204,7 @@ function isAiEvalEligible(bloomLevel: number, activityType: string): boolean {
 function StudySessionInner() {
   const searchParams = useSearchParams();
   const planId = searchParams.get('planId');
+  const conceptId = searchParams.get('conceptId');
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
@@ -308,7 +309,10 @@ function StudySessionInner() {
 
   useEffect(() => {
     if (phase !== 'loading') return;
-    const url = planId ? `/api/study/session?planId=${planId}` : '/api/study/session';
+    const params = new URLSearchParams();
+    if (planId) params.set('planId', planId);
+    if (conceptId) params.set('conceptId', conceptId);
+    const url = params.size > 0 ? `/api/study/session?${params}` : '/api/study/session';
     fetch(url)
       .then((r) => r.json())
       .then((data: { session?: SessionData; warnings?: SessionWarnings; error?: string }) => {
@@ -344,7 +348,7 @@ function StudySessionInner() {
       .catch((err: unknown) => {
         setLoadError(String(err));
       });
-  }, [phase, planId]);
+  }, [phase, planId, conceptId]);
 
   // ---------------------------------------------------------------------------
   // PRE_SESSION: begin session

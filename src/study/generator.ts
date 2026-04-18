@@ -111,7 +111,6 @@ export async function generateActivities(
     singleTurn: true,
     chatJid: 'internal:study-generator',
     isMain: false,
-    ipcNamespace: 'study-generator',
   };
 
   // 7. Fire and forget — IPC handler processes the output asynchronously

@@ -5,7 +5,7 @@
  * new-material / review / stretch block layout from spec Section 4.5.
  */
 
-import { getDueActivities, getActiveConcepts, getPlanConceptIds } from './study-db';
+import { getDueActivities, getActiveConcepts, getPlanConceptIds, getActivitiesByConceptId } from './study-db';
 import type { ConceptSummary } from './study-db';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ export interface SessionOptions {
   targetActivities?: number;
   domainFocus?: string;
   planId?: string;
+  conceptId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,13 +103,17 @@ function interleave(items: SessionActivity[]): SessionActivity[] {
 export function buildSessionComposition(
   options?: SessionOptions,
 ): SessionComposition {
-  const dueActivities = getDueActivities();
+  // Concept-focused sessions include ALL activities (not just due),
+  // since the user is explicitly choosing to practice this concept now.
+  const dueActivities = options?.conceptId
+    ? getActivitiesByConceptId(options.conceptId)
+    : getDueActivities();
 
   if (dueActivities.length === 0) {
     return { blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] };
   }
 
-  // Plan concept filtering
+  // Plan filtering (conceptId already filtered above)
   let activitiesToUse = dueActivities;
   if (options?.planId) {
     const planConceptIds = new Set(getPlanConceptIds(options.planId));
@@ -116,6 +121,35 @@ export function buildSessionComposition(
   }
 
   const activeConcepts = getActiveConcepts();
+
+  // Concept-focused short-circuit: the new/review/stretch block taxonomy
+  // only makes sense across many concepts. For a single concept the user
+  // just wants to drill it — return one block, ordered easy → hard.
+  if (options?.conceptId) {
+    const concept = activeConcepts.find((c) => c.id === options.conceptId);
+    if (!concept) {
+      return { blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] };
+    }
+    const target = options?.targetActivities ?? 20;
+    const sorted = [...activitiesToUse].sort((a, b) => a.bloom_level - b.bloom_level);
+    const capped = sorted.slice(0, target);
+    const sessionActivities: SessionActivity[] = capped.map((act) => ({
+      activityId: act.id,
+      conceptId: act.concept_id,
+      conceptTitle: concept.title,
+      domain: concept.domain,
+      activityType: act.activity_type,
+      bloomLevel: act.bloom_level,
+    }));
+    return {
+      blocks: [{ type: 'review', activities: sessionActivities }],
+      totalActivities: sessionActivities.length,
+      estimatedMinutes: Math.ceil(
+        sessionActivities.reduce((sum, a) => sum + estimateMinutes(a.activityType), 0),
+      ),
+      domainsCovered: concept.domain ? [concept.domain] : [],
+    };
+  }
 
   // Build concept lookup map keyed by id
   const conceptMap = new Map<string, ConceptSummary>();
