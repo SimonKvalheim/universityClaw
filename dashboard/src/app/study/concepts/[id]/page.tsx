@@ -128,7 +128,7 @@ export default function ConceptDetailPage({
       if (res.ok) {
         setGenerateMsg('Generation requested — activities will appear shortly.');
       } else {
-        const data = await res.json();
+        const data = (await res.json()) as { error?: string };
         setGenerateMsg(`Error: ${data.error ?? 'Unknown error'}`);
       }
     } catch {
