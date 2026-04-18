@@ -15,6 +15,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.8.0",
     "drizzle-orm": "^0.45.2",
+    "glob": "^13.0.6",
     "gray-matter": "^4.0.3",
     "jszip": "^3.10.1",
     "mermaid": "^11.14.0",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/glob": "^8.1.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
