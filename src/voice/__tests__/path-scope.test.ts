@@ -11,7 +11,9 @@ beforeEach(async () => {
   await mkdir(path.join(root, 'src'), { recursive: true });
   await writeFile(path.join(root, 'src', 'a.ts'), 'x');
   await writeFile(path.join(root, '.env'), 'SECRET=1');
-  await mkdir(path.join(root, 'docs', 'superpowers', 'specs'), { recursive: true });
+  await mkdir(path.join(root, 'docs', 'superpowers', 'specs'), {
+    recursive: true,
+  });
 });
 
 describe('sanitizeSlug', () => {
@@ -19,7 +21,13 @@ describe('sanitizeSlug', () => {
     expect(sanitizeSlug('voice-chat-v1')).toBe('voice-chat-v1');
   });
   it.each([
-    [''], ['a'.repeat(81)], ['has slash/bad'], ['UPPER'], ['dot.bad'], ['..'], [' pad '],
+    [''],
+    ['a'.repeat(81)],
+    ['has slash/bad'],
+    ['UPPER'],
+    ['dot.bad'],
+    ['..'],
+    [' pad '],
   ])('rejects invalid slug %s', (bad) => {
     expect(() => sanitizeSlug(bad)).toThrow();
   });
@@ -36,11 +44,15 @@ describe('resolveReadPath', () => {
   });
 
   it('rejects absolute path outside root', async () => {
-    await expect(resolveReadPath(root, '/etc/passwd')).rejects.toThrow(/out of scope/);
+    await expect(resolveReadPath(root, '/etc/passwd')).rejects.toThrow(
+      /out of scope/,
+    );
   });
 
   it('rejects parent traversal', async () => {
-    await expect(resolveReadPath(root, '../etc/passwd')).rejects.toThrow(/out of scope/);
+    await expect(resolveReadPath(root, '../etc/passwd')).rejects.toThrow(
+      /out of scope/,
+    );
   });
 
   it('rejects symlink escapes', async () => {
@@ -52,10 +64,14 @@ describe('resolveReadPath', () => {
 describe('resolveWritePath', () => {
   it('returns a path under the targeted docs dir with server-generated date prefix', async () => {
     const p = await resolveWritePath(root, 'specs', 'my-slug', 'md');
-    expect(p).toMatch(/docs\/superpowers\/specs\/\d{4}-\d{2}-\d{2}-my-slug\.md$/);
+    expect(p).toMatch(
+      /docs\/superpowers\/specs\/\d{4}-\d{2}-\d{2}-my-slug\.md$/,
+    );
   });
 
   it('rejects slug with path separator', async () => {
-    await expect(resolveWritePath(root, 'specs', '../escape', 'md')).rejects.toThrow();
+    await expect(
+      resolveWritePath(root, 'specs', '../escape', 'md'),
+    ).rejects.toThrow();
   });
 });

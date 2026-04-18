@@ -3,7 +3,13 @@ import path from 'node:path';
 
 const SLUG_RE = /^[a-z0-9-]{1,80}$/;
 
-const ALLOWED_TOP_DIRS = new Set(['src', 'container', 'docs', 'scripts', 'public']);
+const ALLOWED_TOP_DIRS = new Set([
+  'src',
+  'container',
+  'docs',
+  'scripts',
+  'public',
+]);
 
 const ALLOWED_ROOT_CONFIGS = new Set([
   'package.json',
@@ -60,7 +66,10 @@ function isDeniedSegment(seg: string): boolean {
   return DENIED_SEGMENTS.has(seg);
 }
 
-export async function resolveReadPath(repoRoot: string, requested: string): Promise<string> {
+export async function resolveReadPath(
+  repoRoot: string,
+  requested: string,
+): Promise<string> {
   const outOfScope = (): never => {
     throw new Error('out of scope: ' + requested);
   };
@@ -72,7 +81,8 @@ export async function resolveReadPath(repoRoot: string, requested: string): Prom
 
   // Reject parent traversal after normalization.
   const normalized = path.normalize(requested);
-  if (normalized.startsWith('..' + path.sep) || normalized === '..') outOfScope();
+  if (normalized.startsWith('..' + path.sep) || normalized === '..')
+    outOfScope();
 
   const candidate = path.join(repoRoot, requested);
 
@@ -141,7 +151,10 @@ export async function resolveWritePath(
   const expectedRoot = await fs.realpath(repoRoot);
   const expectedTarget = path.join(expectedRoot, 'docs', 'superpowers', kind);
 
-  if (realTarget !== expectedTarget && !realTarget.startsWith(expectedTarget + path.sep)) {
+  if (
+    realTarget !== expectedTarget &&
+    !realTarget.startsWith(expectedTarget + path.sep)
+  ) {
     throw new Error('out of scope: ' + kind + '/' + slug);
   }
 

@@ -12,12 +12,22 @@ beforeEach(async () => {
 describe('voice-log', () => {
   it('writes one JSON line per event', async () => {
     const log = createVoiceLogger(path.join(dir, 'voice.log'));
-    await log({ event: 'session.start', voiceSessionId: 'abc', persona: 'dev' });
+    await log({
+      event: 'session.start',
+      voiceSessionId: 'abc',
+      persona: 'dev',
+    });
     await log({ event: 'tool.call', voiceSessionId: 'abc', tool: 'read_file' });
     const body = await readFile(path.join(dir, 'voice.log'), 'utf8');
-    const lines = body.trim().split('\n').map((l) => JSON.parse(l));
+    const lines = body
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ event: 'session.start', voiceSessionId: 'abc' });
+    expect(lines[0]).toMatchObject({
+      event: 'session.start',
+      voiceSessionId: 'abc',
+    });
     expect(lines[0].ts).toBeDefined();
   });
 
