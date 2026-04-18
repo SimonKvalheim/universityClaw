@@ -4,11 +4,15 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { glob } from 'glob';
-import { resolveReadPath } from '../../../../../../../../src/voice/path-scope';
+import {
+  resolveReadPath,
+  resolveWritePath,
+} from '../../../../../../../../src/voice/path-scope';
 
 const execFileP = promisify(execFile);
 
 const READ_MAX = 256 * 1024;
+const WRITE_MAX = 256 * 1024;
 const TRUNC_MARKER = '\n\n[truncated at 256 KB — use grep/glob for larger files]';
 const DOC_KINDS = new Set(['specs', 'plans', 'mockups', 'sessions']);
 
@@ -230,6 +234,99 @@ async function readDocTool(
   return { content: raw };
 }
 
+// ---------- write tools ----------
+
+type WriteDocResult =
+  | { path: string }
+  | { error: string; existingContent?: string };
+
+async function writeDoc(
+  repoRoot: string,
+  kind: 'specs' | 'plans' | 'mockups',
+  slug: string,
+  ext: string,
+  body: string,
+): Promise<WriteDocResult> {
+  if (body.length > WRITE_MAX) {
+    return {
+      error: `content too large: ${body.length} bytes (max ${WRITE_MAX})`,
+    };
+  }
+  const dest = await resolveWritePath(repoRoot, kind, slug, ext);
+  try {
+    const existing = await fs.readFile(dest, 'utf8');
+    if (existing === body) {
+      return { path: path.relative(repoRoot, dest) };
+    }
+    return {
+      error: `would overwrite ${dest}`,
+      existingContent: existing.slice(0, WRITE_MAX),
+    };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+  await fs.writeFile(dest, body, 'utf8');
+  return { path: path.relative(repoRoot, dest) };
+}
+
+function withPreview(
+  result: WriteDocResult,
+): WriteDocResult & { previewUrl?: string } {
+  if ('path' in result) {
+    return {
+      ...result,
+      previewUrl: `/voice/preview?file=${encodeURIComponent(result.path)}`,
+    };
+  }
+  return result;
+}
+
+async function writeSpecTool(
+  repoRoot: string,
+  args: { slug?: string; content?: string },
+) {
+  if (typeof args.slug !== 'string') throw new Error('invalid slug: missing');
+  if (typeof args.content !== 'string')
+    throw new Error('out of scope: missing content');
+  return writeDoc(repoRoot, 'specs', args.slug, 'md', args.content);
+}
+
+async function writePlanTool(
+  repoRoot: string,
+  args: { slug?: string; content?: string },
+) {
+  if (typeof args.slug !== 'string') throw new Error('invalid slug: missing');
+  if (typeof args.content !== 'string')
+    throw new Error('out of scope: missing content');
+  return writeDoc(repoRoot, 'plans', args.slug, 'md', args.content);
+}
+
+async function writeMockupTool(
+  repoRoot: string,
+  args: { slug?: string; html?: string },
+) {
+  if (typeof args.slug !== 'string') throw new Error('invalid slug: missing');
+  if (typeof args.html !== 'string')
+    throw new Error('out of scope: missing html');
+  return withPreview(
+    await writeDoc(repoRoot, 'mockups', args.slug, 'html', args.html),
+  );
+}
+
+async function writeDiagramTool(
+  repoRoot: string,
+  args: { slug?: string; mermaid?: string; title?: string },
+) {
+  if (typeof args.slug !== 'string') throw new Error('invalid slug: missing');
+  if (typeof args.mermaid !== 'string')
+    throw new Error('out of scope: missing mermaid');
+  const titleBlock = args.title ? `# ${args.title}\n\n` : '';
+  const md = titleBlock + '```mermaid\n' + args.mermaid + '\n```\n';
+  return withPreview(
+    await writeDoc(repoRoot, 'mockups', args.slug, 'md', md),
+  );
+}
+
 // ---------- dispatcher ----------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -243,6 +340,10 @@ const TOOLS: Record<string, ToolFn> = {
   git_status: gitStatusTool,
   list_docs: listDocsTool,
   read_doc: readDocTool,
+  write_spec: writeSpecTool,
+  write_plan: writePlanTool,
+  write_mockup: writeMockupTool,
+  write_diagram: writeDiagramTool,
 };
 
 export async function POST(
