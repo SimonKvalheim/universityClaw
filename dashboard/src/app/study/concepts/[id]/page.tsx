@@ -14,6 +14,30 @@ const BLOOM_LABELS: Record<number, string> = {
   6: 'Create',
 };
 
+const TYPE_DISPLAY: Record<string, { label: string; color: string }> = {
+  card_review: { label: 'Card', color: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  elaboration: { label: 'Elaboration', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+  self_explain: { label: 'Self-explain', color: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
+  concept_map: { label: 'Concept map', color: 'bg-teal-500/20 text-teal-300 border-teal-500/30' },
+  comparison: { label: 'Comparison', color: 'bg-pink-500/20 text-pink-300 border-pink-500/30' },
+  case_analysis: { label: 'Case analysis', color: 'bg-orange-500/20 text-orange-300 border-orange-500/30' },
+  synthesis: { label: 'Synthesis', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+  socratic: { label: 'Socratic', color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' },
+};
+
+const CARD_TYPE_LABEL: Record<string, string> = {
+  basic: 'Basic',
+  cloze: 'Cloze',
+  reversed: 'Reversed',
+};
+
+const STATE_STYLES: Record<string, string> = {
+  mastered: 'bg-green-500/20 text-green-300 border-green-500/30',
+  reviewing: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  learning: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+  new: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
+};
+
 function MasteryBar({ value, label }: { value: number; label: string }) {
   const pct = Math.min(100, Math.round((value / MASTERY_THRESHOLD) * 100));
   const colorClass =
@@ -73,6 +97,8 @@ export default function ConceptDetailPage({
   const [concept, setConcept] = useState<ConceptDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateMsg, setGenerateMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/study/concepts/${encodeURIComponent(id)}`)
@@ -87,6 +113,30 @@ export default function ConceptDetailPage({
       .catch((err: unknown) => setError(String(err)))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const handleGenerate = async () => {
+    if (!concept || generating) return;
+    setGenerating(true);
+    setGenerateMsg(null);
+    try {
+      const bloomLevel = Math.max(1, concept.bloomCeiling || 1);
+      const res = await fetch('/api/study/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conceptId: concept.id, bloomLevel }),
+      });
+      if (res.ok) {
+        setGenerateMsg('Generation requested — activities will appear shortly.');
+      } else {
+        const data = await res.json();
+        setGenerateMsg(`Error: ${data.error ?? 'Unknown error'}`);
+      }
+    } catch {
+      setGenerateMsg('Failed to request generation.');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -184,58 +234,78 @@ export default function ConceptDetailPage({
             Activities
             <span className="ml-2 text-gray-600 normal-case font-normal">({concept.totalActivities})</span>
           </h3>
-          <button
-            onClick={() => alert('Generation requested')}
-            className="px-3 py-1.5 rounded-md bg-blue-700 hover:bg-blue-600 text-white text-xs font-medium transition-colors"
-          >
-            Generate more
-          </button>
+          <div className="flex gap-2">
+            {concept.activities.length > 0 && (
+              <a
+                href={`/study/session?conceptId=${encodeURIComponent(concept.id)}`}
+                className="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-600 text-white text-xs font-medium transition-colors"
+              >
+                Practice ({concept.activities.length})
+              </a>
+            )}
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="px-3 py-1.5 rounded-md bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+            >
+              {generating ? 'Requesting...' : 'Generate more'}
+            </button>
+          </div>
         </div>
+        {generateMsg && (
+          <p className={`text-xs ${generateMsg.startsWith('Error') || generateMsg.startsWith('Failed') ? 'text-red-400' : 'text-green-400'}`}>
+            {generateMsg}
+          </p>
+        )}
         {concept.activities.length === 0 ? (
           <div className="rounded-lg border border-gray-800 bg-gray-900 p-5 text-center">
             <p className="text-sm text-gray-500">No activities generated yet.</p>
           </div>
         ) : (
-          <div className="rounded-lg border border-gray-800 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-900 border-b border-gray-800">
-                <tr>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-20">Bloom</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-32">Due</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-28">State</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider w-24">Author</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800 bg-gray-950">
-                {concept.activities.map((activity) => (
-                  <tr key={activity.id} className="hover:bg-gray-900 transition-colors">
-                    <td className="px-4 py-3 text-gray-200">{activity.activityType}</td>
-                    <td className="px-4 py-3 text-gray-400">
-                      L{activity.bloomLevel}
-                      {BLOOM_LABELS[activity.bloomLevel] && (
-                        <span className="ml-1 text-gray-600 text-xs">{BLOOM_LABELS[activity.bloomLevel]}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">{formatDate(activity.dueAt)}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`text-xs px-1.5 py-0.5 rounded ${
-                          activity.masteryState === 'mastered'
-                            ? 'bg-green-900 text-green-300'
-                            : activity.masteryState === 'reviewing'
-                              ? 'bg-blue-900 text-blue-300'
-                              : 'bg-gray-800 text-gray-400'
-                        }`}
-                      >
-                        {activity.masteryState}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{activity.author}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-2">
+            {concept.activities.map((activity) => {
+              const typeInfo = TYPE_DISPLAY[activity.activityType] ?? {
+                label: activity.activityType,
+                color: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
+              };
+              const stateStyle = STATE_STYLES[activity.masteryState] ?? STATE_STYLES.new;
+              const isDue = new Date(activity.dueAt) <= new Date();
+
+              return (
+                <div
+                  key={activity.id}
+                  className="rounded-lg border border-gray-800 bg-gray-900 hover:bg-gray-900/80 transition-colors px-4 py-3"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-200 leading-relaxed">
+                        {activity.prompt}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded border ${typeInfo.color}`}>
+                          {typeInfo.label}
+                          {activity.cardType && CARD_TYPE_LABEL[activity.cardType] && (
+                            <span className="opacity-70">· {CARD_TYPE_LABEL[activity.cardType]}</span>
+                          )}
+                        </span>
+                        <span className="text-[11px] text-gray-500">
+                          L{activity.bloomLevel} {BLOOM_LABELS[activity.bloomLevel] ?? ''}
+                        </span>
+                        <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${stateStyle}`}>
+                          {activity.masteryState}
+                        </span>
+                        {isDue && activity.masteryState !== 'mastered' && (
+                          <span className="text-[11px] text-amber-400">Due</span>
+                        )}
+                        <span className="text-[11px] text-gray-600 ml-auto shrink-0">
+                          {formatDate(activity.dueAt)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
@@ -263,7 +333,11 @@ export default function ConceptDetailPage({
                 {concept.recentLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-gray-900 transition-colors">
                     <td className="px-4 py-3 text-gray-400 text-xs">{formatDate(log.reviewedAt)}</td>
-                    <td className="px-4 py-3 text-gray-200">{log.activityType}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${(TYPE_DISPLAY[log.activityType] ?? { color: 'bg-gray-500/15 text-gray-400 border-gray-500/20' }).color}`}>
+                        {(TYPE_DISPLAY[log.activityType] ?? { label: log.activityType }).label}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-gray-400 text-xs">L{log.bloomLevel}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -293,7 +367,9 @@ export default function ConceptDetailPage({
               const pct = Math.round((method.avgQuality / maxMethodQuality) * 100);
               return (
                 <div key={method.activityType} className="flex items-center gap-3">
-                  <span className="w-36 text-xs text-gray-400 shrink-0 truncate">{method.activityType}</span>
+                  <span className={`w-36 shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded border text-center ${(TYPE_DISPLAY[method.activityType] ?? { color: 'bg-gray-500/15 text-gray-400 border-gray-500/20' }).color}`}>
+                    {(TYPE_DISPLAY[method.activityType] ?? { label: method.activityType }).label}
+                  </span>
                   <div className="flex-1 h-2.5 rounded-full bg-gray-800 overflow-hidden">
                     <div
                       className="h-full rounded-full bg-blue-500 transition-all"

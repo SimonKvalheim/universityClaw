@@ -13,7 +13,8 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const planId = url.searchParams.get('planId') ?? undefined;
-    const composition = buildSessionComposition({ planId });
+    const conceptId = url.searchParams.get('conceptId') ?? undefined;
+    const composition = buildSessionComposition({ planId, conceptId });
     const enrichedBlocks = composition.blocks.map((block) => ({
       ...block,
       activities: block.activities

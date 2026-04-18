@@ -5,7 +5,7 @@
  * new-material / review / stretch block layout from spec Section 4.5.
  */
 
-import { getDueActivities, getActiveConcepts, getPlanConceptIds } from './study-db';
+import { getDueActivities, getActiveConcepts, getPlanConceptIds, getActivitiesByConceptId } from './study-db';
 import type { ConceptSummary } from './study-db';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ export interface SessionOptions {
   targetActivities?: number;
   domainFocus?: string;
   planId?: string;
+  conceptId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,13 +103,17 @@ function interleave(items: SessionActivity[]): SessionActivity[] {
 export function buildSessionComposition(
   options?: SessionOptions,
 ): SessionComposition {
-  const dueActivities = getDueActivities();
+  // Concept-focused sessions include ALL activities (not just due),
+  // since the user is explicitly choosing to practice this concept now.
+  const dueActivities = options?.conceptId
+    ? getActivitiesByConceptId(options.conceptId)
+    : getDueActivities();
 
   if (dueActivities.length === 0) {
     return { blocks: [], totalActivities: 0, estimatedMinutes: 0, domainsCovered: [] };
   }
 
-  // Plan concept filtering
+  // Plan filtering (conceptId already filtered above)
   let activitiesToUse = dueActivities;
   if (options?.planId) {
     const planConceptIds = new Set(getPlanConceptIds(options.planId));
