@@ -19,6 +19,9 @@ import {
 
 type FilesContext = FileFlavor<Context>;
 
+// STT model. Swap to 'gemini-2.5-flash' if 'lite' returns 400 on audio input.
+const GEMINI_STT_MODEL = 'gemini-2.5-flash-lite';
+
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -146,16 +149,16 @@ export class TelegramChannel implements Channel {
   private bot: Bot<FilesContext> | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
-  private mistralApiKey: string;
+  private geminiApiKey: string;
 
   constructor(
     botToken: string,
     opts: TelegramChannelOpts,
-    mistralApiKey: string = '',
+    geminiApiKey: string = '',
   ) {
     this.botToken = botToken;
     this.opts = opts;
-    this.mistralApiKey = mistralApiKey;
+    this.geminiApiKey = geminiApiKey;
   }
 
   async connect(): Promise<void> {
@@ -379,33 +382,45 @@ export class TelegramChannel implements Channel {
         await file.download(localPath);
 
         try {
-          if (!this.mistralApiKey) {
-            logger.warn('Skipping transcription — no MISTRAL_API_KEY');
+          if (!this.geminiApiKey) {
+            logger.warn('Skipping transcription — no GEMINI_API_KEY');
           } else {
             const audioData = fs.readFileSync(localPath);
-            const formData = new FormData();
-            formData.append('model', 'voxtral-mini-latest');
-            formData.append(
-              'file',
-              new Blob([audioData], { type: 'audio/ogg' }),
-              'voice.oga',
-            );
-
             const response = await fetch(
-              'https://api.mistral.ai/v1/audio/transcriptions',
+              `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_STT_MODEL}:generateContent`,
               {
                 method: 'POST',
                 headers: {
-                  Authorization: `Bearer ${this.mistralApiKey}`,
+                  'Content-Type': 'application/json',
+                  'x-goog-api-key': this.geminiApiKey,
                 },
-                body: formData,
+                body: JSON.stringify({
+                  contents: [
+                    {
+                      parts: [
+                        {
+                          inlineData: {
+                            mimeType: 'audio/ogg',
+                            data: audioData.toString('base64'),
+                          },
+                        },
+                        { text: 'Generate a transcript of this speech.' },
+                      ],
+                    },
+                  ],
+                }),
                 signal: AbortSignal.timeout(60_000),
               },
             );
 
             if (response.ok) {
-              const result = (await response.json()) as { text?: string };
-              const text = result.text?.trim();
+              const result = (await response.json()) as {
+                candidates?: Array<{
+                  content?: { parts?: Array<{ text?: string }> };
+                }>;
+              };
+              const text =
+                result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
               if (text) {
                 transcribedText = `[Voice]: ${text}`;
               }
@@ -413,7 +428,7 @@ export class TelegramChannel implements Channel {
               const errText = await response.text().catch(() => '');
               logger.error(
                 { status: response.status, body: errText },
-                'Mistral STT request failed',
+                'Gemini STT request failed',
               );
             }
           }
@@ -603,19 +618,19 @@ export class TelegramChannel implements Channel {
 }
 
 registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN', 'MISTRAL_API_KEY']);
+  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN', 'GEMINI_API_KEY']);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
     logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
-  const mistralApiKey =
-    process.env.MISTRAL_API_KEY || envVars.MISTRAL_API_KEY || '';
-  if (!mistralApiKey) {
+  const geminiApiKey =
+    process.env.GEMINI_API_KEY || envVars.GEMINI_API_KEY || '';
+  if (!geminiApiKey) {
     logger.warn(
-      'Telegram: MISTRAL_API_KEY not set — voice transcription disabled',
+      'Telegram: GEMINI_API_KEY not set — voice transcription disabled',
     );
   }
-  return new TelegramChannel(token, opts, mistralApiKey);
+  return new TelegramChannel(token, opts, geminiApiKey);
 });
