@@ -44,4 +44,19 @@ describe('buildGeminiTtsRequest', () => {
       body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName,
     ).toBe('Charon');
   });
+
+  it('produces the exact Gemini v1beta REST body shape', () => {
+    const body = buildGeminiTtsRequest({ text: 'hi', voiceName: 'Kore' });
+    expect(body).toEqual({
+      contents: [{ parts: [{ text: 'hi' }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+      },
+    });
+  });
 });
