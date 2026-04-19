@@ -376,7 +376,7 @@ server.tool(
   {
     text: z
       .string()
-      .max(50000)
+      .max(TTS_MAX_TEXT_LENGTH)
       .describe(
         'Text to synthesize. You can embed Gemini audio tags like [warmly], [slowly], [whispering], [excitedly] inline to color specific moments within the speech.',
       ),

@@ -114,7 +114,7 @@ No local binaries, model files, or resident services are needed.
 - TTS (`gemini-3.1-flash-tts-preview`): $1 / M text-input tokens, $20 / M audio-output tokens. Batch mode is half price.
 - STT (`gemini-2.5-flash-lite`): priced at the lite model's audio-input rates.
 
-_Prices as documented at https://ai.google.dev/pricing — see the live page for current rates._
+_Prices per https://ai.google.dev/pricing as of 2026-04-19 — check the live page for current rates._
 
 ## Limitations
 
