@@ -61,7 +61,12 @@ export async function POST(req: Request) {
   const voiceSessionId = randomUUID();
 
   try {
-    const client = new GoogleGenAI({ apiKey });
+    // Ephemeral tokens (authTokens.create) only exist on v1alpha, and the
+    // browser-side GeminiLiveTransport connects with the same apiVersion.
+    const client = new GoogleGenAI({
+      apiKey,
+      httpOptions: { apiVersion: 'v1alpha' },
+    });
     const token = await client.authTokens.create({
       config: {
         uses: 1,
