@@ -3,9 +3,8 @@ import { WebSocket as WsClient } from 'ws';
 import { startFakeGemini, type FakeGemini } from './fake-gemini-server';
 import { VoiceSession } from '../voice-session';
 import { DEV_PERSONA } from '../personas';
+import { FakeJsonTransport } from '../transports/fake-json-transport';
 
-// Node WebSocket client (from `ws`) drives the fake server. VoiceSession
-// accepts a factory so tests can inject it.
 const wsFactory = (url: string) => new WsClient(url) as unknown as WebSocket;
 
 function mockFetchSuccess() {
@@ -38,12 +37,13 @@ describe('VoiceSession', () => {
 
     const session = new VoiceSession({
       persona: DEV_PERSONA,
-      liveApiUrl: fake.url,
-      tokenEndpoint: '/test/token',
       contextEndpoint: '/test/ctx',
-      toolEndpoint: '/test/tool',
       closeEndpoint: '/test/close',
-      wsFactory,
+      transport: new FakeJsonTransport({
+        url: fake.url,
+        persona: DEV_PERSONA,
+        wsFactory,
+      }),
       events: {
         onAudio: (pcm) => audio.push(pcm),
         onCost: (c) => {
@@ -90,12 +90,13 @@ describe('VoiceSession', () => {
 
     const session = new VoiceSession({
       persona: DEV_PERSONA,
-      liveApiUrl: fake.url,
-      wsFactory,
-      tokenEndpoint: '/test/token',
       contextEndpoint: '/test/ctx',
-      toolEndpoint: '/test/tool',
       closeEndpoint: '/test/close',
+      transport: new FakeJsonTransport({
+        url: fake.url,
+        persona: DEV_PERSONA,
+        wsFactory,
+      }),
       events: {
         onAudio: () => {},
         onCost: () => {},
@@ -147,12 +148,13 @@ describe('VoiceSession', () => {
 
     const session = new VoiceSession({
       persona: DEV_PERSONA,
-      liveApiUrl: fake.url,
-      wsFactory,
-      tokenEndpoint: '/test/token',
       contextEndpoint: '/test/ctx',
-      toolEndpoint: '/test/tool',
       closeEndpoint: '/test/close',
+      transport: new FakeJsonTransport({
+        url: fake.url,
+        persona: DEV_PERSONA,
+        wsFactory,
+      }),
       events: {
         onAudio: () => {},
         onCost: () => {},
@@ -184,12 +186,13 @@ describe('VoiceSession', () => {
 
     const session = new VoiceSession({
       persona: DEV_PERSONA,
-      liveApiUrl: fake.url,
-      wsFactory,
-      tokenEndpoint: '/test/token',
       contextEndpoint: '/test/ctx',
-      toolEndpoint: '/test/tool',
       closeEndpoint: '/test/close',
+      transport: new FakeJsonTransport({
+        url: fake.url,
+        persona: DEV_PERSONA,
+        wsFactory,
+      }),
       events: {
         onAudio: () => {},
         onCost: () => {},

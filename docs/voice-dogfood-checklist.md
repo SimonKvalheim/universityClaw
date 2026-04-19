@@ -4,20 +4,23 @@ Manual exercise of the `/voice` Dev Assistant. Tick each item once per dogfood
 pass. If any row fails, open a GitHub issue rather than patching scope-creep
 items into the current PR.
 
-> ⚠️ **v1 status — fake server only.** The browser WebSocket client speaks
-> an opaque-JSON frame format (`{type: 'audio'|'usage'|'tool_call'|…}`) that
-> matches the in-repo fake Gemini server, not the real Gemini Live
-> `BidiGenerateContent` wire protocol. The `VoiceSession.start()` path that
-> builds `wss://generativelanguage.googleapis.com/?access_token=…` is a
-> placeholder. **A real GEMINI_API_KEY will not make a working session
-> until the v1.1 real-Gemini adapter lands** (uses `@google/genai`'s
-> `ai.live.connect()` and mirrors the real `serverContent` / `toolCall` /
-> `usageMetadata` frame shapes).
->
-> Everything except the live-audio path is usable today: token minting, the
-> tool dispatcher + scope guards, session-close persistence, cost rollups,
-> fake-server e2e. Dogfooding the UI, tools, and cost plumbing is valuable
-> groundwork before the adapter lands.
+> ⚠️ **v1.1 status — real-key dogfood blocked on Google-side 1011.** The
+> `GeminiLiveTransport` + ephemeral-token flow is wired up correctly per the
+> `@google/genai` SDK reference and the Gemini 3.1 Live API docs. On a
+> free-tier key, `gemini-3.1-flash-live-preview` consistently closes the
+> socket with `1011 "Internal error encountered."` immediately after the
+> setup frame, regardless of config (verified with the full persona config,
+> bare `{responseModalities, systemInstruction}`, and a trivial
+> `"You are a helpful assistant."` prompt). Google's AI forum has matching
+> reports — consensus is free-tier / preview-model gating that has
+> self-resolved for some users, or requires a paid-tier upgrade. Native-audio
+> models (`gemini-*-native-audio-*`) are not an alternative: they reject the
+> same config with `1007 "Cannot extract voices from a non-audio request"`
+> because they're audio-in-only. **Until Google-side access stabilises or the
+> project moves to a paid key, rows below cannot be exercised end-to-end.**
+> Unit + integration coverage (13 `GeminiLiveTransport` tests + 4 `VoiceSession`
+> tests + the fake-server e2e) are the current source of truth for wire
+> correctness.
 
 ## Environment
 

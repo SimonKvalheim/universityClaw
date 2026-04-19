@@ -3,6 +3,11 @@ import { GoogleGenAI } from '@google/genai';
 import { randomUUID } from 'node:crypto';
 import { voiceLog } from '../../../../lib/voice-logger';
 
+// Keep in sync with MODEL in ../../voice/transports/gemini-live-transport.ts.
+// The ephemeral token's liveConnectConstraints.model must match what the
+// browser WS connects with, or Gemini closes the socket.
+const LIVE_MODEL = 'gemini-3.1-flash-live-preview';
+
 function logFire(record: Record<string, unknown>): void {
   voiceLog(record).catch(() => {
     /* ignore — logging is best-effort, must never break the route */
@@ -61,12 +66,17 @@ export async function POST(req: Request) {
   const voiceSessionId = randomUUID();
 
   try {
-    const client = new GoogleGenAI({ apiKey });
+    // Ephemeral tokens (authTokens.create) only exist on v1alpha, and the
+    // browser-side GeminiLiveTransport connects with the same apiVersion.
+    const client = new GoogleGenAI({
+      apiKey,
+      httpOptions: { apiVersion: 'v1alpha' },
+    });
     const token = await client.authTokens.create({
       config: {
         uses: 1,
         liveConnectConstraints: {
-          model: 'gemini-3.1-flash-live-preview',
+          model: LIVE_MODEL,
         },
         expireTime: new Date(Date.now() + 31 * 60 * 1000).toISOString(),
         newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
@@ -76,7 +86,7 @@ export async function POST(req: Request) {
       event: 'session.start',
       voiceSessionId,
       persona: 'dev',
-      model: 'gemini-3.1-flash-live-preview',
+      model: LIVE_MODEL,
     });
     return NextResponse.json({
       token: token.name ?? '',
