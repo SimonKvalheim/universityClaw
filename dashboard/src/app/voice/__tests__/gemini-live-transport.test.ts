@@ -36,9 +36,11 @@ interface StubSession extends Session {
   sent: Sent[];
   emit: (msg: LiveServerMessage) => void;
   emitClose: () => void;
+  emitError: () => void;
   _bind: (args: {
     onmessage: (msg: LiveServerMessage) => void;
     onclose?: () => void;
+    onerror?: () => void;
   }) => void;
 }
 
@@ -46,6 +48,7 @@ function makeStubSession(): StubSession {
   const sent: Sent[] = [];
   let onmessage: (msg: LiveServerMessage) => void = () => {};
   let onclose: (() => void) | null = null;
+  let onerror: (() => void) | null = null;
 
   const stub = {
     sent,
@@ -92,12 +95,15 @@ function makeStubSession(): StubSession {
     },
     emit: (msg: LiveServerMessage) => onmessage(msg),
     emitClose: () => onclose?.(),
+    emitError: () => onerror?.(),
     _bind: (args: {
       onmessage: (msg: LiveServerMessage) => void;
       onclose?: () => void;
+      onerror?: () => void;
     }) => {
       onmessage = args.onmessage;
       onclose = args.onclose ?? null;
+      onerror = args.onerror ?? null;
     },
   };
 
@@ -130,6 +136,7 @@ function makeTransport(
     stub._bind({
       onmessage: params.callbacks.onmessage,
       onclose: params.callbacks.onclose as (() => void) | undefined,
+      onerror: params.callbacks.onerror as (() => void) | undefined,
     });
     return stub;
   });
@@ -334,6 +341,52 @@ describe('GeminiLiveTransport', () => {
     stub.emitClose();
 
     expect(log).toContainEqual({ kind: 'close', reason: 'drop' });
+  });
+
+  it('raises onClose("drop") on onerror even if onclose never follows', async () => {
+    const stub = makeStubSession();
+    const { transport } = makeTransport(stub);
+    const { events, log } = makeEvents();
+    await transport.start({ contextPayload: {}, events });
+
+    stub.emitError();
+
+    expect(log).toContainEqual({ kind: 'close', reason: 'drop' });
+
+    // A subsequent onclose must not double-fire.
+    stub.emitClose();
+    const closes = log.filter(
+      (e): e is { kind: 'close'; reason: string } =>
+        typeof e === 'object' &&
+        e !== null &&
+        (e as { kind?: string }).kind === 'close',
+    );
+    expect(closes).toHaveLength(1);
+  });
+
+  it('skips onUsage when usageMetadata has no modality details', async () => {
+    const stub = makeStubSession();
+    const { transport } = makeTransport(stub);
+    const { events, log } = makeEvents();
+    await transport.start({ contextPayload: {}, events });
+
+    stub.emit({
+      usageMetadata: { totalTokenCount: 42 },
+    } as unknown as LiveServerMessage);
+    stub.emit({
+      usageMetadata: {
+        promptTokensDetails: [],
+        responseTokensDetails: [],
+      },
+    } as unknown as LiveServerMessage);
+
+    const usageEvents = log.filter(
+      (e) =>
+        typeof e === 'object' &&
+        e !== null &&
+        (e as { kind?: string }).kind === 'usage',
+    );
+    expect(usageEvents).toHaveLength(0);
   });
 
   it('raises onClose("server_end") on goAway frames', async () => {

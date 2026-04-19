@@ -16,6 +16,7 @@ import type {
 } from '../transport';
 import type { TokenUsage } from '../rates';
 
+// Preview model — rotate here when Google graduates the Live API.
 const MODEL = 'gemini-3.1-flash-live-preview';
 
 export interface GenaiConnectParams {
@@ -147,7 +148,12 @@ export class GeminiLiveTransport implements Transport {
       callbacks: {
         onmessage: (msg) => this.onMessage(msg),
         onerror: () => {
-          /* onclose follows and drives shutdown */
+          // The SDK normally follows onerror with onclose, but if the
+          // transport aborts mid-handshake we may never see onclose.
+          // Drive shutdown here too — close() is idempotent via this.closed.
+          if (this.closed) return;
+          this.closed = true;
+          this.events?.onClose('drop');
         },
         onclose: () => {
           if (this.closed) return;
@@ -259,7 +265,13 @@ export class GeminiLiveTransport implements Transport {
     }
 
     if (msg.usageMetadata) {
-      events.onUsage(usageMetadataToTokenUsage(msg.usageMetadata));
+      const u = msg.usageMetadata;
+      const hasDetails =
+        (u.promptTokensDetails?.length ?? 0) > 0 ||
+        (u.responseTokensDetails?.length ?? 0) > 0;
+      if (hasDetails) {
+        events.onUsage(usageMetadataToTokenUsage(u));
+      }
     }
 
     if (msg.goAway && !this.closed) {
