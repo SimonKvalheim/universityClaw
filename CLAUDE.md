@@ -184,6 +184,18 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 | `LIGHTRAG_EMBED_MODEL` | `text-embedding-3-small` | LightRAG embedding model |
 | `TZ` | auto-detected | Timezone for scheduling |
 
+## Database Migrations
+
+**All schema changes to `store/messages.db` MUST go through Drizzle migrations.** Never run `CREATE TABLE`, `ALTER TABLE`, `CREATE INDEX`, etc. directly against the DB — not in dev, not to "try something out." Doing so desyncs the live schema from `drizzle/migrations/` and breaks startup for every other install when the eventual migration tries to create an object that already exists.
+
+Workflow for any schema change:
+1. Edit the schema file in `src/db/schema*.ts`
+2. Run `npx drizzle-kit generate` to create a new migration SQL in `drizzle/migrations/`
+3. Commit both the schema edit and the generated migration together
+4. Migrations apply automatically on next `npm run dev` / NanoClaw start via `runMigrations` in `src/db/migrate.ts`
+
+If you hit drift (migration fails because the object already exists and the table is empty / data is disposable): the clean fix is to drop the offending object and let the migration recreate it. Only mark a migration as pre-applied by inserting its SHA256 hash into `__drizzle_migrations` when you have verified the live schema matches the migration SQL exactly.
+
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
