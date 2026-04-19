@@ -13,6 +13,7 @@ process.env.STORE_DIR = path.join(REPO_ROOT, 'store');
 import { startFakeGemini, type FakeGemini } from './fake-gemini-server';
 import { VoiceSession } from '../voice-session';
 import { DEV_PERSONA } from '../personas';
+import { FakeJsonTransport } from '../transports/fake-json-transport';
 
 import { POST as tokenPOST } from '../../api/voice/token/route';
 import { GET as contextGET } from '../../api/voice/context/dev/route';
@@ -143,8 +144,11 @@ describe('VoiceSession e2e against fake server + real route handlers', () => {
 
     const session = new VoiceSession({
       persona: DEV_PERSONA,
-      liveApiUrl: fake.url,
-      wsFactory,
+      transport: new FakeJsonTransport({
+        url: fake.url,
+        persona: DEV_PERSONA,
+        wsFactory,
+      }),
       events: {
         onInputTranscript: () => {},
         onOutputTranscript: () => {},
