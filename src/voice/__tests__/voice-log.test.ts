@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createVoiceLogger } from '../voice-log';
+import { createVoiceLogger } from '../voice-log.js';
 
 let dir: string;
 beforeEach(async () => {

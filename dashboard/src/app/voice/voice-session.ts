@@ -224,8 +224,8 @@ export class VoiceSession {
             ? ev.data
             : ev.data instanceof ArrayBuffer
               ? Buffer.from(new Uint8Array(ev.data)).toString('utf8')
-              : Buffer.isBuffer
-                ? Buffer.from(ev.data as unknown as ArrayBuffer).toString('utf8')
+              : Buffer.isBuffer(ev.data)
+                ? (ev.data as Buffer).toString('utf8')
                 : String(ev.data);
         this.onMessage(raw);
       },

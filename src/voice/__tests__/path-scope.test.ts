@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { resolveReadPath, resolveWritePath, sanitizeSlug } from '../path-scope';
+import { resolveReadPath, resolveWritePath, sanitizeSlug } from '../path-scope.js';
 
 let root: string;
 
