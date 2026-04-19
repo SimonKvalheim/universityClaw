@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  writeFileSync,
-  mkdirSync,
-  rmSync,
-  existsSync,
-  readdirSync,
-} from 'fs';
+import { writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { promoteNote } from './promoter.js';
 
@@ -207,8 +201,8 @@ describe('promoteNote', () => {
       .replace(/^sources\//, '')
       .replace(/\.md$/, '');
     expect(result.figurePaths).toEqual([`attachments/${suffixedSlug}/fig.png`]);
-    expect(existsSync(join(VAULT, 'attachments', suffixedSlug, 'fig.png'))).toBe(
-      true,
-    );
+    expect(
+      existsSync(join(VAULT, 'attachments', suffixedSlug, 'fig.png')),
+    ).toBe(true);
   });
 });

@@ -52,7 +52,9 @@ export function promoteNote(
 
   const notePath = `${destFolder}/${filename}`;
   const noteSlug = filename.replace(/\.md$/, '');
-  const figurePaths = figuresDir ? copyFigures(vaultDir, noteSlug, figuresDir) : [];
+  const figurePaths = figuresDir
+    ? copyFigures(vaultDir, noteSlug, figuresDir)
+    : [];
 
   return { notePath, figurePaths };
 }

@@ -538,7 +538,10 @@ export class IngestionPipeline {
         );
         promotedPaths.push(notePath);
         promotedSourcePath = join(this.vaultDir, notePath);
-        logger.info({ jobId: job.id, promoted: notePath }, 'Promoted source note');
+        logger.info(
+          { jobId: job.id, promoted: notePath },
+          'Promoted source note',
+        );
 
         if (figurePaths.length > 0) {
           try {
@@ -576,7 +579,10 @@ export class IngestionPipeline {
           job.id,
         );
         promotedPaths.push(notePath);
-        logger.info({ jobId: job.id, promoted: notePath }, 'Promoted concept note');
+        logger.info(
+          { jobId: job.id, promoted: notePath },
+          'Promoted concept note',
+        );
       } catch (err) {
         logger.warn(
           { jobId: job.id, file: conceptFile, err },
