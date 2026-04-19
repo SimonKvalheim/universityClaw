@@ -17,6 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <a href="/read" className="hover:text-gray-100">Read</a>
               <a href="/read/book" className="hover:text-gray-100">Book</a>
               <a href="/study" className="hover:text-gray-100">Study</a>
+              {process.env.NODE_ENV === 'development' && (
+                <a href="/voice" className="hover:text-gray-100">Voice</a>
+              )}
             </div>
           </div>
         </nav>

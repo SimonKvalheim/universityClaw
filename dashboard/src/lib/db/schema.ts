@@ -144,3 +144,21 @@ export const activity_concepts = sqliteTable('activity_concepts', {
 }, (table) => [
   primaryKey({ columns: [table.activity_id, table.concept_id] }),
 ]);
+
+// Voice system tables (must match src/db/schema/voice.ts SQL columns exactly)
+
+export const voice_sessions = sqliteTable('voice_sessions', {
+  id: text('id').primaryKey(),
+  persona: text('persona').notNull(),
+  started_at: text('started_at').notNull(),
+  ended_at: text('ended_at').notNull(),
+  duration_seconds: integer('duration_seconds').notNull(),
+  text_tokens_in: integer('text_tokens_in').notNull().default(0),
+  text_tokens_out: integer('text_tokens_out').notNull().default(0),
+  audio_tokens_in: integer('audio_tokens_in').notNull().default(0),
+  audio_tokens_out: integer('audio_tokens_out').notNull().default(0),
+  cost_usd: real('cost_usd').notNull(),
+  rates_version: text('rates_version').notNull(),
+  transcript_path: text('transcript_path'),
+  artifacts: text('artifacts'),
+});

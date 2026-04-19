@@ -89,6 +89,7 @@ This is a fork of NanoClaw customized as a personal university teaching assistan
 | RAG Indexer | `src/rag/indexer.ts` | Chokidar watcher with content-hash dedup, delete-before-reinsert lifecycle |
 | Student Profile | `src/profile/` | Learning progress tracking, knowledge map, study log rotation |
 | Web Dashboard | `dashboard/` | Next.js app for upload, verification status, vault browsing |
+| Live Voice (`/voice`) | `dashboard/src/app/voice/` + `src/voice/` | Gemini Live brainstorm partner (Dev Assistant persona). See `docs/superpowers/specs/2026-04-18-live-voice-chat-design.md`. |
 
 ### Key Paths
 
@@ -98,6 +99,9 @@ This is a fork of NanoClaw customized as a personal university teaching assistan
 - `scripts/docling-extract.py` — Python document extraction script
 - `store/messages.db` — SQLite database (messages, tasks, ingestion jobs, RAG tracker)
 - `data/` — IPC files, extraction artifacts
+- `data/voice.log` — JSON-line structured log for the live voice feature (session start/end, tool calls)
+- `docs/superpowers/brainstorm-sessions/` — voice session transcripts (dogfooded; NOT indexed by RAG)
+- `docs/superpowers/mockups/` — Dev-Assistant-authored HTML mockups and mermaid diagrams
 - `onecli/` — OneCLI credential gateway config (containers already built; for new installs, run `/init-onecli`)
 
 ### Testing
@@ -172,7 +176,8 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 | `MAX_CONCURRENT_CONTAINERS` | `5` | Parallel container limit |
 | `EXTRACTION_TIMEOUT` | `600000` (10min) | Docling per-document timeout |
 | `DASHBOARD_PORT` | `3100` | Dashboard web UI port |
-| `GEMINI_API_KEY` | — | Gemini API key (TTS + STT) |
+| `GEMINI_API_KEY` | — | Gemini API key — used by TTS/STT and by `/voice` (live voice chat) |
+| `VOICE_MONTHLY_BUDGET_USD` | — | Optional — surfaces an amber banner on `/voice` when monthly cost exceeds this |
 | `LIGHTRAG_LLM_BINDING` | `openai` | LightRAG LLM provider |
 | `LIGHTRAG_LLM_MODEL` | `gpt-4o-mini` | LightRAG LLM model |
 | `LIGHTRAG_EMBED_BINDING` | `openai` | LightRAG embedding provider |
