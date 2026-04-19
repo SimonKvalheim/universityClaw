@@ -176,8 +176,7 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 | `MAX_CONCURRENT_CONTAINERS` | `5` | Parallel container limit |
 | `EXTRACTION_TIMEOUT` | `600000` (10min) | Docling per-document timeout |
 | `DASHBOARD_PORT` | `3100` | Dashboard web UI port |
-| `MISTRAL_API_KEY` | — | Mistral API key (TTS + STT) |
-| `GEMINI_API_KEY` | — | Gemini API key (required by `/voice`; fallback to legacy `google_api_key` until migration lands) |
+| `GEMINI_API_KEY` | — | Gemini API key — used by TTS/STT and by `/voice` (live voice chat) |
 | `VOICE_MONTHLY_BUDGET_USD` | — | Optional — surfaces an amber banner on `/voice` when monthly cost exceeds this |
 | `LIGHTRAG_LLM_BINDING` | `openai` | LightRAG LLM provider |
 | `LIGHTRAG_LLM_MODEL` | `gpt-4o-mini` | LightRAG LLM model |

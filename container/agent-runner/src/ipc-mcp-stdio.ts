@@ -10,6 +10,8 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { pcmToWav } from './pcm-to-wav.js';
+import { buildGeminiTtsRequest } from './gemini-tts-request.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -339,94 +341,126 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 
 const AUDIO_DIR = '/workspace/group/audio';
 const TTS_MAX_TEXT_LENGTH = 50000;
-const MISTRAL_TTS_URL = 'https://api.mistral.ai/v1/audio/speech';
-// Default voice: "Paul - Neutral" (en_us, male, casual)
-const MISTRAL_DEFAULT_VOICE_ID = 'c69964a6-ab8b-4f8a-9465-ec0925096ec8';
+
+// Voice is a single prebuilt. To try another, change this constant.
+// Kore is a balanced multilingual default. Other good starting points:
+// "Charon", "Puck", "Zephyr", "Aoede". Full list: 30 prebuilts in Gemini TTS docs.
+const GEMINI_TTS_VOICE = 'Kore';
+
+// TTS model is currently a preview. If it is deprecated or promoted to GA,
+// swap this constant — it is the only coupling point to the preview name.
+const GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
+const GEMINI_TTS_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`;
+
+interface GeminiTtsResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+        inlineData?: {
+          data?: string;
+          mimeType?: string;
+        };
+      }>;
+    };
+    finishReason?: string;
+  }>;
+  promptFeedback?: {
+    blockReason?: string;
+  };
+}
 
 server.tool(
   'synthesize_speech',
   'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
   {
-    text: z.string().max(50000).describe('Text to synthesize (max 50000 characters). Mistral handles long text via server-side interleaving.'),
+    text: z
+      .string()
+      .max(TTS_MAX_TEXT_LENGTH)
+      .describe(
+        'Text to synthesize. You can embed Gemini audio tags like [warmly], [slowly], [whispering], [excitedly] inline to color specific moments within the speech.',
+      ),
+    style_prompt: z
+      .string()
+      .optional()
+      .describe(
+        'Natural-language whole-utterance style directive, e.g. "Say warmly and slowly" or "Speak with calm encouragement". Prepended to the text before synthesis. Use style_prompt for whole-utterance tone; use [inline tags] inside text for moment-specific expression.',
+      ),
   },
   async (args) => {
+    const errorResult = (text: string) => ({
+      isError: true,
+      content: [{ type: 'text' as const, text }],
+    });
+
     if (!args.text || args.text.trim().length === 0) {
-      return {
-        content: [{ type: 'text' as const, text: 'Error: text cannot be empty.' }],
-        isError: true,
-      };
+      return errorResult('Error: text cannot be empty.');
     }
     if (args.text.length > TTS_MAX_TEXT_LENGTH) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `Error: text too long (${args.text.length} chars, max ${TTS_MAX_TEXT_LENGTH}).`,
-          },
-        ],
-        isError: true,
-      };
+      return errorResult(
+        `Error: text too long (${args.text.length} chars, max ${TTS_MAX_TEXT_LENGTH}).`,
+      );
     }
 
-    const apiKey = process.env.MISTRAL_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return {
-        content: [
-          { type: 'text' as const, text: 'Error: MISTRAL_API_KEY is not set in the container environment.' },
-        ],
-        isError: true,
-      };
+      return errorResult('Error: GEMINI_API_KEY is not set in the container environment.');
     }
 
     try {
-      const response = await fetch(MISTRAL_TTS_URL, {
+      const response = await fetch(GEMINI_TTS_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          'x-goog-api-key': apiKey,
         },
-        body: JSON.stringify({
-          model: 'voxtral-mini-tts-2603',
-          input: args.text,
-          voice_id: MISTRAL_DEFAULT_VOICE_ID,
-          response_format: 'wav',
-        }),
+        body: JSON.stringify(
+          buildGeminiTtsRequest({
+            text: args.text,
+            stylePrompt: args.style_prompt,
+            voiceName: GEMINI_TTS_VOICE,
+          }),
+        ),
         signal: AbortSignal.timeout(300_000),
       });
 
       if (!response.ok) {
         const errText = await response.text().catch(() => 'unknown error');
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Error: TTS service returned ${response.status}: ${errText}`,
-            },
-          ],
-          isError: true,
-        };
+        return errorResult(`Error: TTS service returned ${response.status}: ${errText}`);
       }
 
-      // Mistral returns JSON with base64-encoded audio_data
-      const responseJson = await response.json() as { audio_data?: string };
-      if (!responseJson.audio_data) {
-        return {
-          content: [
-            { type: 'text' as const, text: 'Error: TTS response missing audio_data field.' },
-          ],
-          isError: true,
-        };
+      const responseJson = (await response.json()) as GeminiTtsResponse;
+      const candidate = responseJson.candidates?.[0];
+      const part = candidate?.content?.parts?.[0];
+      const audioB64 = part?.inlineData?.data;
+
+      if (!audioB64) {
+        // Modality mismatch: model returned text instead of audio.
+        if (part?.text) {
+          return errorResult(
+            `Error: TTS model returned text instead of audio (modality negotiation failed). Model said: ${part.text}`,
+          );
+        }
+        // Generic missing-audio: include diagnostics so callers can debug safety
+        // filter or modality negotiation failures.
+        const finishReason = candidate?.finishReason;
+        const blockReason = responseJson.promptFeedback?.blockReason;
+        return errorResult(
+          `Error: TTS response missing inlineData.data. finishReason=${finishReason ?? 'unknown'} blockReason=${blockReason ?? 'none'}`,
+        );
       }
-      const audioBuffer = Buffer.from(responseJson.audio_data, 'base64');
+
+      const pcm = Buffer.from(audioB64, 'base64');
+      const wavBuffer = pcmToWav(pcm);
 
       fs.mkdirSync(AUDIO_DIR, { recursive: true });
       const random = Math.random().toString(36).slice(2, 6);
       const filename = `tts-${Date.now()}-${random}.wav`;
       const filepath = path.join(AUDIO_DIR, filename);
-      fs.writeFileSync(filepath, audioBuffer);
+      fs.writeFileSync(filepath, wavBuffer);
 
-      // Estimate duration from WAV size (24kHz, 16-bit mono = 48000 bytes/sec, minus 44-byte header)
-      const durationSeconds = Math.max(0, Math.round((audioBuffer.length - 44) / 48000));
+      // Estimate duration from WAV size (24kHz mono × 2 bytes/sample = 48000 bytes/sec, minus 44-byte header)
+      const durationSeconds = Math.max(0, Math.round((wavBuffer.length - 44) / 48000));
 
       return {
         content: [
@@ -442,10 +476,8 @@ server.tool(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
-        content: [
-          { type: 'text' as const, text: `Error: TTS request failed: ${message}` },
-        ],
         isError: true,
+        content: [{ type: 'text' as const, text: `Error: TTS request failed: ${message}` }],
       };
     }
   },
