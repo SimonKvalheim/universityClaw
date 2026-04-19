@@ -172,7 +172,7 @@ Key env vars (set in `.env` or shell). All have sensible defaults:
 | `MAX_CONCURRENT_CONTAINERS` | `5` | Parallel container limit |
 | `EXTRACTION_TIMEOUT` | `600000` (10min) | Docling per-document timeout |
 | `DASHBOARD_PORT` | `3100` | Dashboard web UI port |
-| `MISTRAL_API_KEY` | — | Mistral API key (TTS + STT) |
+| `GEMINI_API_KEY` | — | Gemini API key (TTS + STT) |
 | `LIGHTRAG_LLM_BINDING` | `openai` | LightRAG LLM provider |
 | `LIGHTRAG_LLM_MODEL` | `gpt-4o-mini` | LightRAG LLM model |
 | `LIGHTRAG_EMBED_BINDING` | `openai` | LightRAG embedding provider |
