@@ -78,6 +78,7 @@ describe('VoiceSession', () => {
   }, 10_000);
 
   it('captures final transcripts only (ignores partials in buffer) and POSTs session-close with transcript', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => ({
       ok: true,
       status: 200,

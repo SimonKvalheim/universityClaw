@@ -8,8 +8,31 @@ import {
   resolveReadPath,
   resolveWritePath,
 } from '../../../../../../../../src/voice/path-scope';
+import { voiceLog } from '../../../../../../lib/voice-logger';
 
 const execFileP = promisify(execFile);
+
+function logFire(record: Record<string, unknown>): void {
+  voiceLog(record).catch(() => {
+    /* ignore — logging is best-effort, must never break the route */
+  });
+}
+
+/** Redact heavy content fields so tool.call logs stay readable and don't leak
+ *  user-authored text into the log file. */
+function summarizeArgs(args: unknown): unknown {
+  if (!args || typeof args !== 'object') return args;
+  const REDACTED = ['content', 'html', 'mermaid'];
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+    if (REDACTED.includes(k) && typeof v === 'string') {
+      out[k] = { length: v.length };
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 const READ_MAX = 256 * 1024;
 const WRITE_MAX = 256 * 1024;
@@ -370,11 +393,26 @@ export async function POST(
   }
 
   const repoRoot = getRepoRoot();
+  const t0 = Date.now();
+  logFire({ event: 'tool.call', tool, args: summarizeArgs(args) });
   try {
     const out = await TOOLS[tool](repoRoot, args);
+    logFire({
+      event: 'tool.result',
+      tool,
+      durationMs: Date.now() - t0,
+      isError:
+        typeof out === 'object' && out !== null && 'error' in out ? true : false,
+    });
     return NextResponse.json(out);
   } catch (err) {
     const message = (err as Error).message ?? 'unknown';
+    logFire({
+      event: 'tool.error',
+      tool,
+      durationMs: Date.now() - t0,
+      message,
+    });
     if (
       message.startsWith('out of scope') ||
       message.startsWith('invalid slug')

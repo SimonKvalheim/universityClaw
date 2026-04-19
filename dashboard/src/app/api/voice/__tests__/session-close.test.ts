@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';

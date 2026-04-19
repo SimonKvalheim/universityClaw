@@ -4,6 +4,13 @@ import path from 'node:path';
 import { getDb } from '../../../../lib/db/index';
 import { voice_sessions } from '../../../../lib/db/schema';
 import { computeCostUsd, RATES } from '../../../voice/rates';
+import { voiceLog } from '../../../../lib/voice-logger';
+
+function logFire(record: Record<string, unknown>): void {
+  voiceLog(record).catch(() => {
+    /* ignore — logging is best-effort, must never break the route */
+  });
+}
 
 interface SessionCloseBody {
   voiceSessionId: string;
@@ -146,11 +153,27 @@ export async function POST(req: Request) {
       artifacts: JSON.stringify(raw.artifacts ?? []),
     });
   } catch (err) {
+    logFire({
+      event: 'error.db_insert',
+      voiceSessionId: raw.voiceSessionId,
+      message: (err as Error).message,
+    });
     return NextResponse.json(
       { error: 'db insert failed: ' + (err as Error).message },
       { status: 500 },
     );
   }
+
+  logFire({
+    event: 'session.end',
+    voiceSessionId: raw.voiceSessionId,
+    persona: raw.persona,
+    endReason: raw.endReason,
+    durationSeconds,
+    costUsd,
+    transcriptPath: transcriptPathRel,
+    artifactCount: raw.artifacts?.length ?? 0,
+  });
 
   return NextResponse.json({
     ok: true,

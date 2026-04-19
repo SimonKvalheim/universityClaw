@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { randomUUID } from 'node:crypto';
+import { voiceLog } from '../../../../lib/voice-logger';
+
+function logFire(record: Record<string, unknown>): void {
+  voiceLog(record).catch(() => {
+    /* ignore — logging is best-effort, must never break the route */
+  });
+}
 
 function isLoopback(host: string | null): boolean {
   if (!host) return false;
@@ -65,11 +72,22 @@ export async function POST(req: Request) {
         newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
       },
     });
+    logFire({
+      event: 'session.start',
+      voiceSessionId,
+      persona: 'dev',
+      model: 'gemini-3.1-flash-live-preview',
+    });
     return NextResponse.json({
       token: token.name ?? '',
       voiceSessionId,
     });
   } catch (err) {
+    logFire({
+      event: 'error.token_mint',
+      voiceSessionId,
+      message: (err as Error).message,
+    });
     return NextResponse.json(
       { error: 'token mint failed: ' + (err as Error).message },
       { status: 502 },

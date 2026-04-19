@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
-import { existsSync, readFileSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, rmSync, readdirSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { WebSocket as WsClient } from 'ws';
 
@@ -139,7 +139,6 @@ describe('VoiceSession e2e against fake server + real route handlers', () => {
       },
     }));
 
-    let endedSid: string | null = null;
     let endCost = 0;
 
     const session = new VoiceSession({
@@ -162,7 +161,7 @@ describe('VoiceSession e2e against fake server + real route handlers', () => {
           });
           return await res.json();
         },
-        onEnd: (p) => {
+        onEnd: () => {
           // VoiceSession generates its own sid when liveApiUrl is set.
           // Fish it out of the session-close POST body instead.
         },
@@ -192,7 +191,6 @@ describe('VoiceSession e2e against fake server + real route handlers', () => {
     const closeBody = JSON.parse(spies.close.mock.calls[0][0]);
     const sid: string = closeBody.voiceSessionId;
     sids.push(sid);
-    endedSid = sid;
 
     // DB row exists with the right sid and a positive cost.
     const db = new Database(path.join(REPO_ROOT, 'store', 'messages.db'));

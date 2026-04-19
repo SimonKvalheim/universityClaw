@@ -1,7 +1,10 @@
-// Reference-only source; runtime is dashboard/public/voice/pcm-capture.js.
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 // @ts-nocheck
-// Reference TypeScript copy. The browser loads the compiled JS at
-// /voice/pcm-capture.js via audioContext.audioWorklet.addModule().
+// Reference-only source; runtime is dashboard/public/voice/pcm-capture.js.
+// Excluded from tsconfig because it declares worklet-scope globals
+// (sampleRate, registerProcessor, AudioWorkletProcessor) that don't exist in
+// the main-thread lib types. @ts-nocheck is belt-and-suspenders. Keep in
+// sync with the plain-JS copy in public/voice/pcm-capture.js by hand.
 //
 // Downsamples the native AudioContext sampleRate to 16 kHz mono, converts
 // Float32 [-1,1] to Int16, and posts Int16Array buffers to the main thread.

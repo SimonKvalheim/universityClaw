@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
+// useEffect is used by DiagramView below.
 
 export interface PreviewArtifact {
   type: 'mockup' | 'diagram';
@@ -15,17 +16,16 @@ interface PreviewPaneProps {
 type Tab = 'mockup' | 'diagram';
 
 export function PreviewPane({ artifacts }: PreviewPaneProps) {
-  const [tab, setTab] = useState<Tab>('mockup');
+  // User's explicit tab choice (null = auto-pick based on artifacts).
+  const [userTab, setUserTab] = useState<Tab | null>(null);
 
   const latestMockup = [...artifacts].reverse().find((a) => a.type === 'mockup');
   const latestDiagram = [...artifacts].reverse().find((a) => a.type === 'diagram');
 
-  useEffect(() => {
-    if (latestMockup && tab === 'mockup') return;
-    if (latestDiagram && tab === 'diagram') return;
-    if (latestMockup) setTab('mockup');
-    else if (latestDiagram) setTab('diagram');
-  }, [latestMockup, latestDiagram, tab]);
+  // Derived tab: user's pick wins; otherwise prefer mockup if present, then diagram.
+  const tab: Tab =
+    userTab ?? (latestMockup ? 'mockup' : latestDiagram ? 'diagram' : 'mockup');
+  const setTab = setUserTab;
 
   return (
     <div className="flex h-full flex-col">

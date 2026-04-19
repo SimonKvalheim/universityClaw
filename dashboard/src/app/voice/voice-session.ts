@@ -60,6 +60,22 @@ interface ServerFrame {
 
 const WS_OPEN = 1;
 
+// Minimal typed surface the class needs from a WebSocket. Both the DOM
+// WebSocket and the `ws` package's client structurally satisfy this — it just
+// avoids the `Function` type for the listener casts.
+type WsEventName = 'open' | 'error' | 'message' | 'close';
+interface WsListenerTarget {
+  addEventListener(
+    ev: WsEventName,
+    cb: (e: Event) => void,
+    opts?: { once?: boolean },
+  ): void;
+  removeEventListener?(
+    ev: WsEventName,
+    cb: (e: Event) => void,
+  ): void;
+}
+
 function pcmToBase64(pcm: Int16Array): string {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   if (typeof Buffer !== 'undefined') {
@@ -194,21 +210,21 @@ export class VoiceSession {
         reject(new Error('ws open failed: ' + String(ev)));
       };
       const cleanup = () => {
-        (ws as unknown as { removeEventListener?: Function }).removeEventListener?.(
+        (ws as unknown as WsListenerTarget).removeEventListener?.(
           'open',
           onOpen as EventListener,
         );
-        (ws as unknown as { removeEventListener?: Function }).removeEventListener?.(
+        (ws as unknown as WsListenerTarget).removeEventListener?.(
           'error',
           onError as EventListener,
         );
       };
-      (ws as unknown as { addEventListener: Function }).addEventListener(
+      (ws as unknown as WsListenerTarget).addEventListener(
         'open',
         onOpen as EventListener,
         { once: true },
       );
-      (ws as unknown as { addEventListener: Function }).addEventListener(
+      (ws as unknown as WsListenerTarget).addEventListener(
         'error',
         onError as EventListener,
         { once: true },
@@ -216,9 +232,10 @@ export class VoiceSession {
     });
 
     // Wire ongoing handlers.
-    (ws as unknown as { addEventListener: Function }).addEventListener(
+    (ws as unknown as WsListenerTarget).addEventListener(
       'message',
-      (ev: MessageEvent) => {
+      (e) => {
+        const ev = e as MessageEvent;
         const raw =
           typeof ev.data === 'string'
             ? ev.data
@@ -230,7 +247,7 @@ export class VoiceSession {
         this.onMessage(raw);
       },
     );
-    (ws as unknown as { addEventListener: Function }).addEventListener(
+    (ws as unknown as WsListenerTarget).addEventListener(
       'close',
       () => {
         if (!this.stoppingPromise) {
@@ -238,7 +255,7 @@ export class VoiceSession {
         }
       },
     );
-    (ws as unknown as { addEventListener: Function }).addEventListener(
+    (ws as unknown as WsListenerTarget).addEventListener(
       'error',
       () => {
         // Swallow post-open errors; close handler will drive shutdown.
