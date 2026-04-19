@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, unlinkSync, existsSync } from 'node:fs';
-import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
+import { mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
 import { AgentProcessor } from './agent-processor.js';
@@ -240,20 +240,6 @@ export class IngestionPipeline {
     );
 
     const result = await this.extractor.extract(job.id, job.source_path);
-
-    // Copy figures to vault attachments (per-job directory)
-    if (result.figures.length > 0) {
-      const figuresAttachDir = join(this.vaultDir, 'attachments', job.id);
-      await mkdir(figuresAttachDir, { recursive: true });
-      for (const fig of result.figures) {
-        await copyFile(
-          join(result.figuresDir, fig),
-          join(figuresAttachDir, fig),
-        ).catch(() => {
-          logger.warn({ jobId: job.id, figure: fig }, 'Failed to copy figure');
-        });
-      }
-    }
 
     updateIngestionJob(job.id, {
       status: 'extracted',
@@ -521,15 +507,26 @@ export class IngestionPipeline {
 
     let promotedSourcePath: string | undefined;
 
-    // Promote source note
+    // Promote source note (with figures from the extraction artifacts)
     const promotedPaths: string[] = [];
     if (manifest.source_note) {
       const sourceDraftPath = join(draftsDir, manifest.source_note);
+      const figuresDir = job.extraction_path
+        ? join(job.extraction_path, 'figures')
+        : undefined;
       try {
-        const promoted = promoteNote(sourceDraftPath, this.vaultDir, job.id);
-        promotedPaths.push(promoted);
-        promotedSourcePath = join(this.vaultDir, promoted);
-        logger.info({ jobId: job.id, promoted }, 'Promoted source note');
+        const { notePath, figurePaths } = promoteNote(
+          sourceDraftPath,
+          this.vaultDir,
+          job.id,
+          figuresDir,
+        );
+        promotedPaths.push(notePath);
+        promotedSourcePath = join(this.vaultDir, notePath);
+        logger.info(
+          { jobId: job.id, promoted: notePath, figures: figurePaths.length },
+          'Promoted source note',
+        );
       } catch (err) {
         logger.warn(
           { jobId: job.id, file: manifest.source_note, err },
@@ -538,13 +535,20 @@ export class IngestionPipeline {
       }
     }
 
-    // Promote concept notes
+    // Promote concept notes (no figures — only source notes get them)
     for (const conceptFile of manifest.concept_notes) {
       const conceptDraftPath = join(draftsDir, conceptFile);
       try {
-        const promoted = promoteNote(conceptDraftPath, this.vaultDir, job.id);
-        promotedPaths.push(promoted);
-        logger.info({ jobId: job.id, promoted }, 'Promoted concept note');
+        const { notePath } = promoteNote(
+          conceptDraftPath,
+          this.vaultDir,
+          job.id,
+        );
+        promotedPaths.push(notePath);
+        logger.info(
+          { jobId: job.id, promoted: notePath },
+          'Promoted concept note',
+        );
       } catch (err) {
         logger.warn(
           { jobId: job.id, file: conceptFile, err },

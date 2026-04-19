@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'fs';
+import {
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+} from 'fs';
 import { join } from 'path';
 import { promoteNote } from './promoter.js';
 
@@ -23,7 +30,8 @@ describe('promoteNote', () => {
 
     const result = promoteNote(draftPath, VAULT, 'job1');
 
-    expect(result).toBe('concepts/self-attention-mechanism.md');
+    expect(result.notePath).toBe('concepts/self-attention-mechanism.md');
+    expect(result.figurePaths).toEqual([]);
     expect(
       existsSync(join(VAULT, 'concepts', 'self-attention-mechanism.md')),
     ).toBe(true);
@@ -39,7 +47,9 @@ describe('promoteNote', () => {
 
     const result = promoteNote(draftPath, VAULT, 'job1');
 
-    expect(result).toBe('sources/attention-is-all-you-need-vaswani-2017.md');
+    expect(result.notePath).toBe(
+      'sources/attention-is-all-you-need-vaswani-2017.md',
+    );
     expect(
       existsSync(
         join(VAULT, 'sources', 'attention-is-all-you-need-vaswani-2017.md'),
@@ -57,15 +67,15 @@ describe('promoteNote', () => {
 
     const result = promoteNote(draftPath, VAULT, 'a1b2');
 
-    expect(result).toMatch(/^concepts\/gradient-descent-[a-f0-9]{4}\.md$/);
-    expect(existsSync(join(VAULT, result))).toBe(true);
+    expect(result.notePath).toMatch(
+      /^concepts\/gradient-descent-[a-f0-9]{4}\.md$/,
+    );
+    expect(existsSync(join(VAULT, result.notePath))).toBe(true);
   });
 
   it('creates destination directory if it does not exist', () => {
-    // Don't create concepts/ dir — promoteNote should handle it
     rmSync(TMP, { recursive: true, force: true });
     mkdirSync(join(VAULT, 'drafts'), { recursive: true });
-    // Note: concepts/ does NOT exist
 
     const draftPath = join(VAULT, 'drafts', 'job2-concept-001.md');
     writeFileSync(
@@ -75,9 +85,184 @@ describe('promoteNote', () => {
 
     const result = promoteNote(draftPath, VAULT, 'job2');
 
-    expect(result).toBe('concepts/backpropagation.md');
+    expect(result.notePath).toBe('concepts/backpropagation.md');
     expect(existsSync(join(VAULT, 'concepts', 'backpropagation.md'))).toBe(
       true,
     );
+  });
+
+  it('writes figure paths into the promoted note frontmatter', () => {
+    const figuresDir = join(TMP, 'figures-fm');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'fig-1.png'), 'png');
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Frontmatter Figures\ntype: source\n---\nBody',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    const promoted = readFileSync(join(VAULT, result.notePath), 'utf-8');
+    expect(promoted).toMatch(/figures:/);
+    expect(promoted).toContain('attachments/frontmatter-figures/fig-1.png');
+    expect(promoted).toContain('Body');
+  });
+
+  it('leaves frontmatter untouched when no figures are copied', () => {
+    const figuresDir = join(TMP, 'figures-no-write');
+    mkdirSync(figuresDir, { recursive: true });
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: No Figures Here\ntype: source\n---\nBody',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    const promoted = readFileSync(join(VAULT, result.notePath), 'utf-8');
+    expect(promoted).not.toContain('figures:');
+    expect(promoted).toContain('Body');
+  });
+
+  it('skips non-regular entries (nested dirs) in figures dir', () => {
+    const figuresDir = join(TMP, 'figures-nonfile');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'real.png'), 'png');
+    mkdirSync(join(figuresDir, 'nested-dir'), { recursive: true });
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Nonfile Test\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    expect(result.figurePaths).toEqual(['attachments/nonfile-test/real.png']);
+  });
+
+  it('copies figures to vault/attachments/{slug}/ when figuresDir provided', () => {
+    const figuresDir = join(TMP, 'figures');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'page-3-figure-1.png'), 'fake-png');
+    writeFileSync(join(figuresDir, 'page-5-figure-2.png'), 'fake-png-2');
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Cognitive Load Theory (Kirschner 2002)\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    expect(result.notePath).toBe(
+      'sources/cognitive-load-theory-kirschner-2002.md',
+    );
+    expect(result.figurePaths).toEqual([
+      'attachments/cognitive-load-theory-kirschner-2002/page-3-figure-1.png',
+      'attachments/cognitive-load-theory-kirschner-2002/page-5-figure-2.png',
+    ]);
+    expect(
+      existsSync(
+        join(
+          VAULT,
+          'attachments',
+          'cognitive-load-theory-kirschner-2002',
+          'page-3-figure-1.png',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        join(
+          VAULT,
+          'attachments',
+          'cognitive-load-theory-kirschner-2002',
+          'page-5-figure-2.png',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns empty figurePaths when figuresDir is empty', () => {
+    const figuresDir = join(TMP, 'empty-figures');
+    mkdirSync(figuresDir, { recursive: true });
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Empty Figures Source\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    expect(result.notePath).toBe('sources/empty-figures-source.md');
+    expect(result.figurePaths).toEqual([]);
+  });
+
+  it('returns empty figurePaths when figuresDir does not exist', () => {
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Missing Figures\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(
+      draftPath,
+      VAULT,
+      'job1',
+      '/nonexistent/figures',
+    );
+
+    expect(result.notePath).toBe('sources/missing-figures.md');
+    expect(result.figurePaths).toEqual([]);
+  });
+
+  it('skips dotfiles when copying figures', () => {
+    const figuresDir = join(TMP, 'figures-dotfile');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'page-1-figure-1.png'), 'png-data');
+    writeFileSync(join(figuresDir, '.DS_Store'), 'junk');
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Dotfile Test\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    expect(result.figurePaths).toEqual([
+      'attachments/dotfile-test/page-1-figure-1.png',
+    ]);
+    const attachDir = join(VAULT, 'attachments', 'dotfile-test');
+    expect(readdirSync(attachDir)).toEqual(['page-1-figure-1.png']);
+  });
+
+  it('uses collision-suffixed slug for attachments dir', () => {
+    writeFileSync(join(VAULT, 'sources', 'shared-title.md'), 'existing');
+    const figuresDir = join(TMP, 'figures-collision');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'fig.png'), 'data');
+
+    const draftPath = join(VAULT, 'drafts', 'abcd-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Shared Title\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'abcd', figuresDir);
+
+    expect(result.notePath).toMatch(/^sources\/shared-title-[a-f0-9]{4}\.md$/);
+    const suffixedSlug = result.notePath
+      .replace(/^sources\//, '')
+      .replace(/\.md$/, '');
+    expect(result.figurePaths).toEqual([`attachments/${suffixedSlug}/fig.png`]);
+    expect(
+      existsSync(join(VAULT, 'attachments', suffixedSlug, 'fig.png')),
+    ).toBe(true);
   });
 });
