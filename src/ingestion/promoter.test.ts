@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'fs';
+import {
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+} from 'fs';
 import { join } from 'path';
 import { promoteNote } from './promoter.js';
 
@@ -82,6 +89,59 @@ describe('promoteNote', () => {
     expect(existsSync(join(VAULT, 'concepts', 'backpropagation.md'))).toBe(
       true,
     );
+  });
+
+  it('writes figure paths into the promoted note frontmatter', () => {
+    const figuresDir = join(TMP, 'figures-fm');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'fig-1.png'), 'png');
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Frontmatter Figures\ntype: source\n---\nBody',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    const promoted = readFileSync(join(VAULT, result.notePath), 'utf-8');
+    expect(promoted).toMatch(/figures:/);
+    expect(promoted).toContain('attachments/frontmatter-figures/fig-1.png');
+    expect(promoted).toContain('Body');
+  });
+
+  it('leaves frontmatter untouched when no figures are copied', () => {
+    const figuresDir = join(TMP, 'figures-no-write');
+    mkdirSync(figuresDir, { recursive: true });
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: No Figures Here\ntype: source\n---\nBody',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    const promoted = readFileSync(join(VAULT, result.notePath), 'utf-8');
+    expect(promoted).not.toContain('figures:');
+    expect(promoted).toContain('Body');
+  });
+
+  it('skips non-regular entries (nested dirs) in figures dir', () => {
+    const figuresDir = join(TMP, 'figures-nonfile');
+    mkdirSync(figuresDir, { recursive: true });
+    writeFileSync(join(figuresDir, 'real.png'), 'png');
+    mkdirSync(join(figuresDir, 'nested-dir'), { recursive: true });
+
+    const draftPath = join(VAULT, 'drafts', 'job1-source.md');
+    writeFileSync(
+      draftPath,
+      '---\ntitle: Nonfile Test\ntype: source\n---\nContent',
+    );
+
+    const result = promoteNote(draftPath, VAULT, 'job1', figuresDir);
+
+    expect(result.figurePaths).toEqual(['attachments/nonfile-test/real.png']);
   });
 
   it('copies figures to vault/attachments/{slug}/ when figuresDir provided', () => {

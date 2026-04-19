@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
-import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
+import { readFileSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
 import { AgentProcessor } from './agent-processor.js';
@@ -10,7 +10,6 @@ import { markInterruptedJobsFailed } from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { buildVaultManifest } from './vault-manifest.js';
 import { promoteNote } from './promoter.js';
-import { updateFrontmatter } from '../vault/frontmatter.js';
 import {
   waitForSentinel,
   sendIpcClose,
@@ -241,20 +240,6 @@ export class IngestionPipeline {
     );
 
     const result = await this.extractor.extract(job.id, job.source_path);
-
-    // Copy figures to vault attachments (per-job directory)
-    if (result.figures.length > 0) {
-      const figuresAttachDir = join(this.vaultDir, 'attachments', job.id);
-      await mkdir(figuresAttachDir, { recursive: true });
-      for (const fig of result.figures) {
-        await copyFile(
-          join(result.figuresDir, fig),
-          join(figuresAttachDir, fig),
-        ).catch(() => {
-          logger.warn({ jobId: job.id, figure: fig }, 'Failed to copy figure');
-        });
-      }
-    }
 
     updateIngestionJob(job.id, {
       status: 'extracted',
@@ -539,28 +524,9 @@ export class IngestionPipeline {
         promotedPaths.push(notePath);
         promotedSourcePath = join(this.vaultDir, notePath);
         logger.info(
-          { jobId: job.id, promoted: notePath },
+          { jobId: job.id, promoted: notePath, figures: figurePaths.length },
           'Promoted source note',
         );
-
-        if (figurePaths.length > 0) {
-          try {
-            const noteContent = readFileSync(promotedSourcePath, 'utf-8');
-            const updated = updateFrontmatter(noteContent, {
-              figures: figurePaths,
-            });
-            writeFileSync(promotedSourcePath, updated);
-            logger.info(
-              { jobId: job.id, figures: figurePaths.length },
-              'Updated source note frontmatter with figure paths',
-            );
-          } catch (fmErr) {
-            logger.warn(
-              { jobId: job.id, err: fmErr },
-              'Failed to write figures to frontmatter — continuing',
-            );
-          }
-        }
       } catch (err) {
         logger.warn(
           { jobId: job.id, file: manifest.source_note, err },

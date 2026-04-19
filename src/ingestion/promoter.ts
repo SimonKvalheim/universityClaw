@@ -1,13 +1,15 @@
 import {
   readFileSync,
+  writeFileSync,
   renameSync,
   existsSync,
   mkdirSync,
   copyFileSync,
   readdirSync,
+  lstatSync,
 } from 'fs';
 import { join } from 'path';
-import { parseFrontmatter } from '../vault/frontmatter.js';
+import { parseFrontmatter, updateFrontmatter } from '../vault/frontmatter.js';
 import { toKebabCase } from './utils.js';
 import { logger } from '../logger.js';
 
@@ -48,13 +50,20 @@ export function promoteNote(
     } while (existsSync(destPath));
   }
 
-  renameSync(draftPath, destPath);
-
   const notePath = `${destFolder}/${filename}`;
-  const noteSlug = filename.replace(/\.md$/, '');
+  const noteSlug = filename.slice(0, -3);
   const figurePaths = figuresDir
     ? copyFigures(vaultDir, noteSlug, figuresDir)
     : [];
+
+  // Bake figures into the draft's frontmatter before renaming so the
+  // note never lands in the vault without its figure metadata.
+  if (figurePaths.length > 0) {
+    const updated = updateFrontmatter(content, { figures: figurePaths });
+    writeFileSync(draftPath, updated);
+  }
+
+  renameSync(draftPath, destPath);
 
   return { notePath, figurePaths };
 }
@@ -68,7 +77,7 @@ function copyFigures(
   try {
     entries = readdirSync(figuresDir).filter((f) => !f.startsWith('.'));
   } catch {
-    logger.warn({ figuresDir }, 'Figures directory not found — skipping');
+    logger.warn({ figuresDir, slug }, 'Figures directory not found — skipping');
     return [];
   }
 
@@ -79,11 +88,20 @@ function copyFigures(
 
   const paths: string[] = [];
   for (const entry of entries.sort()) {
+    const sourcePath = join(figuresDir, entry);
     try {
-      copyFileSync(join(figuresDir, entry), join(attachDir, entry));
+      const stat = lstatSync(sourcePath);
+      if (!stat.isFile()) {
+        logger.warn(
+          { figuresDir, slug, entry },
+          'Skipping non-regular file in figures dir',
+        );
+        continue;
+      }
+      copyFileSync(sourcePath, join(attachDir, entry));
       paths.push(`attachments/${slug}/${entry}`);
     } catch (err) {
-      logger.warn({ figuresDir, entry, err }, 'Failed to copy figure');
+      logger.warn({ figuresDir, slug, entry, err }, 'Failed to copy figure');
     }
   }
 
