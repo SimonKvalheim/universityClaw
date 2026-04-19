@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFileSync, unlinkSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { copyFile, mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
@@ -10,6 +10,7 @@ import { markInterruptedJobsFailed } from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { buildVaultManifest } from './vault-manifest.js';
 import { promoteNote } from './promoter.js';
+import { updateFrontmatter } from '../vault/frontmatter.js';
 import {
   waitForSentinel,
   sendIpcClose,
@@ -521,15 +522,42 @@ export class IngestionPipeline {
 
     let promotedSourcePath: string | undefined;
 
-    // Promote source note
+    // Promote source note (with figures from the extraction artifacts)
     const promotedPaths: string[] = [];
     if (manifest.source_note) {
       const sourceDraftPath = join(draftsDir, manifest.source_note);
+      const figuresDir = job.extraction_path
+        ? join(job.extraction_path, 'figures')
+        : undefined;
       try {
-        const promoted = promoteNote(sourceDraftPath, this.vaultDir, job.id);
-        promotedPaths.push(promoted);
-        promotedSourcePath = join(this.vaultDir, promoted);
-        logger.info({ jobId: job.id, promoted }, 'Promoted source note');
+        const { notePath, figurePaths } = promoteNote(
+          sourceDraftPath,
+          this.vaultDir,
+          job.id,
+          figuresDir,
+        );
+        promotedPaths.push(notePath);
+        promotedSourcePath = join(this.vaultDir, notePath);
+        logger.info({ jobId: job.id, promoted: notePath }, 'Promoted source note');
+
+        if (figurePaths.length > 0) {
+          try {
+            const noteContent = readFileSync(promotedSourcePath, 'utf-8');
+            const updated = updateFrontmatter(noteContent, {
+              figures: figurePaths,
+            });
+            writeFileSync(promotedSourcePath, updated);
+            logger.info(
+              { jobId: job.id, figures: figurePaths.length },
+              'Updated source note frontmatter with figure paths',
+            );
+          } catch (fmErr) {
+            logger.warn(
+              { jobId: job.id, err: fmErr },
+              'Failed to write figures to frontmatter — continuing',
+            );
+          }
+        }
       } catch (err) {
         logger.warn(
           { jobId: job.id, file: manifest.source_note, err },
@@ -538,13 +566,17 @@ export class IngestionPipeline {
       }
     }
 
-    // Promote concept notes
+    // Promote concept notes (no figures — only source notes get them)
     for (const conceptFile of manifest.concept_notes) {
       const conceptDraftPath = join(draftsDir, conceptFile);
       try {
-        const promoted = promoteNote(conceptDraftPath, this.vaultDir, job.id);
-        promotedPaths.push(promoted);
-        logger.info({ jobId: job.id, promoted }, 'Promoted concept note');
+        const { notePath } = promoteNote(
+          conceptDraftPath,
+          this.vaultDir,
+          job.id,
+        );
+        promotedPaths.push(notePath);
+        logger.info({ jobId: job.id, promoted: notePath }, 'Promoted concept note');
       } catch (err) {
         logger.warn(
           { jobId: job.id, file: conceptFile, err },

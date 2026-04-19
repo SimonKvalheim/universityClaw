@@ -1,13 +1,27 @@
-import { readFileSync, renameSync, existsSync, mkdirSync } from 'fs';
+import {
+  readFileSync,
+  renameSync,
+  existsSync,
+  mkdirSync,
+  copyFileSync,
+  readdirSync,
+} from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../vault/frontmatter.js';
 import { toKebabCase } from './utils.js';
+import { logger } from '../logger.js';
+
+export interface PromoteResult {
+  notePath: string;
+  figurePaths: string[];
+}
 
 export function promoteNote(
   draftPath: string,
   vaultDir: string,
   jobId: string,
-): string {
+  figuresDir?: string,
+): PromoteResult {
   const content = readFileSync(draftPath, 'utf-8');
   const { data: fm } = parseFrontmatter(content);
 
@@ -35,5 +49,41 @@ export function promoteNote(
   }
 
   renameSync(draftPath, destPath);
-  return `${destFolder}/${filename}`;
+
+  const notePath = `${destFolder}/${filename}`;
+  const noteSlug = filename.replace(/\.md$/, '');
+  const figurePaths = figuresDir ? copyFigures(vaultDir, noteSlug, figuresDir) : [];
+
+  return { notePath, figurePaths };
+}
+
+function copyFigures(
+  vaultDir: string,
+  slug: string,
+  figuresDir: string,
+): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(figuresDir).filter((f) => !f.startsWith('.'));
+  } catch {
+    logger.warn({ figuresDir }, 'Figures directory not found — skipping');
+    return [];
+  }
+
+  if (entries.length === 0) return [];
+
+  const attachDir = join(vaultDir, 'attachments', slug);
+  mkdirSync(attachDir, { recursive: true });
+
+  const paths: string[] = [];
+  for (const entry of entries.sort()) {
+    try {
+      copyFileSync(join(figuresDir, entry), join(attachDir, entry));
+      paths.push(`attachments/${slug}/${entry}`);
+    } catch (err) {
+      logger.warn({ figuresDir, entry, err }, 'Failed to copy figure');
+    }
+  }
+
+  return paths;
 }
