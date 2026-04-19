@@ -164,7 +164,7 @@ describe('GeminiLiveTransport', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('connects with v1alpha + Zephyr + tools + transcription config, then parks context as clientContent', async () => {
+  it('connects with v1alpha + Zephyr + tools + transcription config, folding context into systemInstruction', async () => {
     const stub = makeStubSession();
     const { transport, connect, factory } = makeTransport(stub);
     const { events } = makeEvents();
@@ -182,21 +182,24 @@ describe('GeminiLiveTransport', () => {
     expect(connect).toHaveBeenCalledTimes(1);
     const params = connect.mock.calls[0][0] as GenaiConnectParams;
     expect(params.model).toBe('gemini-3.1-flash-live-preview');
-    expect(params.config.systemInstruction).toBe(DEV_PERSONA.systemInstruction);
+    expect(params.config.systemInstruction).toContain(
+      DEV_PERSONA.systemInstruction,
+    );
+    expect(params.config.systemInstruction).toContain('hello');
     expect(params.config.responseModalities).toEqual(['AUDIO']);
     expect(params.config.inputAudioTranscription).toEqual({});
     expect(params.config.outputAudioTranscription).toEqual({});
     expect(
-      params.config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName,
+      params.config.speechConfig?.voiceConfig.prebuiltVoiceConfig.voiceName,
     ).toBe('Zephyr');
     expect(params.config.tools[0].functionDeclarations).toBe(DEV_PERSONA.tools);
 
+    // Native-audio dialog models reject a text sendClientContent prime,
+    // so the transport must not issue one at start.
     const clientContent = stub.sent.find(
       (s): s is SentClientContent => s.kind === 'clientContent',
     );
-    expect(clientContent).toBeDefined();
-    expect(clientContent!.turnComplete).toBe(false);
-    expect(clientContent!.text).toContain('hello');
+    expect(clientContent).toBeUndefined();
   });
 
   it('translates inlineData audio frames into Int16Array audio events', async () => {

@@ -4,6 +4,24 @@ Manual exercise of the `/voice` Dev Assistant. Tick each item once per dogfood
 pass. If any row fails, open a GitHub issue rather than patching scope-creep
 items into the current PR.
 
+> ⚠️ **v1.1 status — real-key dogfood blocked on Google-side 1011.** The
+> `GeminiLiveTransport` + ephemeral-token flow is wired up correctly per the
+> `@google/genai` SDK reference and the Gemini 3.1 Live API docs. On a
+> free-tier key, `gemini-3.1-flash-live-preview` consistently closes the
+> socket with `1011 "Internal error encountered."` immediately after the
+> setup frame, regardless of config (verified with the full persona config,
+> bare `{responseModalities, systemInstruction}`, and a trivial
+> `"You are a helpful assistant."` prompt). Google's AI forum has matching
+> reports — consensus is free-tier / preview-model gating that has
+> self-resolved for some users, or requires a paid-tier upgrade. Native-audio
+> models (`gemini-*-native-audio-*`) are not an alternative: they reject the
+> same config with `1007 "Cannot extract voices from a non-audio request"`
+> because they're audio-in-only. **Until Google-side access stabilises or the
+> project moves to a paid key, rows below cannot be exercised end-to-end.**
+> Unit + integration coverage (13 `GeminiLiveTransport` tests + 4 `VoiceSession`
+> tests + the fake-server e2e) are the current source of truth for wire
+> correctness.
+
 ## Environment
 
 - [ ] `GEMINI_API_KEY` is set in `.env` (or falls back to legacy `google_api_key`).

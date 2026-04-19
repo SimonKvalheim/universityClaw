@@ -17,6 +17,10 @@ import type {
 import type { TokenUsage } from '../rates';
 
 // Preview model — rotate here when Google graduates the Live API.
+// Must be a non-native "live" model (half-cascade architecture that
+// accepts speechConfig + inputAudioTranscription). Native-audio models
+// (gemini-*-native-audio-*) reject our config with 1007 "Cannot extract
+// voices from a non-audio request".
 const MODEL = 'gemini-3.1-flash-live-preview';
 
 export interface GenaiConnectParams {
@@ -33,7 +37,7 @@ export interface GenaiConnectParams {
     inputAudioTranscription: Record<string, never>;
     outputAudioTranscription: Record<string, never>;
     tools: [{ functionDeclarations: PersonaConfig['tools'] }];
-    speechConfig: {
+    speechConfig?: {
       voiceConfig: { prebuiltVoiceConfig: { voiceName: string } };
     };
   };
@@ -143,11 +147,28 @@ export class GeminiLiveTransport implements Transport {
       apiKey: token,
       httpOptions: { apiVersion: 'v1alpha' },
     });
+    // Fold startup context into systemInstruction. The gemini-3.1 live
+    // preview still accepts sendClientContent for initial history seeding,
+    // but systemInstruction keeps the flow synchronous and avoids an extra
+    // round trip.
+    const systemInstruction =
+      this.persona.systemInstruction +
+      '\n\nProject context (read on session start):\n\n' +
+      JSON.stringify(args.contextPayload, null, 2);
+
     const session = await ai.live.connect({
       model: MODEL,
       callbacks: {
         onmessage: (msg) => this.onMessage(msg),
-        onerror: () => {
+        onerror: (e) => {
+          const ev = e as { message?: string; type?: string } | undefined;
+          console.error(
+            '[voice] Gemini Live onerror',
+            JSON.stringify({
+              type: ev?.type,
+              message: ev?.message,
+            }),
+          );
           // The SDK normally follows onerror with onclose, but if the
           // transport aborts mid-handshake we may never see onclose.
           // Drive shutdown here too — close() is idempotent via this.closed.
@@ -155,7 +176,18 @@ export class GeminiLiveTransport implements Transport {
           this.closed = true;
           this.events?.onClose('drop');
         },
-        onclose: () => {
+        onclose: (e) => {
+          const ev = e as
+            | { code?: number; reason?: string; wasClean?: boolean }
+            | undefined;
+          console.warn(
+            '[voice] Gemini Live onclose',
+            JSON.stringify({
+              code: ev?.code,
+              reason: ev?.reason,
+              wasClean: ev?.wasClean,
+            }),
+          );
           if (this.closed) return;
           this.closed = true;
           this.events?.onClose('drop');
@@ -163,7 +195,7 @@ export class GeminiLiveTransport implements Transport {
       },
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: this.persona.systemInstruction,
+        systemInstruction,
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         tools: [{ functionDeclarations: this.persona.tools }],
@@ -175,24 +207,6 @@ export class GeminiLiveTransport implements Transport {
       },
     });
     this.session = session;
-
-    // Park the context in the prompt without forcing generation before
-    // the user speaks (turnComplete:false).
-    session.sendClientContent({
-      turns: [
-        {
-          role: 'user',
-          parts: [
-            {
-              text:
-                'Project context (read on session start):\n\n' +
-                JSON.stringify(args.contextPayload, null, 2),
-            },
-          ],
-        },
-      ],
-      turnComplete: false,
-    });
 
     return { voiceSessionId };
   }
