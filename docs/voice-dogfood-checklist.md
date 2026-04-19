@@ -4,21 +4,6 @@ Manual exercise of the `/voice` Dev Assistant. Tick each item once per dogfood
 pass. If any row fails, open a GitHub issue rather than patching scope-creep
 items into the current PR.
 
-> ⚠️ **v1 status — fake server only.** The browser WebSocket client speaks
-> an opaque-JSON frame format (`{type: 'audio'|'usage'|'tool_call'|…}`) that
-> matches the in-repo fake Gemini server, not the real Gemini Live
-> `BidiGenerateContent` wire protocol. The `VoiceSession.start()` path that
-> builds `wss://generativelanguage.googleapis.com/?access_token=…` is a
-> placeholder. **A real GEMINI_API_KEY will not make a working session
-> until the v1.1 real-Gemini adapter lands** (uses `@google/genai`'s
-> `ai.live.connect()` and mirrors the real `serverContent` / `toolCall` /
-> `usageMetadata` frame shapes).
->
-> Everything except the live-audio path is usable today: token minting, the
-> tool dispatcher + scope guards, session-close persistence, cost rollups,
-> fake-server e2e. Dogfooding the UI, tools, and cost plumbing is valuable
-> groundwork before the adapter lands.
-
 ## Environment
 
 - [ ] `GEMINI_API_KEY` is set in `.env` (or falls back to legacy `google_api_key`).
