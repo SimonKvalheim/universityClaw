@@ -142,8 +142,8 @@ npm run dev
 ### Stop Everything
 
 ```bash
-# Find and kill Node/Python processes
-pkill -f "lightrag.api.lightrag_server"
+# Stop services (script uses the PID file written by --daemon)
+./scripts/lightrag-server.sh --stop
 pkill -f "tsx src/index.ts"
 pkill -f "next dev.*dashboard"
 

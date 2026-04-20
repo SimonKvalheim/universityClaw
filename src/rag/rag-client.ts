@@ -102,6 +102,12 @@ export class RagClient {
     if (status === 'duplicated') {
       return;
     }
+    if (status === 'partial_success') {
+      logger.warn(
+        { track_id, message },
+        'LightRAG reported partial_success on insert; polling for final status',
+      );
+    }
 
     const deadline = Date.now() + pollTimeoutMs;
     while (Date.now() < deadline) {
