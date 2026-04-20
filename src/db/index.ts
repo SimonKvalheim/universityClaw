@@ -935,7 +935,8 @@ export function setZoteroSyncVersion(
   version?: number,
 ): void {
   // Back-compat: setZoteroSyncVersion(123) still works for the user library.
-  const key = typeof versionOrKey === 'string' ? versionOrKey : 'library_version';
+  const key =
+    typeof versionOrKey === 'string' ? versionOrKey : 'library_version';
   const value = typeof versionOrKey === 'string' ? version! : versionOrKey;
   db.insert(schema.zotero_sync)
     .values({ key, value: String(value) })

@@ -99,10 +99,7 @@ describe('ZoteroLocalClient (group library)', () => {
   let client: ZoteroLocalClient;
 
   beforeEach(() => {
-    client = new ZoteroLocalClient(
-      'http://localhost:23119',
-      'groups/6515112',
-    );
+    client = new ZoteroLocalClient('http://localhost:23119', 'groups/6515112');
     vi.restoreAllMocks();
   });
 

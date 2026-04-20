@@ -716,7 +716,11 @@ export class IngestionPipeline {
         );
       }
 
-      const libraries: { libraryPath: string; syncKey: string; label: string }[] = [
+      const libraries: {
+        libraryPath: string;
+        syncKey: string;
+        label: string;
+      }[] = [
         { libraryPath: 'users/0', syncKey: 'library_version', label: 'user' },
         ...ZOTERO_GROUP_IDS.map((id) => ({
           libraryPath: `groups/${id}`,
