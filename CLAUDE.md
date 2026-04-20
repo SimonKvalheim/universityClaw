@@ -118,7 +118,7 @@ universityClaw runs as a stack of 4 services. All must be running for full funct
 | Service | What it does | How to start | How to stop | Port |
 |---------|-------------|--------------|-------------|------|
 | **NanoClaw** | Main orchestrator (Node.js) | `npm run dev` | Ctrl+C or `kill <pid>` | — |
-| **LightRAG** | RAG server (Python, venv) | `.venv/bin/python3 -m lightrag.api.lightrag_server --port 9621 --working-dir ./data/lightrag` | `pkill -f lightrag` | 9621 |
+| **LightRAG** | RAG server (Python, venv) | `./scripts/lightrag-server.sh --daemon` | `./scripts/lightrag-server.sh --stop` | 9621 |
 | **OneCLI** | Credential proxy (Docker) | `docker restart onecli-app-1 onecli-postgres-1` | `docker stop onecli-app-1 onecli-postgres-1` | 10254 |
 | **Dashboard** | Web UI (Next.js) | `cd dashboard && npm run dev` | Ctrl+C or `kill <pid>` | 3100 |
 
@@ -128,8 +128,8 @@ universityClaw runs as a stack of 4 services. All must be running for full funct
 # 1. OneCLI (credential proxy — restart existing containers)
 docker restart onecli-app-1 onecli-postgres-1
 
-# 2. LightRAG (RAG server — uses .venv, reads config from .env)
-.venv/bin/python3 -m lightrag.api.lightrag_server --port 9621 --working-dir ./data/lightrag &
+# 2. LightRAG (RAG server — script sets working-dir to ./store/rag and reads config from .env)
+./scripts/lightrag-server.sh --daemon
 
 # 3. Dashboard (web UI — background)
 cd dashboard && npm run dev &

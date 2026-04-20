@@ -85,19 +85,129 @@ describe('RagClient HTTP', () => {
     expect(result.answer).toBe('');
   });
 
-  it('index posts to /documents/text', async () => {
-    fetchSpy.mockResolvedValue(new Response('OK', { status: 200 }));
+  const jsonResponse = (data: unknown, status = 200): Response =>
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
 
-    await client.index('Hello world');
+  it('index posts to /documents/text and polls until processed', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({ status: 'success', track_id: 't1', message: 'ok' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ status_summary: { 'DocStatus.PENDING': 1 } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ status_summary: { 'DocStatus.PROCESSED': 1 } }),
+      );
 
-    const [url, opts] = fetchSpy.mock.calls[0];
-    expect(url).toBe('http://localhost:9621/documents/text');
-    expect(opts?.method).toBe('POST');
-    const body = JSON.parse(opts?.body as string);
+    await client.index('Hello world', { pollIntervalMs: 1 });
+
+    const [postUrl, postOpts] = fetchSpy.mock.calls[0];
+    expect(postUrl).toBe('http://localhost:9621/documents/text');
+    expect(postOpts?.method).toBe('POST');
+    const body = JSON.parse(postOpts?.body as string);
     expect(body.text).toBe('Hello world');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      'http://localhost:9621/documents/track_status/t1',
+    );
   });
 
-  it('index throws on non-ok response', async () => {
+  it('index sends file_source when provided', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({ status: 'success', track_id: 't2', message: 'ok' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ status_summary: { 'DocStatus.PROCESSED': 1 } }),
+      );
+
+    await client.index('text', {
+      fileSource: 'concepts/foo.md',
+      pollIntervalMs: 1,
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body.file_source).toBe('concepts/foo.md');
+  });
+
+  it('index returns immediately on duplicated (no polling)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({
+        status: 'duplicated',
+        track_id: 't3',
+        message: 'already exists',
+      }),
+    );
+
+    await client.index('duplicate', { pollIntervalMs: 1 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('index throws on failure status from POST', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({
+        status: 'failure',
+        track_id: 't4',
+        message: 'empty text',
+      }),
+    );
+
+    await expect(client.index('bad', { pollIntervalMs: 1 })).rejects.toThrow(
+      'LightRAG index rejected: empty text',
+    );
+  });
+
+  it('index throws when track_status reports FAILED', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({ status: 'success', track_id: 't5', message: 'ok' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ status_summary: { 'DocStatus.FAILED': 1 } }),
+      );
+
+    await expect(
+      client.index('will-fail', { pollIntervalMs: 1 }),
+    ).rejects.toThrow('LightRAG indexing failed for track t5');
+  });
+
+  it('index keeps polling when track_status summary is initially empty', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({ status: 'success', track_id: 't7', message: 'ok' }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ status_summary: {} }))
+      .mockResolvedValueOnce(
+        jsonResponse({ status_summary: { 'DocStatus.PROCESSING': 1 } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ status_summary: { 'DocStatus.PROCESSED': 1 } }),
+      );
+
+    await client.index('eventual', { pollIntervalMs: 1 });
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it('index throws on polling timeout', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({ status: 'success', track_id: 't6', message: 'ok' }),
+      )
+      .mockImplementation(async () =>
+        jsonResponse({ status_summary: { 'DocStatus.PROCESSING': 1 } }),
+      );
+
+    await expect(
+      client.index('stuck', { pollIntervalMs: 5, pollTimeoutMs: 20 }),
+    ).rejects.toThrow(/timed out after 20ms for track t6/);
+  });
+
+  it('index throws on non-ok HTTP response from POST', async () => {
     fetchSpy.mockResolvedValue(new Response('Bad', { status: 400 }));
 
     await expect(client.index('test')).rejects.toThrow('LightRAG index failed');

@@ -117,7 +117,7 @@ export class RagIndexer {
 
     // Index new content
     try {
-      await this.ragClient.index(indexed);
+      await this.ragClient.index(indexed, { fileSource: relPath });
     } catch (err) {
       logger.warn({ err, relPath }, 'Failed to index file');
       return; // Don't update tracker — will retry on next event/restart
