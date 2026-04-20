@@ -3,7 +3,15 @@ import { logger } from '../logger.js';
 const REQUEST_TIMEOUT = 10_000;
 
 export class ZoteroLocalClient {
-  constructor(private readonly baseUrl: string) {}
+  /**
+   * @param baseUrl e.g. http://localhost:23119
+   * @param libraryPath path segment identifying the library — `users/0` for the
+   *   personal library (default, back-compat) or `groups/{groupId}` for a group.
+   */
+  constructor(
+    private readonly baseUrl: string,
+    private readonly libraryPath: string = 'users/0',
+  ) {}
 
   async getItems(
     since?: number,
@@ -15,9 +23,10 @@ export class ZoteroLocalClient {
     parts.push('itemType=-attachment+-note', 'format=json');
     const query = parts.join('&');
 
-    const res = await fetch(`${this.baseUrl}/api/users/0/items?${query}`, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
-    });
+    const res = await fetch(
+      `${this.baseUrl}/api/${this.libraryPath}/items?${query}`,
+      { signal: AbortSignal.timeout(REQUEST_TIMEOUT) },
+    );
     if (!res.ok) throw new Error(`Zotero local API error: ${res.status}`);
 
     const items = (await res.json()) as unknown[];
@@ -30,7 +39,7 @@ export class ZoteroLocalClient {
 
   async getChildren(itemKey: string): Promise<unknown[]> {
     const res = await fetch(
-      `${this.baseUrl}/api/users/0/items/${itemKey}/children?format=json`,
+      `${this.baseUrl}/api/${this.libraryPath}/items/${itemKey}/children?format=json`,
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT) },
     );
     if (!res.ok) throw new Error(`Zotero children fetch error: ${res.status}`);
@@ -39,7 +48,7 @@ export class ZoteroLocalClient {
 
   async getCollections(): Promise<unknown[]> {
     const res = await fetch(
-      `${this.baseUrl}/api/users/0/collections?format=json`,
+      `${this.baseUrl}/api/${this.libraryPath}/collections?format=json`,
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT) },
     );
     if (!res.ok)
@@ -49,7 +58,7 @@ export class ZoteroLocalClient {
 
   async getFileUrl(attachmentKey: string): Promise<string | null> {
     const res = await fetch(
-      `${this.baseUrl}/api/users/0/items/${attachmentKey}/file/view/url`,
+      `${this.baseUrl}/api/${this.libraryPath}/items/${attachmentKey}/file/view/url`,
       { signal: AbortSignal.timeout(REQUEST_TIMEOUT) },
     );
     if (res.status === 404) return null;

@@ -95,6 +95,50 @@ describe('ZoteroLocalClient', () => {
   });
 });
 
+describe('ZoteroLocalClient (group library)', () => {
+  let client: ZoteroLocalClient;
+
+  beforeEach(() => {
+    client = new ZoteroLocalClient('http://localhost:23119', 'groups/6515112');
+    vi.restoreAllMocks();
+  });
+
+  it('getItems targets /api/groups/{id}/items', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify([]), {
+        headers: { 'Last-Modified-Version': '42' },
+      }),
+    );
+    await client.getItems(10);
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:23119/api/groups/6515112/items?since=10&itemType=-attachment+-note&format=json',
+      expect.any(Object),
+    );
+  });
+
+  it('getChildren, getCollections, getFileUrl all use group path', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response('', { status: 404 }));
+
+    await client.getChildren('X');
+    await client.getCollections();
+    await client.getFileUrl('Y');
+
+    expect(spy.mock.calls[0][0]).toBe(
+      'http://localhost:23119/api/groups/6515112/items/X/children?format=json',
+    );
+    expect(spy.mock.calls[1][0]).toBe(
+      'http://localhost:23119/api/groups/6515112/collections?format=json',
+    );
+    expect(spy.mock.calls[2][0]).toBe(
+      'http://localhost:23119/api/groups/6515112/items/Y/file/view/url',
+    );
+  });
+});
+
 describe('ZoteroWebClient', () => {
   let client: ZoteroWebClient;
 
