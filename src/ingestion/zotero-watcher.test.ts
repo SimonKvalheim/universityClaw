@@ -77,7 +77,7 @@ describe('ZoteroWatcher', () => {
 
     await watcher.poll();
 
-    expect(setZoteroSyncVersion).toHaveBeenCalledWith(200);
+    expect(setZoteroSyncVersion).toHaveBeenCalledWith('library_version', 200);
     expect(enqueuedItems).toHaveLength(0);
   });
 
@@ -129,7 +129,7 @@ describe('ZoteroWatcher', () => {
       '/Users/test/Zotero/storage/ATT1/paper.pdf',
     );
     expect(enqueuedItems[0].zoteroKey).toBe('NEW1');
-    expect(setZoteroSyncVersion).toHaveBeenCalledWith(150);
+    expect(setZoteroSyncVersion).toHaveBeenCalledWith('library_version', 150);
   });
 
   it('skips items already ingested (dedup by zotero_key)', async () => {
@@ -243,6 +243,29 @@ describe('ZoteroWatcher', () => {
     expect(enqueuedItems).toHaveLength(0);
     // Verify getChildren was NOT called — item was filtered before PDF resolution
     expect(mockClient.getChildren).not.toHaveBeenCalled();
+  });
+
+  it('uses custom syncKey when reading and writing the sync version', async () => {
+    vi.mocked(getZoteroSyncVersion).mockReturnValue(null);
+    mockClient.getItems.mockResolvedValue({ items: [], version: 321 });
+
+    const groupWatcher = new ZoteroWatcher({
+      client: mockClient as unknown as ZoteroLocalClient,
+      excludeCollection: '',
+      onItem: () => {},
+      syncKey: 'group:6515112:library_version',
+      label: 'group:6515112',
+    });
+
+    await groupWatcher.poll();
+
+    expect(getZoteroSyncVersion).toHaveBeenCalledWith(
+      'group:6515112:library_version',
+    );
+    expect(setZoteroSyncVersion).toHaveBeenCalledWith(
+      'group:6515112:library_version',
+      321,
+    );
   });
 
   it('picks largest PDF when multiple attachments exist', async () => {

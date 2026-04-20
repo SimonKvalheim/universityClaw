@@ -43,6 +43,7 @@ import {
   ZOTERO_POLL_INTERVAL,
   ZOTERO_EXCLUDE_COLLECTION,
   ZOTERO_LOCAL_URL,
+  ZOTERO_GROUP_IDS,
 } from '../config.js';
 import { ZoteroWatcher } from './zotero-watcher.js';
 import { ZoteroWriteBack } from './zotero-writeback.js';
@@ -81,7 +82,7 @@ export class IngestionPipeline {
   private reviewAgentGroup: RegisteredGroup;
   private drainer: PipelineDrainer;
   private notify: ((message: string) => void) | undefined;
-  private zoteroWatcher: ZoteroWatcher | null = null;
+  private zoteroWatchers: ZoteroWatcher[] = [];
   private zoteroWriteBack: ZoteroWriteBack | null = null;
 
   constructor(opts: IngestionPipelineOpts) {
@@ -704,10 +705,8 @@ export class IngestionPipeline {
     await this.watcher.start();
     this.drainer.drain();
 
-    // Start Zotero watcher if enabled
+    // Start Zotero watchers if enabled — one per library (user + each configured group)
     if (ZOTERO_ENABLED) {
-      const localClient = new ZoteroLocalClient(ZOTERO_LOCAL_URL);
-
       if (ZOTERO_API_KEY && ZOTERO_USER_ID) {
         const webClient = new ZoteroWebClient(ZOTERO_API_KEY, ZOTERO_USER_ID);
         this.zoteroWriteBack = new ZoteroWriteBack(webClient);
@@ -717,25 +716,44 @@ export class IngestionPipeline {
         );
       }
 
-      this.zoteroWatcher = new ZoteroWatcher({
-        client: localClient,
-        excludeCollection: ZOTERO_EXCLUDE_COLLECTION,
-        onItem: (filePath, zoteroKey, metadata) => {
-          this.enqueueZotero(filePath, zoteroKey, metadata);
-        },
-        pollIntervalMs: ZOTERO_POLL_INTERVAL,
-      });
-      await this.zoteroWatcher.start();
-      logger.info('Zotero integration enabled');
+      const libraries: { libraryPath: string; syncKey: string; label: string }[] = [
+        { libraryPath: 'users/0', syncKey: 'library_version', label: 'user' },
+        ...ZOTERO_GROUP_IDS.map((id) => ({
+          libraryPath: `groups/${id}`,
+          syncKey: `group:${id}:library_version`,
+          label: `group:${id}`,
+        })),
+      ];
+
+      for (const lib of libraries) {
+        const client = new ZoteroLocalClient(ZOTERO_LOCAL_URL, lib.libraryPath);
+        const watcher = new ZoteroWatcher({
+          client,
+          excludeCollection: ZOTERO_EXCLUDE_COLLECTION,
+          onItem: (filePath, zoteroKey, metadata) => {
+            this.enqueueZotero(filePath, zoteroKey, metadata);
+          },
+          pollIntervalMs: ZOTERO_POLL_INTERVAL,
+          syncKey: lib.syncKey,
+          label: lib.label,
+        });
+        await watcher.start();
+        this.zoteroWatchers.push(watcher);
+      }
+      logger.info(
+        { libraries: libraries.map((l) => l.label) },
+        'Zotero integration enabled',
+      );
     }
 
     logger.info(`Watching ${this.uploadDir} for new files`);
   }
 
   async stop(): Promise<void> {
-    if (this.zoteroWatcher) {
-      this.zoteroWatcher.stop();
+    for (const w of this.zoteroWatchers) {
+      w.stop();
     }
+    this.zoteroWatchers = [];
     await this.drainer.stop();
     await this.watcher.stop();
   }

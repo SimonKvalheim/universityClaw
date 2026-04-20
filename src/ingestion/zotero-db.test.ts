@@ -61,4 +61,20 @@ describe('Zotero DB functions', () => {
     setZoteroSyncVersion(1900);
     expect(getZoteroSyncVersion()).toBe(1900);
   });
+
+  it('get/setZoteroSyncVersion supports per-library keys without clashing', () => {
+    setZoteroSyncVersion(100);
+    setZoteroSyncVersion('group:6515112:library_version', 500);
+    setZoteroSyncVersion('group:9999:library_version', 77);
+
+    expect(getZoteroSyncVersion()).toBe(100);
+    expect(getZoteroSyncVersion('group:6515112:library_version')).toBe(500);
+    expect(getZoteroSyncVersion('group:9999:library_version')).toBe(77);
+
+    // Updating one library key doesn't disturb others.
+    setZoteroSyncVersion('group:6515112:library_version', 600);
+    expect(getZoteroSyncVersion('group:6515112:library_version')).toBe(600);
+    expect(getZoteroSyncVersion()).toBe(100);
+    expect(getZoteroSyncVersion('group:9999:library_version')).toBe(77);
+  });
 });

@@ -17,6 +17,7 @@ const envConfig = readEnvFile([
   'ZOTERO_POLL_INTERVAL',
   'ZOTERO_EXCLUDE_COLLECTION',
   'ZOTERO_LOCAL_URL',
+  'ZOTERO_GROUP_IDS',
 ]);
 
 export const ASSISTANT_NAME =
@@ -164,3 +165,11 @@ export const ZOTERO_LOCAL_URL =
   process.env.ZOTERO_LOCAL_URL ||
   envConfig.ZOTERO_LOCAL_URL ||
   'http://localhost:23119';
+export const ZOTERO_GROUP_IDS = (
+  process.env.ZOTERO_GROUP_IDS ||
+  envConfig.ZOTERO_GROUP_IDS ||
+  ''
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);

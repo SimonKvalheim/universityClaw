@@ -16,6 +16,11 @@ export interface ZoteroWatcherOpts {
     metadata: ZoteroMetadata,
   ) => void;
   pollIntervalMs?: number;
+  /** Sync-version key in the `zotero_sync` table. Default `library_version`
+   *  (personal library). Use `group:{id}:library_version` for group libraries. */
+  syncKey?: string;
+  /** Label used in log messages to identify the library (e.g. "user", "group:6515112"). */
+  label?: string;
 }
 
 export class ZoteroWatcher {
@@ -25,12 +30,16 @@ export class ZoteroWatcher {
   private onItem: ZoteroWatcherOpts['onItem'];
   private timer: ReturnType<typeof setInterval> | null = null;
   private pollIntervalMs: number;
+  private syncKey: string;
+  private label: string;
 
   constructor(opts: ZoteroWatcherOpts) {
     this.client = opts.client;
     this.excludeCollection = opts.excludeCollection;
     this.onItem = opts.onItem;
     this.pollIntervalMs = opts.pollIntervalMs ?? 60_000;
+    this.syncKey = opts.syncKey ?? 'library_version';
+    this.label = opts.label ?? 'user';
   }
 
   async start(): Promise<void> {
@@ -41,11 +50,11 @@ export class ZoteroWatcher {
     await this.poll();
     this.timer = setInterval(() => {
       this.poll().catch((err) => {
-        logger.warn({ err }, 'Zotero poll error');
+        logger.warn({ err, library: this.label }, 'Zotero poll error');
       });
     }, this.pollIntervalMs);
 
-    logger.info('Zotero watcher started');
+    logger.info({ library: this.label }, 'Zotero watcher started');
   }
 
   stop(): void {
@@ -82,27 +91,34 @@ export class ZoteroWatcher {
   }
 
   async poll(): Promise<void> {
-    const storedVersion = getZoteroSyncVersion();
+    const storedVersion = getZoteroSyncVersion(this.syncKey);
 
     let result: { items: unknown[]; version: number };
     try {
       result = await this.client.getItems(storedVersion ?? undefined);
     } catch (err) {
-      logger.warn({ err }, 'Zotero not reachable — will retry next cycle');
+      logger.warn(
+        { err, library: this.label },
+        'Zotero not reachable — will retry next cycle',
+      );
       return;
     }
 
     if (storedVersion === null) {
-      setZoteroSyncVersion(result.version);
+      setZoteroSyncVersion(this.syncKey, result.version);
       logger.info(
-        { version: result.version, itemCount: result.items.length },
+        {
+          library: this.label,
+          version: result.version,
+          itemCount: result.items.length,
+        },
         'Zotero first connect — stored version, skipping existing items',
       );
       return;
     }
 
     if (result.items.length === 0) {
-      setZoteroSyncVersion(result.version);
+      setZoteroSyncVersion(this.syncKey, result.version);
       return;
     }
 
@@ -132,13 +148,13 @@ export class ZoteroWatcher {
         await this.processItem(item);
       } catch (err) {
         logger.warn(
-          { key: item.key, title: item.data.title, err },
+          { library: this.label, key: item.key, title: item.data.title, err },
           'Failed to process Zotero item',
         );
       }
     }
 
-    setZoteroSyncVersion(result.version);
+    setZoteroSyncVersion(this.syncKey, result.version);
   }
 
   private async processItem(item: {

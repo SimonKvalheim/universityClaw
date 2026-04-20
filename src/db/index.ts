@@ -919,21 +919,29 @@ export function getCitedBy(targetSlug: string): string[] {
 // Zotero sync
 // ====================================================================
 
-export function getZoteroSyncVersion(): number | null {
+export function getZoteroSyncVersion(
+  key: string = 'library_version',
+): number | null {
   const row = db
     .select({ value: schema.zotero_sync.value })
     .from(schema.zotero_sync)
-    .where(eq(schema.zotero_sync.key, 'library_version'))
+    .where(eq(schema.zotero_sync.key, key))
     .get();
   return row ? parseInt(row.value, 10) : null;
 }
 
-export function setZoteroSyncVersion(version: number): void {
+export function setZoteroSyncVersion(
+  versionOrKey: number | string,
+  version?: number,
+): void {
+  // Back-compat: setZoteroSyncVersion(123) still works for the user library.
+  const key = typeof versionOrKey === 'string' ? versionOrKey : 'library_version';
+  const value = typeof versionOrKey === 'string' ? version! : versionOrKey;
   db.insert(schema.zotero_sync)
-    .values({ key: 'library_version', value: String(version) })
+    .values({ key, value: String(value) })
     .onConflictDoUpdate({
       target: schema.zotero_sync.key,
-      set: { value: String(version) },
+      set: { value: String(value) },
     })
     .run();
 }
