@@ -78,6 +78,8 @@ Runs immediately after `extracted`, before the token-budget gate. Inputs: cleane
 - Job updated to `libraried`.
 - The watcher's `add` event fires; `RagIndexer.indexFile` indexes the library file in the next tick (no explicit invocation here — chokidar handles it).
 
+**Failure policy.** If the library write fails (disk full, permission error, write interrupted), the job stays at `librarying` (matches the existing in-progress-state convention used by `extracting`). The error is logged and the recovery loop in `src/ingestion/job-recovery.ts` retries on next pass. The status only advances to `libraried` after the file is successfully written and `fsync`'d. No partial library file is left behind: write to a temp path, then rename atomically.
+
 ### Under-budget path (post-`libraried`)
 
 The agent runs as today. The agent's source-note prompt gains a new instruction:
@@ -126,7 +128,7 @@ The "oversized — retry/dismiss" Telegram notification is removed. Replaced wit
 
 ### Allowed paths
 
-`ALLOWED_PATHS` (in `src/rag/indexer.ts`) gains `library`. Currently: `['concepts', 'sources']`. New: `['concepts', 'sources', 'library']`.
+`ALLOWED_PATHS` (in `src/rag/indexer.ts`) currently is `['concepts', 'sources', 'profile/archive']`. The change is purely additive: append `'library'`. Final value: `['concepts', 'sources', 'profile/archive', 'library']`.
 
 ### Indexed prefix shape for library
 
@@ -139,7 +141,13 @@ Source path: library/{slug}.md
 <cleaned body>
 ```
 
-When `source_summary` is missing (over-budget docs without a curated source note), `Source summary:` is omitted entirely from the prefix rather than emitted as empty.
+Prefix construction rules:
+
+- `Title:` is always included; if missing from frontmatter, fall back to the slug (existing convention).
+- `Type: library` is always included.
+- `Source summary:` is included only when `source_summary` frontmatter is present; over-budget docs without a curated source note omit this field entirely rather than emitting it empty.
+
+No other library frontmatter fields enter the prefix (`ingested_from`, `job_id`, `indexed`, `source_type` are intentionally excluded — they're metadata, not retrieval signal).
 
 ### In-memory `slug → title` map
 
@@ -167,6 +175,8 @@ Currently `extractWikilinks(content)` scans the entire raw file content, which i
 
 Distinct keyword strings let LightRAG hybrid retrieval distinguish "give me the summary of X" from "give me the full text of X" via keyword match.
 
+**Acknowledged limitation.** LightRAG's keyword embedding is bag-of-words and morphological neighbors (`summary`/`summaries`/`summarizes`) share enough surface form that the two edge directions may blur in retrieval ranking. Acceptable trade-off for v1 — if directional precision matters later, swap to fully disjoint keyword vocabularies (e.g. `expansion_of` vs `condensation_of`).
+
 ### Library file timeouts
 
 LightRAG round-trips for library files take longer (full book text). Bump from defaults:
@@ -174,7 +184,7 @@ LightRAG round-trips for library files take longer (full book text). Bump from d
 - `POST` timeout: 60s (from default 30s)
 - `pollTimeoutMs`: 1.2M ms / 20 min (from default 5min)
 
-Apply only to library files. Detect by `relPath.startsWith('library/')` in the indexer before invoking `ragClient.index`.
+Apply only to library files. Detect using the same dual-separator check the existing `ALLOWED_PATHS` matcher uses: `relPath.startsWith('library/') || relPath.startsWith('library\\')`. (POSIX-only matching breaks on Windows.)
 
 ### Logging
 
@@ -201,7 +211,7 @@ Single tool exposed by the new MCP server. Takes a vault-relative path and one o
 
 | Locator | Behavior |
 |---|---|
-| `section: "<heading text>"` | Returns the H1/H2/H3 section matching `<heading text>` (case-insensitive substring match against rendered heading). |
+| `section: "<heading text>"` | Returns the H1/H2/H3 section matching `<heading text>` (case-insensitive substring match against rendered heading). On multiple matches, returns the first match in document order (top-down) and includes a `multiple_matches: <N>` field plus the full matching-heading list in the response, so the agent can disambiguate by re-querying with a more specific string. |
 | `page: <number>` | Returns the page based on Docling page markers in the cleaned text. |
 | `range: { start: <line>, end: <line> }` | Returns the line range. Capped at 500 lines; over-cap returns truncated content + a `truncated: true` note. |
 
@@ -223,18 +233,22 @@ New section added to:
 - `groups/study/CLAUDE.md`
 - `groups/study-generator/CLAUDE.md`
 
-Content (paraphrased — final wording during implementation):
+Final wording (drop in verbatim — implementer should not rephrase):
 
-> Library files (`vault/library/*.md`) hold raw cleaned source text. They're long. To read them effectively:
+> ## Reading library files
 >
-> 1. Start with the source note (`vault/sources/{slug}.md`) for the agent-authored synthesis and the document's logical flow.
-> 2. Use `mcp__vault__vault_section` with a section heading or page number to pull just the part you need.
-> 3. For full-document analysis (summarization, broad searches), dispatch a `Task` subagent with the library path — don't read the whole file inline.
-> 4. When citing, include section + page from the `vault_section` header line.
+> `vault/library/*.md` files hold the raw cleaned text of every ingested source. They are long — entire books and full-text papers. Reading one inline will exhaust the context window. Follow this protocol:
+>
+> 1. **Start with the source note.** `vault/sources/{slug}.md` is the agent-authored synthesis and shows the document's logical flow. Read this first to orient before touching the library file.
+> 2. **Target sections, don't open the whole file.** Use `mcp__vault__vault_section(path, { section: "<heading>" })` or `{ page: <N> }` or `{ range: { start, end } }` to pull just the part you need. The response header line includes `Section`, `Page`, and `Lines` for citation.
+> 3. **Dispatch a subagent for full-document work.** Summarization, cross-document searches, or broad analysis go through a `Task` subagent invoked with the library file path — never read the full body in your own context.
+> 4. **Cite by section and page.** When you reference library content, include the heading and page number from the `vault_section` header line. Citations to library files without section + page are not allowed.
 
 ## Section 5 — Backfill of existing sources
 
 ### One-shot script: `scripts/backfill-library.ts`
+
+**Prerequisite: NanoClaw must be stopped before running this script.** The live `RagIndexer` runs in the NanoClaw process with its own chokidar watcher and serialized work queue. The backfill script runs in a separate process and uses its own indexer instance to call `indexFile()` directly. If both run concurrently, the live watcher will also pick up the newly-written library file and the patched source note's mtime change, racing the script's explicit indexing calls and potentially producing duplicate edges or stomping the tracker row mid-update. The script asserts NanoClaw is not running by checking the launchd/systemd service status (or the absence of an `tsx src/index.ts` process); refuses to start otherwise. Override flag `--force-unsafe-concurrent` exists for testing only.
 
 Walks `vault/sources/*.md`. For each source note:
 
@@ -246,7 +260,9 @@ Walks `vault/sources/*.md`. For each source note:
 3. Write `vault/library/{slug}.md` with the frontmatter shape from Section 1.
 4. Patch the source note frontmatter to add `library: "[[library/{slug}]]"`. Body left untouched (back-patching body wikilinks risks duplicating an existing reference; a body link can be added during the agent's next interaction with the note).
 5. Force re-index the patched source note. Because adding `library:` to frontmatter doesn't change the indexed prefix (which uses only `title|type|topics|source_doc|verification_status`), the content hash won't change. Workaround: delete the tracker row for the source path in `store/messages.db` before invoking `indexer.indexFile()`. Hash check then misses → reindex → `injectWikilinks` fires → source→library edge created.
-6. The library file's own `add` event will trigger normal indexing and produce the library→source edge.
+6. Index the new library file. Because NanoClaw is stopped (see prerequisite above), no chokidar watcher is running — the script invokes `indexer.indexFile()` directly on the library file path, which produces the library→source edge.
+
+**Alternative considered:** call `injectWikilinks` directly on the patched source note instead of going through `indexFile()`. This would skip the LightRAG roundtrip entirely (faster, no LightRAG load). Rejected for v1 because it requires exposing `injectWikilinks` as a public method and duplicates the wikilink-target validation logic. Worth revisiting in the implementation plan if backfill performance becomes an issue.
 
 ### CLI flags
 
@@ -291,8 +307,17 @@ Dashboard "Backfill library" button: deferred to post-v1.
 - `extraction-cleaner.test.ts` — already covers Docling output cleanup. Add cases asserting that the cleaned-and-written output (used by the `librarying` stage) matches the body indexed downstream.
 - `extractor.test.ts` / `pipeline.test.ts` — add the library-write step:
   - After `extract()`, the pipeline writes `vault/library/{slug}.md` with the correct frontmatter shape.
+  - Atomic write: the file appears at the final path only after the temp-rename completes; mid-write crash leaves no partial library file.
   - Job status transitions `extracted → librarying → libraried`.
+  - `librarying` failure path: simulate a write error → job stays at `librarying`, error logged, no partial file, recovery loop picks it up on next pass and successfully retries.
   - `oversized` no longer appears as a transition (assert via state-machine fixture).
+  - Over-budget stub source note: assert the exact frontmatter shape (`type: source`, `auto_generated: true`, `source_file: <ingested_from>`, `library: "[[library/{slug}]]"`, `verification_status: unverified`) and body content (the canned "exceeded the agent's token budget" paragraph + `Full text:` link). This is a separate test from the integration test — it pins the stub format precisely.
+
+### Migration tests (new fixture in `src/db/migrate.test.ts` or equivalent)
+
+- Existing `oversized` rows in `ingestion_jobs` are migrated to `libraried` on startup.
+- Migration is idempotent: re-running produces no further changes.
+- Migration only touches `oversized` rows — other statuses (`completed`, `failed`, `extracting`) are untouched.
 
 ### `src/rag/indexer.test.ts`
 
@@ -307,7 +332,7 @@ Dashboard "Backfill library" button: deferred to post-v1.
   - Index a source note with `library: "[[library/foo]]"` → assert `source→library` edge with keywords `summarizes, full_text`.
   - Index a library file with `source_summary: "[[foo]]"` → assert `library→source` edge with keywords `summarized_by, summary`.
 - Frontmatter wikilink scan restricted to known fields: confirm a wikilink-shaped string in an arbitrary frontmatter field (e.g. `description: "see [[foo]]"`) does NOT produce an edge.
-- Library files use bumped timeouts: assert `ragClient.index` and poll calls receive 60s / 1.2M ms when path starts with `library/`.
+- Library files use bumped timeouts: assert `ragClient.index` and poll calls receive 60s / 1.2M ms when path starts with `library/` (and equivalently with `library\\`).
 - Missing-title fallback: bare wikilink target absent from map → `slugToTitle` used, warning log emitted.
 
 ### `container/agent-runner/src/vault-mcp-stdio.test.ts` (new)
@@ -317,6 +342,7 @@ Dashboard "Backfill library" button: deferred to post-v1.
 - `vault_section(path, range: { start: 100, end: 200 })` returns those lines.
 - Range over 500 lines: response truncated, includes `truncated: true` and a note.
 - Heading miss: returns available sections list, "not found" message.
+- Multiple-heading match: two H2s containing the same substring → returns first in document order, response includes `multiple_matches: 2` and the full matching-heading list.
 - Page miss: returns total page count, "page N not found" message.
 - Tools registered under `mcp__vault__*` namespace (sanity check).
 
@@ -329,6 +355,7 @@ Dashboard "Backfill library" button: deferred to post-v1.
 - Frontmatter patch round-trip: source frontmatter gains `library: "[[library/{slug}]]"`, body unchanged byte-for-byte, gray-matter re-parses cleanly after patch.
 - Tracker delete: after patch, the source note's row in `rag_tracker` is removed (asserts the force-reindex prerequisite is met).
 - `--no-patch-source`: library file written, source frontmatter unchanged, tracker row preserved.
+- Concurrency guard: when an `tsx src/index.ts` process is detected (or the launchd/systemd service is active), the script refuses to start with a clear error message. `--force-unsafe-concurrent` overrides for testing.
 
 ### Integration test (`pipeline.integration.test.ts` extension)
 
