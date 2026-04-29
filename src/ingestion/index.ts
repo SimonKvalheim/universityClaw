@@ -6,7 +6,10 @@ import { FileWatcher } from './file-watcher.js';
 import { AgentProcessor } from './agent-processor.js';
 import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
-import { markInterruptedJobsFailed, resetRecoverableInProgress } from './job-recovery.js';
+import {
+  markInterruptedJobsFailed,
+  resetRecoverableInProgress,
+} from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { buildVaultManifest } from './vault-manifest.js';
 import { promoteNote } from './promoter.js';
@@ -51,6 +54,8 @@ import { ZoteroLocalClient, ZoteroWebClient } from './zotero-client.js';
 import { ZoteroMetadata } from './types.js';
 import { discoverConcepts } from '../study/concept-discovery.js';
 import { createConcept, getConceptByVaultPath } from '../study/queries.js';
+import { slugFromFilename } from './slug.js';
+import { writeLibraryFile } from './library-writer.js';
 
 const RATE_LIMIT_PATTERNS = [
   /rate.?limit/i,
@@ -63,6 +68,31 @@ const RATE_LIMIT_PATTERNS = [
 ];
 function isRateLimitError(msg: string): boolean {
   return RATE_LIMIT_PATTERNS.some((re) => re.test(msg));
+}
+
+function slugToTitle(slug: string): string {
+  return slug
+    .split('-')
+    .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : p))
+    .join(' ');
+}
+
+function titleFromJobMetadata(job: JobRow, cleanedBody?: string): string | null {
+  // 1. Zotero metadata
+  if (job.zotero_metadata) {
+    try {
+      const meta = JSON.parse(job.zotero_metadata) as { title?: unknown };
+      if (typeof meta.title === 'string' && meta.title.trim()) return meta.title.trim();
+    } catch {
+      // malformed JSON: ignore
+    }
+  }
+  // 2. First H1 of the extraction body
+  if (cleanedBody) {
+    const m = cleanedBody.match(/^#\s+(.+?)\s*$/m);
+    if (m && m[1].trim()) return m[1].trim();
+  }
+  return null;
 }
 
 export interface IngestionPipelineOpts {
@@ -100,7 +130,7 @@ export class IngestionPipeline {
     });
     this.drainer = new PipelineDrainer({
       onExtract: (job) => this.handleExtraction(job),
-      onLibrary: async () => {}, // no-op until T5 wires in handleLibrarying
+      onLibrary: (job) => this.handleLibrarying(job),
       onGenerate: (job) => this.handleGeneration(job),
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
@@ -252,6 +282,41 @@ export class IngestionPipeline {
       { jobId: job.id, relativePath },
       `ingestion: Extracted: ${relativePath}`,
     );
+  }
+
+  /**
+   * Writes a library file to vault/library/{slug}.md for an extracted job.
+   * Invoked by the drainer's onLibrary callback; exposed as public for unit testing.
+   */
+  public async handleLibrarying(job: JobRow): Promise<void> {
+    const extractionPath = job.extraction_path;
+    if (!extractionPath) throw new Error(`No extraction path for job ${job.id}`);
+
+    const cleanContentPath = join(extractionPath, 'content.clean.md');
+    const rawContentPath = join(extractionPath, 'content.md');
+    const contentPath = existsSync(cleanContentPath) ? cleanContentPath : rawContentPath;
+    const cleanedBody = readFileSync(contentPath, 'utf-8');
+
+    // Single slug rule — derived from source filename only.
+    // The agent (T8) and over-budget stub (T6/T7) use the same slugFromFilename helper.
+    const slug = slugFromFilename(job.source_filename);
+    const title = titleFromJobMetadata(job, cleanedBody) ?? slugToTitle(slug);
+    const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
+
+    writeLibraryFile({
+      libraryDir: join(this.vaultDir, 'library'),
+      slug,
+      jobMeta: {
+        title,
+        sourceType: job.source_type ?? 'paper',
+        ingestedFrom,
+        jobId: job.id,
+        sourceSummarySlug: slug,
+      },
+      cleanedBody,
+    });
+
+    logger.info({ jobId: job.id, slug }, 'ingestion: library file written');
   }
 
   async handleGeneration(job: JobRow): Promise<void> {
