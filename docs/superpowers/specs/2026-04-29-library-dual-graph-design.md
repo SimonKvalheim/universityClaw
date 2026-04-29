@@ -23,6 +23,19 @@ The over-budget path no longer skips the vault — it skips the agent. Every suc
 
 ## Section 1 — Architecture
 
+### Slug source-of-truth
+
+**Single rule, applied everywhere:** `slug = toKebabCase(stripExtension(source_filename))`, computed from the original upload filename. The slug is a **job-level identity** — derived once when the job is created and threaded through every downstream component:
+
+- The `librarying` stage uses it to write `vault/library/{slug}.md` (this is computed before the agent ever runs, so it cannot depend on the agent's chosen title).
+- The over-budget stub source note uses it for both filename and the `library:` wikilink target.
+- The under-budget agent is **told** the exact slug to use (passed via prompt) and instructed not to re-derive it. This prevents drift between the library file (agent-pre-existing) and the source note (agent-written).
+- The backfill script (Section 5) uses the existing source note's filename as the slug, then matches it byte-for-byte to the library file it writes.
+
+If the source filename contains characters that survive `toKebabCase` poorly (Unicode, punctuation), the existing `toKebabCase` helper (`src/ingestion/utils.ts` or wherever it currently lives) handles them. We do not introduce a new slug algorithm.
+
+**Why pin this:** the production-failure mode if slugs drift is silent: under-budget agent writes `[[library/foo-bar-paper]]`, but the librarying stage already wrote `vault/library/foo-bar.md`, and the wikilink resolves to nothing. Indexer gets no edge, retrieval misses, no error surfaces.
+
 ### Vault layout
 
 New directory `vault/library/` alongside existing `vault/concepts/`, `vault/sources/`, `vault/profile/`. Flat structure, one markdown file per ingested source. Filename matches source slug: `vault/library/{slug}.md` ↔ `vault/sources/{slug}.md`.
@@ -78,7 +91,7 @@ Runs immediately after `extracted`, before the token-budget gate. Inputs: cleane
 - Job updated to `libraried`.
 - The watcher's `add` event fires; `RagIndexer.indexFile` indexes the library file in the next tick (no explicit invocation here — chokidar handles it).
 
-**Failure policy.** If the library write fails (disk full, permission error, write interrupted), the job stays at `librarying` (matches the existing in-progress-state convention used by `extracting`). The error is logged and the recovery loop in `src/ingestion/job-recovery.ts` retries on next pass. The status only advances to `libraried` after the file is successfully written and `fsync`'d. No partial library file is left behind: write to a temp path, then rename atomically.
+**Failure policy.** If the library write fails (disk full, permission error, write interrupted), the job stays at `librarying`, the error is logged with prefix `librarying:`, and no status transition happens. **Recovery on next NanoClaw startup**: the existing `markInterruptedJobsFailed` in `src/ingestion/job-recovery.ts` marks all in-progress statuses as `failed` — that's wrong for `librarying` because the library write is idempotent (atomic rename means either it's done or it isn't, and re-running is safe). The fix: introduce a small companion function `resetRecoverableInProgress` that runs **before** `markInterruptedJobsFailed` and resets `librarying` jobs to `extracted` so the drainer picks them up again. Other in-progress statuses continue to be marked failed as today. The status only advances to `libraried` after the library file is successfully written and `fsync`'d. No partial library file is left behind: write to a temp path, then rename atomically.
 
 ### Under-budget path (post-`libraried`)
 
@@ -95,7 +108,9 @@ The "overarching logical flow" framing is deliberate — the user emphasized tha
 
 ### Over-budget path
 
-The agent is skipped. A deterministic stub source note is written from job metadata only:
+The agent is skipped. A deterministic stub source note is written **to the drafts directory** (`<draftsDir>/{jobId}-source.md`) just like an agent-generated draft. The pipeline then transitions to `generated` and the existing `handlePromotion` flow takes over: `inferManifest` finds the single source draft, `promoteNote` renames it to `vault/sources/{slug}.md`. **This avoids duplicating the promotion logic** — the stub follows the exact same path as agent-authored drafts.
+
+Frontmatter shape:
 
 ```markdown
 ---
@@ -106,6 +121,7 @@ source_file: "<ingested_from>"
 library: "[[library/{slug}]]"
 verification_status: unverified
 auto_generated: true                   # marks this as stub, no agent synthesis
+concepts_generated: []                 # required by draft-validator; empty since no agent ran
 created: <date>
 ---
 
@@ -118,7 +134,9 @@ The complete extracted text is available at [[library/{slug}]].
 ```
 
 - Same wikilinks as the under-budget path, so dual-graph edges work uniformly.
+- `concepts_generated: []` keeps the stub valid against `draft-validator.ts`'s required-fields check.
 - No concepts are generated for over-budget docs — that's the trade-off for skipping the agent. They can be retroactively summarized later by re-queueing through the agent path explicitly.
+- Stub bypasses `draft-validator` entirely (validation runs only against agent output via the IPC sentinel loop). Promotion is the only downstream consumer; the existing `inferManifest` (`src/ingestion/manifest.ts:23`) handles a drafts dir containing a single source note + zero concepts correctly.
 
 ### User notification
 
@@ -215,13 +233,23 @@ Single tool exposed by the new MCP server. Takes a vault-relative path and one o
 | `page: <number>` | Returns the page based on Docling page markers in the cleaned text. |
 | `range: { start: <line>, end: <line> }` | Returns the line range. Capped at 500 lines; over-cap returns truncated content + a `truncated: true` note. |
 
-Every successful response includes a header line:
+Every successful response includes a header line with **all four fields, always**:
 
 ```
-File: <path> / Section: <heading or page or range> / Page <N> / Lines <A>-<B>
+File: <path> / Section: <heading or pseudo> / Page <N> / Lines <A>-<B>
 
 <content>
 ```
+
+Per-locator defaults (so the format is uniform regardless of how the agent queried):
+
+| Locator | `Section` value | `Page` value |
+|---|---|---|
+| `section: "<heading>"` | matched heading verbatim | page number containing the start line (count Docling page markers up to start line) |
+| `page: <N>` | nearest enclosing H1/H2/H3 heading at or before the page start line, or `<page-only>` if the page contains no heading | `<N>` |
+| `range: { start, end }` | nearest enclosing heading at or before `start`, or `<range>` if no heading precedes | page containing the start line |
+
+This guarantees the agent's citation rule ("cite by section + page from the header") works for all three locator forms. If a library file has no Docling page markers (rare but possible — agent-edited or non-PDF source), `Page` reports `1` for everything; the agent's citation includes "page 1 (no markers)" in that case.
 
 On miss (heading not found, page out of range, etc.) the tool returns the available section list with a "not found" message — never an empty result. This avoids the agent silently retrieving nothing.
 

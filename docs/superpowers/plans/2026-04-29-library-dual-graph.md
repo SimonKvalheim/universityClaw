@@ -59,6 +59,104 @@
 
 ---
 
+## Phase 0 — Slug helper
+
+### Task 0: Pin slug derivation as a single exported helper
+
+**Files:**
+- Create or modify: `src/ingestion/slug.ts` (new — separated from `utils.ts` so it has one obvious owner)
+- Test: `src/ingestion/slug.test.ts`
+- Modify (later tasks consume): `src/ingestion/index.ts` (librarying handler, T5), `src/ingestion/agent-processor.ts` (agent prompt, T8), `scripts/backfill-library.ts` (T22+)
+
+Why first: per spec §1, every component (librarying stage, agent prompt, over-budget stub, backfill) must derive the slug identically. Diverging slugs cause silent wikilink-resolution failures. Pin one helper, force every consumer to import it.
+
+If `toKebabCase` already exists in the codebase (search: `grep -rn "toKebabCase\|kebab" src/`), reuse it. Otherwise add it inside the new `slug.ts`. Either way, expose a single `slugFromFilename(filename)` function.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/ingestion/slug.test.ts`:
+
+```typescript
+import { describe, expect, it } from 'vitest';
+import { slugFromFilename } from './slug.js';
+
+describe('slugFromFilename', () => {
+  it('strips extension and kebab-cases', () => {
+    expect(slugFromFilename('Foo Bar.pdf')).toBe('foo-bar');
+    expect(slugFromFilename('A_Review_of_Cloud_Computing.pdf')).toBe('a-review-of-cloud-computing');
+  });
+
+  it('handles multiple dots in filename', () => {
+    expect(slugFromFilename('paper.v2.final.pdf')).toBe('paper-v2-final');
+  });
+
+  it('handles no extension', () => {
+    expect(slugFromFilename('paper')).toBe('paper');
+  });
+
+  it('handles existing kebab-case', () => {
+    expect(slugFromFilename('already-kebab.pdf')).toBe('already-kebab');
+  });
+
+  it('strips trailing/leading hyphens after normalization', () => {
+    expect(slugFromFilename('--weird--.pdf')).toBe('weird');
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect failure**
+
+Run: `npx vitest run src/ingestion/slug.test.ts`
+Expected: FAIL — module missing.
+
+- [ ] **Step 3: Implement**
+
+Search the codebase first for an existing kebab-case helper to reuse:
+
+```bash
+grep -rn "kebab\|to-kebab" src/ingestion src/vault | head
+```
+
+If a helper exists (likely in `src/ingestion/utils.ts` or `src/ingestion/promoter.ts`), `slug.ts` becomes a thin wrapper:
+
+```typescript
+import { toKebabCase } from './utils.js';  // or wherever
+import { basename, extname } from 'node:path';
+
+export function slugFromFilename(filename: string): string {
+  const base = basename(filename, extname(filename));
+  return toKebabCase(base).replace(/^-+|-+$/g, '');
+}
+```
+
+If no helper exists, inline a minimal implementation:
+
+```typescript
+import { basename, extname } from 'node:path';
+
+export function slugFromFilename(filename: string): string {
+  const base = basename(filename, extname(filename));
+  return base
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+```
+
+- [ ] **Step 4: Run tests**
+
+Run: `npx vitest run src/ingestion/slug.test.ts`
+Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ingestion/slug.ts src/ingestion/slug.test.ts
+git commit -m "feat(ingestion): canonical slug helper for library/source identity"
+```
+
+---
+
 ## Phase 1 — Status groundwork
 
 ### Task 1: Add `librarying` and `libraried` to the pipeline state machine
@@ -199,7 +297,28 @@ SET status = 'libraried',
 WHERE status = 'oversized';
 ```
 
-Update `drizzle/migrations/meta/_journal.json` to register the new migration. Inspect the existing journal entries for shape and append a new entry pointing at `0004_oversized_to_libraried`. The runner in `src/db/migrate.ts` reads this file to decide which migrations to apply.
+Update `drizzle/migrations/meta/_journal.json` to register the new migration. Verified format (read from the live file):
+
+```json
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    { "idx": 0, "version": "6", "when": 1776197946601, "tag": "0000_glamorous_drax", "breakpoints": true },
+    { "idx": 1, "version": "6", "when": 1776243235707, "tag": "0001_outstanding_loki", "breakpoints": true },
+    { "idx": 2, "version": "6", "when": 1776245600959, "tag": "0002_vengeful_kat_farrell", "breakpoints": true },
+    { "idx": 3, "version": "6", "when": 1776530493928, "tag": "0003_dry_caretaker", "breakpoints": true }
+  ]
+}
+```
+
+Append a new entry to the `entries` array (keep top-level `version: "7"` and `dialect: "sqlite"` unchanged):
+
+```json
+{ "idx": 4, "version": "6", "when": <NOW_IN_MS>, "tag": "0004_oversized_to_libraried", "breakpoints": true }
+```
+
+Replace `<NOW_IN_MS>` with `Date.now()` at the time of generation (e.g. paste the result of `node -e 'console.log(Date.now())'`). The four required fields per entry are `idx` (sequential), `version: "6"`, `when` (ms timestamp), `tag` (matches filename without `.sql`), `breakpoints: true`. The runner in `src/db/migrate.ts` reads this file to decide which migrations to apply; a malformed entry breaks startup for every install.
 
 - [ ] **Step 4: Run tests to verify**
 
@@ -486,20 +605,58 @@ In `drainGenerations`, change `getJobsByStatus('extracted')` to `getJobsByStatus
 Run: `npx vitest run src/ingestion/pipeline.test.ts`
 Expected: All pass. Some pre-existing tests may fail because they insert jobs at status `extracted` expecting generation to pick them up; update those to `libraried`.
 
-- [ ] **Step 5: Recovery handles stuck `librarying` jobs**
+- [ ] **Step 5: Add `resetRecoverableInProgress` to job-recovery**
 
-Open `src/ingestion/job-recovery.ts`. The existing recovery loop reissues stuck statuses on startup. Confirm `librarying` is treated as recoverable (re-set to `extracted` on startup so the drainer picks it up again). If the recovery code uses an explicit allowlist of "in-progress" statuses, add `librarying`. Add a unit test in `src/ingestion/job-recovery.test.ts`:
+Read `src/ingestion/job-recovery.ts` first. Today the file exports `markInterruptedJobsFailed` (or similar) that transitions stuck in-progress jobs to `failed` on startup. **That's the wrong semantic for `librarying`** because the library write is idempotent (atomic rename + same-content overwrite), so re-running is safe and far more useful than failing.
+
+Add a companion function that runs **before** `markInterruptedJobsFailed` and resets only `librarying`:
 
 ```typescript
-it('recovers a stuck librarying job back to extracted', () => {
-  const db = makeRecoveryFixture();
-  db.insertJob({ id: 'j1', status: 'librarying' });
-  recoverStuckJobs(db);
-  expect(db.getJob('j1').status).toBe('extracted');
+// src/ingestion/job-recovery.ts (add to existing file)
+
+import { getJobsByStatus, updateIngestionJob } from '../db.js';
+import { logger } from '../logger.js';
+
+const RECOVERABLE_STATUSES = ['librarying'] as const;
+
+export function resetRecoverableInProgress(): void {
+  for (const status of RECOVERABLE_STATUSES) {
+    const jobs = getJobsByStatus(status);
+    for (const job of jobs) {
+      logger.info({ jobId: job.id, fromStatus: status, toStatus: 'extracted' }, 'recovery: resetting recoverable in-progress job');
+      updateIngestionJob(job.id, { status: 'extracted', error: null });
+    }
+  }
+}
+```
+
+Wire the new function in `src/index.ts` (or wherever `markInterruptedJobsFailed` is called at startup) so it runs **before** the failed-mark step:
+
+```typescript
+resetRecoverableInProgress();
+markInterruptedJobsFailed();
+```
+
+Add a test in `src/ingestion/job-recovery.test.ts`:
+
+```typescript
+import { resetRecoverableInProgress } from './job-recovery.js';
+// match the existing test fixture style in this file
+
+it('resets a stuck librarying job to extracted', () => {
+  // ... seed a librarying job via the existing fixture pattern
+  resetRecoverableInProgress();
+  expect(getJob('j1').status).toBe('extracted');
+});
+
+it('does not touch other in-progress statuses', () => {
+  // seed an extracting job — the existing markInterruptedJobsFailed handles it; reset must not
+  resetRecoverableInProgress();
+  expect(getJob('j2').status).toBe('extracting');  // unchanged
 });
 ```
 
-If the recovery file uses a different test pattern, match the existing style.
+Match the existing test style in this file. If `markInterruptedJobsFailed` already runs in the same flow and would re-fail the just-reset job, ensure the calling order is correct (reset first, then mark).
 
 - [ ] **Step 6: Commit**
 
@@ -568,8 +725,14 @@ private async handleLibrarying(job: JobRow): Promise<void> {
   const contentPath = existsSync(cleanContentPath) ? cleanContentPath : rawContentPath;
   const cleanedBody = readFileSync(contentPath, 'utf-8');
 
-  const slug = slugFromJob(job); // existing helper used elsewhere; if absent, derive from job.source_filename via existing slugify util
-  const title = titleFromJob(job) ?? slug;
+  // Single slug rule — must match Section 1 of the spec. Source filename only;
+  // do NOT derive from any agent-provided title (the agent hasn't run yet).
+  const slug = slugFromFilename(job.source_filename);
+  // Title is best-effort: prefer Zotero metadata, then extraction-detected title,
+  // then fall back to a Title Case version of the slug. The under-budget agent
+  // may overwrite the title in its source-note draft; the library file's title
+  // is informational only (search uses the indexed prefix, not the title alone).
+  const title = titleFromJobMetadata(job) ?? slugToTitle(slug);
   const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
 
   // Under-budget docs will gain a curated source summary later in the agent step;
@@ -592,7 +755,7 @@ private async handleLibrarying(job: JobRow): Promise<void> {
 }
 ```
 
-If `slugFromJob`/`titleFromJob` are not pre-existing helpers, derive: slug from `kebabCase(stripExtension(source_filename))` matching the existing convention used for source notes (search `src/ingestion/` for "slugify" or look at `agent-processor.ts` for the canonical slug derivation).
+**`slugFromFilename` is from Task 0 — import it.** `slugToTitle` exists in `src/vault/wikilinks.ts`. `titleFromJobMetadata` is a small new helper to add inline: read `job.zotero_metadata` JSON if present (`title` field), else parse the extracted Docling output's first H1 if available, else return null. Keep this lookup-only — no fallbacks beyond the three layers above; the slug-Title-Case fallback handles the worst case.
 
 - [ ] **Step 4: Run tests to verify**
 
@@ -643,6 +806,7 @@ describe('buildOversizedStub', () => {
       library: '[[library/big-book]]',
       verification_status: 'unverified',
       auto_generated: true,
+      concepts_generated: [],
       created: '2026-04-29',
     });
   });
@@ -695,6 +859,7 @@ export function buildOversizedStub(input: OversizedStubInput): OversizedStub {
     library: `[[library/${input.slug}]]`,
     verification_status: 'unverified',
     auto_generated: true,
+    concepts_generated: [],  // required by draft-validator; empty since no agent ran
     created: input.createdDate,
   };
 
@@ -738,7 +903,7 @@ Append to `src/ingestion/integration.test.ts`:
 
 ```typescript
 describe('over-budget path', () => {
-  it('writes a deterministic stub source note and skips the agent', async () => {
+  it('writes a stub source draft, promotes it, and skips the agent', async () => {
     const fixture = await makeIngestionFixture();
     fixture.seedLibrariedJob({
       jobId: 'big',
@@ -748,15 +913,20 @@ describe('over-budget path', () => {
       sourceType: 'book',
     });
     fixture.spyAgent();
-    await fixture.tickPipeline();
+    await fixture.tickPipelineToCompletion(); // drives drainer through generated→promoting→completed
+
+    // Stub draft was written to drafts/ and promoted to sources/
     const sourcePath = path.join(fixture.vaultDir, 'sources', 'big-book.md');
     expect(existsSync(sourcePath)).toBe(true);
     const content = readFileSync(sourcePath, 'utf-8');
     expect(content).toContain('auto_generated: true');
     expect(content).toContain('library: "[[library/big-book]]"');
+    expect(content).toContain('concepts_generated: []');
     expect(content).toContain('# Big Book');
+    // Drafts dir is cleaned up by the existing promotion flow.
+    expect(existsSync(path.join(fixture.draftsDir, 'big-source.md'))).toBe(false);
     expect(fixture.agentInvocations).toEqual([]); // never spawned
-    expect(fixture.getJob('big').status).toBe('completed'); // continues through promotion
+    expect(fixture.getJob('big').status).toBe('completed');
   });
 
   it('does not send a Telegram notification on over-budget', async () => {
@@ -776,18 +946,18 @@ Expected: FAIL — current code transitions to `oversized`, doesn't write a stub
 
 - [ ] **Step 3: Modify `handleGeneration`**
 
-In `src/ingestion/index.ts`, replace the block at the budget gate (currently around line 299–315) with:
+In `src/ingestion/index.ts`, replace the block at the budget gate (currently around line 299–315) with code that writes the stub **to the drafts directory**, not directly to `vault/sources/`. This keeps the over-budget path uniform with the agent path: drafts → manifest (inferred) → `handlePromotion` does the rest.
 
 ```typescript
 if (estimatedTokens > TOKEN_BUDGET) {
   const tokensK = Math.round(estimatedTokens / 1000);
   logger.info(
     { jobId: job.id, estimatedTokens, budget: TOKEN_BUDGET },
-    `ingestion: Over budget (~${tokensK}K tokens); writing stub source note`,
+    `ingestion: Over budget (~${tokensK}K tokens); writing stub source draft`,
   );
 
-  const slug = slugFromJob(job);
-  const title = titleFromJob(job) ?? slug;
+  const slug = slugFromFilename(job.source_filename);
+  const title = titleFromJobMetadata(job) ?? slugToTitle(slug);
   const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
   const stub = buildOversizedStub({
     title,
@@ -797,16 +967,19 @@ if (estimatedTokens > TOKEN_BUDGET) {
     createdDate: new Date().toISOString().slice(0, 10),
   });
 
-  // Write stub directly to vault/sources/ — bypasses the agent draft+manifest flow.
-  const sourcePath = join(this.vaultDir, 'sources', `${slug}.md`);
-  mkdirSync(dirname(sourcePath), { recursive: true });
-  const tmp = `${sourcePath}.tmp.${process.pid}.${Date.now()}`;
+  // Write stub to drafts/ — promotion takes over from here. Filename matches the
+  // pattern the agent would use: {jobId}-source.md. inferManifest (manifest.ts:23)
+  // walks drafts/, finds this single source draft, returns a manifest with no
+  // concept notes — promoteNote then renames to vault/sources/{slug}.md.
+  const draftPath = join(draftsDir, `${job.id}-source.md`);
+  mkdirSync(draftsDir, { recursive: true });
+  const tmp = `${draftPath}.tmp.${process.pid}.${Date.now()}`;
   writeFileSync(
     tmp,
     `${serializeFrontmatter(stub.frontmatter)}\n${stub.body}`,
     'utf-8',
   );
-  renameSync(tmp, sourcePath);
+  renameSync(tmp, draftPath);
 
   updateIngestionJob(job.id, { status: 'generated' });
   return;
@@ -814,6 +987,8 @@ if (estimatedTokens > TOKEN_BUDGET) {
 ```
 
 Remove the `if (this.notify)` block entirely. Remove `existing.status === 'oversized'` from the duplicate-check at line ~152 (no `oversized` status exists anymore in the live state). Remove the Telegram channel callback wiring for the oversized notification at the call site.
+
+**Verify the promotion path handles this**. Read `src/ingestion/index.ts:495` (`handlePromotion`). The flow is: `readManifest` (returns null because no manifest JSON file exists) → `inferManifest` (walks drafts, finds `{jobId}-source.md`, returns manifest with `concept_notes: []`) → `promoteNote` is called once for the source. If `promoteNote` requires concept notes (read `promoter.ts:21`), confirm an empty concepts list is acceptable. If not, the stub flow needs to write a minimal manifest JSON (`{"source_note": "{jobId}-source.md", "concept_notes": []}`) explicitly — adjust the implementation to do so.
 
 - [ ] **Step 4: Run tests to verify**
 
@@ -852,6 +1027,26 @@ it('agent prompt instructs the agent to add library wikilinks to the source note
   expect(prompt).toContain('library: "[[library/paper]]"');
   expect(prompt).toContain('**Full text:** [[library/paper]]');
   expect(prompt).toContain('overarching logical flow');
+  expect(prompt).toContain('The slug is **paper** — use exactly this string');
+});
+
+it('draft-validator accepts a source note with library frontmatter', () => {
+  // Cheap insurance against draft-validator regression.
+  // Match the existing draft-validator.test.ts fixture pattern.
+  const draft = `---
+title: Foo
+type: source
+source_type: paper
+source_file: upload/processed/jx-paper.pdf
+library: "[[library/paper]]"
+verification_status: unverified
+concepts_generated: []
+---
+# Foo
+body
+`;
+  const result = validateSourceDraft(draft); // existing validator entry point
+  expect(result.valid).toBe(true);
 });
 ```
 
@@ -864,12 +1059,16 @@ Expected: FAIL — strings not found.
 
 - [ ] **Step 3: Edit the prompt template**
 
-Locate the section in `src/ingestion/agent-processor.ts` that builds the source-note guidance for the agent. Append:
+Locate the section in `src/ingestion/agent-processor.ts` that builds the source-note guidance for the agent. The prompt builder already takes a `slug` (or has access to job metadata that derives one) — use the same value, computed via `slugFromFilename(job.source_filename)`. **Do not let the agent re-derive the slug from the document title** (the agent's title may differ from the slug used elsewhere).
+
+Append to the source-note guidance:
 
 ```
 ### Linking to the library file
 
-A raw cleaned extraction of this document has been written to `vault/library/${slug}.md`. Your source note must reference it:
+A raw cleaned extraction of this document has been written to `vault/library/${slug}.md`. The slug is **${slug}** — use exactly this string in both wikilinks below; do not derive a different one from the document title.
+
+Your source note must reference it:
 
 - Frontmatter: add `library: "[[library/${slug}]]"`
 - Body: add `**Full text:** [[library/${slug}]]` near the top
@@ -877,7 +1076,7 @@ A raw cleaned extraction of this document has been written to `vault/library/${s
 The library file holds the raw extracted text and is the canonical place to read passages verbatim. Your source note remains the curated overarching logical flow.
 ```
 
-The `${slug}` placeholder uses whatever string interpolation the existing prompt builder uses — match the surrounding pattern.
+If the existing prompt builder doesn't currently have a `slug` parameter, add one — derived in the caller via `slugFromFilename(job.source_filename)` (the same call site that already invokes the agent).
 
 - [ ] **Step 4: Run tests to verify**
 
@@ -1030,61 +1229,68 @@ Replace the per-wikilink disk-read pattern with a single in-memory map built at 
 Append to `src/rag/indexer.test.ts`:
 
 ```typescript
-describe('slug→title map', () => {
-  it('builds the map from existing files on start()', async () => {
-    const fixture = await makeIndexerFixture();
-    fixture.writeVaultFile('sources/a.md', '---\ntitle: Alpha\ntype: source\n---\n');
-    fixture.writeVaultFile('library/b.md', '---\ntitle: Beta\ntype: library\n---\n');
-    await fixture.indexer.start();
-    expect(fixture.indexer.slugTitleMap.get('a')).toBe('Alpha');
-    expect(fixture.indexer.slugTitleMap.get('b')).toBe('Beta');
-  });
+describe('slug→title map (behavioral)', () => {
+  // Tests target observable behavior — no direct map introspection. The map is
+  // an implementation detail; what matters is that wikilink resolution uses it
+  // (no disk reads after init) and that the map stays current on chokidar events.
 
-  it('updates on add event', async () => {
-    const fixture = await makeIndexerFixture();
-    await fixture.indexer.start();
-    fixture.writeVaultFile('sources/c.md', '---\ntitle: Charlie\ntype: source\n---\n');
-    await fixture.indexer.handleAdd(path.join(fixture.vaultDir, 'sources/c.md'));
-    expect(fixture.indexer.slugTitleMap.get('c')).toBe('Charlie');
-  });
-
-  it('updates on change event with renamed title', async () => {
-    const fixture = await makeIndexerFixture();
-    fixture.writeVaultFile('sources/d.md', '---\ntitle: Delta\ntype: source\n---\n');
-    await fixture.indexer.start();
-    fixture.writeVaultFile('sources/d.md', '---\ntitle: Delta Renamed\ntype: source\n---\n');
-    await fixture.indexer.handleChange(path.join(fixture.vaultDir, 'sources/d.md'));
-    expect(fixture.indexer.slugTitleMap.get('d')).toBe('Delta Renamed');
-  });
-
-  it('removes on unlink', async () => {
-    const fixture = await makeIndexerFixture();
-    fixture.writeVaultFile('sources/e.md', '---\ntitle: Echo\ntype: source\n---\n');
-    await fixture.indexer.start();
-    await fixture.indexer.handleUnlink(path.join(fixture.vaultDir, 'sources/e.md'));
-    expect(fixture.indexer.slugTitleMap.has('e')).toBe(false);
-  });
-
-  it('injectWikilinks resolves targets via the map without disk reads', async () => {
+  it('resolves wikilinks via the map after start() — no per-resolution disk read', async () => {
     const fixture = await makeIndexerFixture();
     fixture.writeVaultFile('sources/target.md', '---\ntitle: TargetTitle\ntype: source\n---\n');
     fixture.writeVaultFile('sources/origin.md', '---\ntitle: OriginTitle\ntype: source\n---\nbody refs [[target]]');
     fixture.ragClient.entityExists = vi.fn().mockResolvedValue(true);
     fixture.ragClient.createRelation = vi.fn().mockResolvedValue(undefined);
     await fixture.indexer.start();
+
+    const readFileSpy = vi.spyOn(fs, 'readFileSync');
+    readFileSpy.mockClear();
     await fixture.indexer.indexFile(path.join(fixture.vaultDir, 'sources/origin.md'));
-    expect(fixture.ragClient.entityExists).toHaveBeenCalledWith('TargetTitle'); // resolved via map, not disk
+
+    // Only the file being indexed is read; the target's title comes from the in-memory map.
+    expect(readFileSpy).toHaveBeenCalledTimes(1);
+    expect(readFileSpy.mock.calls[0][0]).toContain('sources/origin.md');
+    expect(fixture.ragClient.entityExists).toHaveBeenCalledWith('TargetTitle');
   });
 
-  it('falls back to slugToTitle when target slug missing from map', async () => {
+  it('picks up newly-added files: wikilinks to a freshly-added target resolve', async () => {
     const fixture = await makeIndexerFixture();
-    fixture.writeVaultFile('sources/origin.md', '---\ntitle: OriginTitle\ntype: source\n---\nrefs [[ghost-slug]]');
+    await fixture.indexer.start();
+    fixture.writeVaultFile('sources/late.md', '---\ntitle: LateTitle\ntype: source\n---\n');
+    await fixture.indexer.handleAdd(path.join(fixture.vaultDir, 'sources/late.md'));
+
+    fixture.writeVaultFile('sources/origin.md', '---\ntitle: OriginTitle\ntype: source\n---\nrefs [[late]]');
+    fixture.ragClient.entityExists = vi.fn().mockResolvedValue(true);
+    fixture.ragClient.createRelation = vi.fn().mockResolvedValue(undefined);
+    await fixture.indexer.indexFile(path.join(fixture.vaultDir, 'sources/origin.md'));
+    expect(fixture.ragClient.entityExists).toHaveBeenCalledWith('LateTitle');
+  });
+
+  it('picks up renamed titles: changing a target file updates resolution', async () => {
+    const fixture = await makeIndexerFixture();
+    fixture.writeVaultFile('sources/d.md', '---\ntitle: Delta\ntype: source\n---\n');
+    await fixture.indexer.start();
+    fixture.writeVaultFile('sources/d.md', '---\ntitle: Delta Renamed\ntype: source\n---\n');
+    await fixture.indexer.handleChange(path.join(fixture.vaultDir, 'sources/d.md'));
+
+    fixture.writeVaultFile('sources/o.md', '---\ntitle: Origin\ntype: source\n---\nrefs [[d]]');
+    fixture.ragClient.entityExists = vi.fn().mockResolvedValue(true);
+    fixture.ragClient.createRelation = vi.fn().mockResolvedValue(undefined);
+    await fixture.indexer.indexFile(path.join(fixture.vaultDir, 'sources/o.md'));
+    expect(fixture.ragClient.entityExists).toHaveBeenCalledWith('Delta Renamed');
+  });
+
+  it('forgets unlinked files: wikilinks to an unlinked target fall back to slugToTitle', async () => {
+    const fixture = await makeIndexerFixture();
+    fixture.writeVaultFile('sources/gone.md', '---\ntitle: GoneTitle\ntype: source\n---\n');
+    await fixture.indexer.start();
+    await fixture.indexer.handleUnlink(path.join(fixture.vaultDir, 'sources/gone.md'));
+
+    fixture.writeVaultFile('sources/o.md', '---\ntitle: Origin\ntype: source\n---\nrefs [[gone]]');
     fixture.ragClient.entityExists = vi.fn().mockResolvedValue(false);
     const warnSpy = vi.spyOn(logger, 'warn');
-    await fixture.indexer.start();
-    await fixture.indexer.indexFile(path.join(fixture.vaultDir, 'sources/origin.md'));
+    await fixture.indexer.indexFile(path.join(fixture.vaultDir, 'sources/o.md'));
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: 'ghost-slug' }),
+      expect.objectContaining({ slug: 'gone' }),
       expect.stringContaining('not in slug-title map'),
     );
   });
@@ -1098,6 +1304,8 @@ Expected: FAIL — `slugTitleMap`, `start`, `handleAdd`, `handleChange` don't ex
 
 - [ ] **Step 3: Implement the map**
 
+`RagIndexer.start()` does **not currently exist** — the watcher is attached inline in the constructor. Refactor first: extract the chokidar attachment into a new `start()` method (zero behavior change), confirm tests still pass, then layer the map work on top. This keeps the diff reviewable.
+
 In `src/rag/indexer.ts`:
 
 ```typescript
@@ -1106,7 +1314,8 @@ import { readdirSync } from 'node:fs';
 
 export class RagIndexer {
   // ... existing fields
-  public readonly slugTitleMap = new Map<string, string>();
+  // Map kept private — tests cover behavior, not internal state.
+  private slugTitleMap = new Map<string, string>();
 
   async start(): Promise<void> {
     const allowed = ALLOWED_PATHS;
@@ -1187,16 +1396,22 @@ import { extractFrontmatterWikilinks } from './wikilinks.js';
 describe('extractFrontmatterWikilinks', () => {
   const allowlist = ['source_summary', 'library', 'links_to', 'related'];
 
-  it('walks values from the allowlist', () => {
+  it('walks values from the allowlist, returning target + originating field', () => {
     const fm = { source_summary: '[[foo]]', library: '[[library/bar]]' };
     const links = extractFrontmatterWikilinks(fm, allowlist);
-    expect(links.map(l => l.target)).toEqual(['foo', 'library/bar']);
+    expect(links).toEqual([
+      { target: 'foo', field: 'source_summary' },
+      { target: 'library/bar', field: 'library' },
+    ]);
   });
 
   it('walks arrays', () => {
     const fm = { related: ['[[a]]', '[[b]]'] };
     const links = extractFrontmatterWikilinks(fm, allowlist);
-    expect(links.map(l => l.target)).toEqual(['a', 'b']);
+    expect(links).toEqual([
+      { target: 'a', field: 'related' },
+      { target: 'b', field: 'related' },
+    ]);
   });
 
   it('ignores fields not in the allowlist', () => {
@@ -1232,11 +1447,16 @@ Expected: FAIL — `extractFrontmatterWikilinks` does not exist.
 In `src/vault/wikilinks.ts`, add:
 
 ```typescript
+export interface FrontmatterWikilink {
+  target: string;
+  field: string;  // originating frontmatter field — used by T13's keyword routing
+}
+
 export function extractFrontmatterWikilinks(
   fm: Record<string, unknown>,
   allowlist: readonly string[],
-): { target: string }[] {
-  const out: { target: string }[] = [];
+): FrontmatterWikilink[] {
+  const out: FrontmatterWikilink[] = [];
   const wikilinkRe = /\[\[([^\]]+)\]\]/g;
   for (const field of allowlist) {
     const value = fm[field];
@@ -1245,7 +1465,7 @@ export function extractFrontmatterWikilinks(
       if (typeof c !== 'string') continue;
       let m: RegExpExecArray | null;
       while ((m = wikilinkRe.exec(c)) !== null) {
-        out.push({ target: m[1].trim() });
+        out.push({ target: m[1].trim(), field });
       }
       wikilinkRe.lastIndex = 0;
     }
@@ -1346,20 +1566,9 @@ describe('bidirectional source↔library edges', () => {
 Run: `npx vitest run src/rag/indexer.test.ts -t "bidirectional"`
 Expected: FAIL — current code uses single keyword string for all links.
 
-- [ ] **Step 3: Tag links by origin field and route keywords accordingly**
+- [ ] **Step 3: Route keywords by source field**
 
-Update `extractFrontmatterWikilinks` to also return the originating field name:
-
-```typescript
-export function extractFrontmatterWikilinks(
-  fm: Record<string, unknown>,
-  allowlist: readonly string[],
-): { target: string; field: string }[] {
-  // ...same loop, push { target, field } instead of { target }
-}
-```
-
-In `src/rag/indexer.ts`, switch the keyword string per source field:
+`extractFrontmatterWikilinks` already returns `{ target, field }[]` (T12). In `src/rag/indexer.ts`, switch the keyword string per source field:
 
 ```typescript
 type LinkSource = { kind: 'body' } | { kind: 'frontmatter'; field: string };
@@ -1690,7 +1899,7 @@ export function vaultSection(filePath: string, locator: VaultSectionLocator): Va
     const startLine = chosen.line;
     const endLine = next ? next.line - 1 : lines.length - 1;
     const content = lines.slice(startLine, endLine + 1).join('\n');
-    const page = countPagesUpTo(lines, startLine); // TODO in next task; for now stub to 1
+    const page = pageOfLine(lines, startLine);
     const result: VaultSectionResult = {
       header: `File: ${filePath} / Section: ${chosen.text} / Page ${page} / Lines ${startLine + 1}-${endLine + 1}`,
       content,
@@ -1706,9 +1915,19 @@ export function vaultSection(filePath: string, locator: VaultSectionLocator): Va
   throw new Error('not yet implemented');
 }
 
-function countPagesUpTo(lines: string[], targetLine: number): number {
-  // Docling page markers look like "<!-- page: N -->" or similar — verify by reading
-  // a Docling-extracted file before pinning the regex. Stub for Task 16; refined in Task 17.
+// Verified Docling marker format from data/extractions/*/content.clean.md:
+//   <!-- page:1 label:section_header -->
+//   <!-- page:1 label:text -->
+//   <!-- page:2 label:picture -->
+// Multiple markers per page (one per chunk). Capture the integer after `page:`.
+const PAGE_MARKER_RE = /^<!-- page:(\d+) /;
+
+function pageOfLine(lines: string[], targetLine: number): number {
+  // Walk backwards from targetLine until we find a page marker. Default to 1 if none.
+  for (let i = Math.min(targetLine, lines.length - 1); i >= 0; i--) {
+    const m = lines[i].match(PAGE_MARKER_RE);
+    if (m) return parseInt(m[1], 10);
+  }
   return 1;
 }
 ```
@@ -1733,13 +1952,9 @@ git commit -m "feat(mcp): vault_section heading-match locator"
 - Modify: `container/agent-runner/src/vault-mcp-stdio.ts`
 - Test: `container/agent-runner/src/vault-mcp-stdio.test.ts`
 
-- [ ] **Step 1: Verify Docling page-marker format**
+- [ ] **Step 1: Page-marker format is verified**
 
-Run: `find vault/library -name "*.md" -exec head -50 {} \; | grep -i "page" | head -5`
-If no library files exist yet (likely — they don't), look at extraction artifacts:
-`find data/extractions -name "content.clean.md" -exec head -100 {} \; | grep -E "<!-- page|page:|^---$" | head -10`
-
-Pin the marker pattern in the implementation. The spec assumes Docling emits `<!-- page: N -->`-style markers; verify before writing the regex. If the actual format is different (e.g. `## Page N` or HR `---` separators), match that.
+Docling emits markers like `<!-- page:1 label:section_header -->` — multiple per page (one per chunk). The regex `/^<!-- page:(\d+) /` (already pinned in T16's implementation) captures the page number. **No further verification needed.** First marker for a page is the page boundary; subsequent markers on the same page are intra-page chunks.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1747,35 +1962,60 @@ Append:
 
 ```typescript
 describe('vaultSection (page locator)', () => {
-  it('returns content between page-N and page-(N+1) markers', () => {
+  it('returns content between first markers of page N and page N+1', () => {
     const file = join(dir, 'paged.md');
     writeFileSync(file, [
       '---', 'title: P', '---', '',
-      '<!-- page: 1 -->',
+      '<!-- page:1 label:section_header -->',
+      '## Intro',
+      '<!-- page:1 label:text -->',
       'page one body',
-      '<!-- page: 2 -->',
+      '<!-- page:2 label:text -->',
       'page two body',
-      '<!-- page: 3 -->',
+      '<!-- page:3 label:text -->',
       'page three body',
     ].join('\n'), 'utf-8');
     const result = vaultSection(file, { page: 2 });
     expect(result.content).toContain('page two body');
     expect(result.content).not.toContain('page one body');
     expect(result.content).not.toContain('page three body');
-    expect(result.header).toMatch(/Page 2 \/ Lines/);
+    // Header MUST include all four fields per spec §4.
+    expect(result.header).toMatch(/^File: .*\/paged\.md \/ Section: .+ \/ Page 2 \/ Lines \d+-\d+$/);
+  });
+
+  it('uses nearest enclosing heading at-or-before page start as Section', () => {
+    const file = join(dir, 'paged.md');
+    writeFileSync(file, [
+      '<!-- page:1 label:section_header -->',
+      '## Methods',
+      '<!-- page:2 label:text -->',
+      'page two body',
+    ].join('\n'), 'utf-8');
+    const result = vaultSection(file, { page: 2 });
+    expect(result.header).toContain('Section: Methods');
+  });
+
+  it('uses <page-only> when no heading precedes the page start', () => {
+    const file = join(dir, 'paged.md');
+    writeFileSync(file, [
+      '<!-- page:1 label:text -->',
+      'page one (no heading)',
+      '<!-- page:2 label:text -->',
+      'page two body',
+    ].join('\n'), 'utf-8');
+    const result = vaultSection(file, { page: 1 });
+    expect(result.header).toContain('Section: <page-only>');
   });
 
   it('miss returns total page count', () => {
     const file = join(dir, 'paged.md');
-    writeFileSync(file, '<!-- page: 1 -->\na\n<!-- page: 2 -->\nb', 'utf-8');
+    writeFileSync(file, '<!-- page:1 label:text -->\na\n<!-- page:2 label:text -->\nb', 'utf-8');
     const result = vaultSection(file, { page: 99 });
     expect(result.notFound).toBe(true);
     expect(result.header).toContain('total pages: 2');
   });
 });
 ```
-
-(Adjust marker syntax to match what was found in Step 1.)
 
 - [ ] **Step 3: Run — expect failure**
 
@@ -1784,18 +2024,26 @@ Expected: FAIL — `not yet implemented` thrown.
 
 - [ ] **Step 4: Implement page branch**
 
-Replace the `countPagesUpTo` stub with the verified regex and add the page locator branch:
+Add a helper that finds the **first** marker per page (subsequent markers on the same page are intra-page chunks, not boundaries):
 
 ```typescript
-const PAGE_MARKER_RE = /^<!-- page: (\d+) -->\s*$/; // adjust to verified marker
-
 function findPageBoundaries(lines: string[]): Map<number, number> {
   const map = new Map<number, number>();
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(PAGE_MARKER_RE);
-    if (m) map.set(parseInt(m[1], 10), i);
+    if (m) {
+      const page = parseInt(m[1], 10);
+      if (!map.has(page)) map.set(page, i);  // keep first marker only
+    }
   }
   return map;
+}
+
+function nearestHeadingAtOrBefore(headings: ParsedHeading[], line: number): string | undefined {
+  for (let i = headings.length - 1; i >= 0; i--) {
+    if (headings[i].line <= line) return headings[i].text;
+  }
+  return undefined;
 }
 
 // inside vaultSection:
@@ -1805,21 +2053,20 @@ if ('page' in locator) {
   const start = boundaries.get(locator.page);
   if (start === undefined) {
     return {
-      header: `File: ${filePath} / Page <not found> / total pages: ${totalPages}`,
+      header: `File: ${filePath} / Section: <not found> / Page <not found> / total pages: ${totalPages}`,
       content: '',
       notFound: true,
     };
   }
   const next = boundaries.get(locator.page + 1);
   const endLine = next !== undefined ? next - 1 : lines.length - 1;
+  const section = nearestHeadingAtOrBefore(headings, start) ?? '<page-only>';
   return {
-    header: `File: ${filePath} / Page ${locator.page} / Lines ${start + 1}-${endLine + 1}`,
+    header: `File: ${filePath} / Section: ${section} / Page ${locator.page} / Lines ${start + 1}-${endLine + 1}`,
     content: lines.slice(start, endLine + 1).join('\n'),
   };
 }
 ```
-
-Update `countPagesUpTo` to count boundaries with line ≤ targetLine — used by the section branch's header.
 
 - [ ] **Step 5: Run tests**
 
@@ -1845,13 +2092,21 @@ git commit -m "feat(mcp): vault_section page locator"
 
 ```typescript
 describe('vaultSection (range locator)', () => {
-  it('returns the requested line range', () => {
+  it('returns the requested line range with all four header fields', () => {
     const file = join(dir, 'r.md');
-    const lines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`);
+    const lines = ['<!-- page:1 label:text -->', '## Heading One', ...Array.from({ length: 100 }, (_, i) => `line ${i + 1}`)];
     writeFileSync(file, lines.join('\n'), 'utf-8');
-    const result = vaultSection(file, { range: { start: 10, end: 20 } });
-    expect(result.content.split('\n')).toEqual(lines.slice(9, 20));
-    expect(result.header).toMatch(/Lines 10-20/);
+    const result = vaultSection(file, { range: { start: 5, end: 15 } });
+    // Header MUST include Section, Page, Lines per spec §4.
+    expect(result.header).toMatch(/^File: .*\/r\.md \/ Section: Heading One \/ Page 1 \/ Lines 5-15$/);
+  });
+
+  it('uses <range> when no heading precedes the start line', () => {
+    const file = join(dir, 'r.md');
+    writeFileSync(file, 'plain\nlines\nonly\nno\nheadings\n', 'utf-8');
+    const result = vaultSection(file, { range: { start: 1, end: 3 } });
+    expect(result.header).toContain('Section: <range>');
+    expect(result.header).toContain('Page 1');
   });
 
   it('caps at 500 lines and sets truncated', () => {
@@ -1882,8 +2137,10 @@ if ('range' in locator) {
   const cappedEnd = Math.min(requestedEnd, startIdx + MAX_RANGE_LINES - 1, lines.length - 1);
   const truncated = cappedEnd < requestedEnd;
   const content = lines.slice(startIdx, cappedEnd + 1).join('\n');
+  const section = nearestHeadingAtOrBefore(headings, startIdx) ?? '<range>';
+  const page = pageOfLine(lines, startIdx);
   return {
-    header: `File: ${filePath} / Range / Lines ${startIdx + 1}-${cappedEnd + 1}`,
+    header: `File: ${filePath} / Section: ${section} / Page ${page} / Lines ${startIdx + 1}-${cappedEnd + 1}`,
     content,
     truncated: truncated || undefined,
   };
@@ -1981,7 +2238,7 @@ Replace `/* ListToolsRequest */` and `/* CallToolRequest */` with the actual sch
 
 - [ ] **Step 3: Mount in agent runner**
 
-In `container/agent-runner/src/index.ts`, at the existing rag-MCP mount block (around line 432), add a sibling entry:
+In `container/agent-runner/src/index.ts`, locate the `mcpServers` object (starts at ~line 421). Inside it, alongside the conditional `rag` entry (~line 432), add a sibling `vault` entry:
 
 ```typescript
 mcpServers: {
@@ -2299,9 +2556,24 @@ git commit -m "feat(backfill): walk sources and emit JSON report"
 
 Wire `Extractor.extract`, `writeLibraryFile`, `serializeFrontmatter`, and the tracker-row delete from `src/db.ts`.
 
-- [ ] **Step 1: Locate the tracker DB API**
+- [ ] **Step 1: Verify or add the tracker delete API**
 
-Read `src/db.ts` (and `src/db/schema/rag.ts` if separate) to find the function for deleting a `rag_tracker` row by `relPath`. Likely named `deleteTrackedDoc(relPath)` matching the existing `getTrackedDoc`/`upsertTrackedDoc` pattern.
+Run: `grep -n "deleteTrackedDoc\|tracked_doc\|rag_tracker" src/db.ts src/db/schema/rag.ts`
+
+The pattern `getTrackedDoc`/`upsertTrackedDoc` exists per the indexer code (see `src/rag/indexer.ts:103,126`). If `deleteTrackedDoc(relPath)` already exists, use it. **If it does not**, add it now in `src/db.ts` matching the existing helpers' shape:
+
+```typescript
+export function deleteTrackedDoc(relPath: string): void {
+  db.prepare('DELETE FROM rag_tracker WHERE rel_path = ?').run(relPath);
+}
+```
+
+(Adjust column name to whatever `rag_tracker` actually uses — check `src/db/schema/rag.ts`.) Add a unit test in the existing `src/db.test.ts` file matching the surrounding style. Commit this as a separate prep commit before continuing T23 step 2:
+
+```bash
+git add src/db.ts src/db.test.ts
+git commit -m "feat(db): deleteTrackedDoc helper for backfill force-reindex"
+```
 
 - [ ] **Step 2: Write the failing test**
 
@@ -2635,19 +2907,20 @@ Spec coverage check (against `2026-04-29-library-dual-graph-design.md`):
 
 | Spec section | Tasks | Notes |
 |---|---|---|
-| §1 Architecture | T3 (frontmatter shape), T9–T13 (dual-graph wiring) | Complete |
-| §2 Pipeline changes | T1, T4, T5, T6, T7, T8 | Status set, librarying drainer, library writer, stub, agent-prompt edit, Telegram notification removed |
-| §3 RAG indexer | T9–T15 | ALLOWED_PATHS, prefix, slug→title map, restricted scan, edges, timeouts, logging |
-| §4 vault_section MCP | T16–T20 | Section/page/range, mount, group prompts |
-| §5 Backfill | T21–T25 | Concurrency guard, walker, re-extract+patch, indexing, CLI |
-| §6 Tests | distributed across each task + T26 integration | Migration test in T2, librarying-failure in T4, stub frontmatter in T6, integration in T26 |
+| §1 Architecture (slug rule + frontmatter) | T0 (slug helper), T3 (library frontmatter), T9–T13 (dual-graph wiring) | Complete |
+| §2 Pipeline changes | T1, T4, T5, T6, T7, T8 | Status set, librarying drainer with recovery reset, library writer, stub via drafts/, agent-prompt edit, Telegram notification removed |
+| §3 RAG indexer | T9–T15 | ALLOWED_PATHS, prefix, slug→title map (private), restricted scan with `{target,field}` shape, distinct edge keywords, timeouts, logging |
+| §4 vault_section MCP | T16–T20 | Section/page/range with **all four header fields always**, Docling marker format pinned, mount, group prompts |
+| §5 Backfill | T21–T25 | Concurrency guard, walker, re-extract+patch, indexing, CLI; `deleteTrackedDoc` added if missing |
+| §6 Tests | distributed across each task + T26 integration | Migration test in T2, librarying-failure in T4, stub frontmatter (with `concepts_generated: []`) in T6, draft-validator regression in T8, integration in T26 |
 
-Placeholder scan: no `TBD`/`TODO`/"add appropriate" patterns. Two intentional verification steps embedded as work (Docling page-marker format in T17, tracker-delete API name in T23) — these require the implementer to read existing code, not invent something.
+Placeholder scan: no `TBD`/`TODO`/"add appropriate" patterns. The previously-flagged TBD-in-disguise items have been resolved inline — Docling page marker format is pinned (`<!-- page:N label:* -->`), `_journal.json` shape is pinned literally, `deleteTrackedDoc` is explicitly added if missing.
 
 Type consistency:
-- `JobRow`, `LibraryJobMeta`, `OversizedStubInput`, `VaultSectionLocator`, `BackfillReport`, `RunBackfillOptions` defined where introduced and referenced consistently afterward.
-- `writeLibraryFile`, `buildOversizedStub`, `vaultSection`, `runBackfill`, `assertNoLiveNanoclaw`, `parseArgs` keep stable names across tasks.
-- `slugTitleMap` exposed publicly on `RagIndexer` for testability — flagged in T11 implementation.
-- `extractFrontmatterWikilinks` returns `{ target, field }[]` from T12 onward — T13's keyword routing depends on this.
+- `JobRow`, `LibraryJobMeta`, `OversizedStubInput`, `VaultSectionLocator`, `VaultSectionResult`, `FrontmatterWikilink`, `BackfillReport`, `RunBackfillOptions` defined where introduced and referenced consistently afterward.
+- `writeLibraryFile`, `buildOversizedStub`, `vaultSection`, `runBackfill`, `assertNoLiveNanoclaw`, `parseArgs`, `slugFromFilename`, `resetRecoverableInProgress` keep stable names across tasks.
+- `slugTitleMap` is now `private` (no introspection in tests). Behavior is verified via wikilink resolution.
+- `extractFrontmatterWikilinks` returns `FrontmatterWikilink[]` (`{ target, field }[]`) from T12 onward — no shape change in T13.
+- `slug` is computed by `slugFromFilename(job.source_filename)` everywhere it appears (T5, T7, T8 prompt, T22 backfill walker via filename) — single source of truth per spec §1.
 
-Scope: 27 tasks. Reviewer recommended keeping whole; the integration test in T26 spans all earlier work.
+Scope: 28 tasks (added T0). Phased so each phase leaves the system coherent.
