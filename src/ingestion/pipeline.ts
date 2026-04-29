@@ -1,4 +1,5 @@
 import { getJobsByStatus, updateIngestionJob } from '../db.js';
+import { logger } from '../logger.js';
 
 export interface JobRow {
   id: string;
@@ -150,8 +151,15 @@ export class PipelineDrainer {
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(
+            { jobId: job.id, error: msg },
+            'librarying: onLibrary failed; staying at librarying for retry',
+          );
           // Stay at 'librarying' — recovery loop retries. Do not transition to 'failed'.
-          updateIngestionJob(job.id, { error: `librarying:${msg}` });
+          updateIngestionJob(job.id, {
+            error: `librarying:${msg}`,
+            retry_count: (job.retry_count ?? 0) + 1,
+          });
         })
         .finally(() => {
           this.activeLibrarying--;

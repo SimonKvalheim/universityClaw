@@ -396,6 +396,43 @@ describe('PipelineDrainer', () => {
       const generating = getJobsByStatus('generating') as Array<{ id: string }>;
       expect(generating.some((j) => j.id === 'j3')).toBe(true);
     });
+
+    it('respects maxLibrarianConcurrent cap', async () => {
+      vi.useRealTimers();
+      try {
+        // Seed 5 extracted jobs
+        for (let i = 0; i < 5; i++) {
+          createIngestionJob(`cap-${i}`, `/uploads/cap-${i}.pdf`, `cap-${i}.pdf`);
+          updateIngestionJob(`cap-${i}`, { status: 'extracted' });
+        }
+
+        let active = 0;
+        let observedMax = 0;
+        const drainer = new PipelineDrainer({
+          onExtract: async () => {},
+          onLibrary: async () => {
+            active++;
+            observedMax = Math.max(observedMax, active);
+            await new Promise((r) => setTimeout(r, 10));
+            active--;
+          },
+          onGenerate: async () => {},
+          onPromote: async () => {},
+          maxExtractionConcurrent: 2,
+          maxLibrarianConcurrent: 2,
+          maxGenerationConcurrent: 2,
+          pollIntervalMs: 100,
+        });
+
+        await drainer.drainLibrarying();
+        // Wait for the in-flight batch to settle.
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(observedMax).toBeLessThanOrEqual(2);
+      } finally {
+        vi.useFakeTimers();
+      }
+    });
   });
 
   describe('tick ordering', () => {

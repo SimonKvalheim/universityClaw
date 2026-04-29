@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { markInterruptedJobsFailed, resetRecoverableInProgress } from './job-recovery.js';
+import {
+  markInterruptedJobsFailed,
+  resetRecoverableInProgress,
+} from './job-recovery.js';
 import {
   _initTestDatabase,
   createIngestionJob,
@@ -122,5 +125,21 @@ describe('resetRecoverableInProgress', () => {
 
     expect(count).toBe(0);
     expect(getJobsByStatus('completed')).toHaveLength(1);
+  });
+
+  it('transitions a librarying job past the retry cap to failed instead of resetting', () => {
+    createIngestionJob('cap-1', '/tmp/cap-1.pdf', 'cap-1.pdf');
+    updateIngestionJob('cap-1', { status: 'librarying', retry_count: 5 });
+
+    const count = resetRecoverableInProgress();
+
+    expect(count).toBe(0);
+    const failed = getJobsByStatus('failed') as Array<{
+      id: string;
+      error: string | null;
+    }>;
+    const job = failed.find((j) => j.id === 'cap-1');
+    expect(job).toBeDefined();
+    expect(job!.error).toMatch(/exceeded retry cap/);
   });
 });
