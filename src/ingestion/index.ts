@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFileSync, unlinkSync, existsSync } from 'node:fs';
+import { readFileSync, unlinkSync, existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
@@ -57,6 +57,8 @@ import { createConcept, getConceptByVaultPath } from '../study/queries.js';
 import { slugFromFilename } from './slug.js';
 import { writeLibraryFile } from './library-writer.js';
 import { slugToTitle } from '../vault/wikilinks.js';
+import { buildOversizedStub } from './oversized-stub.js';
+import { serializeFrontmatter } from '../vault/frontmatter.js';
 
 const RATE_LIMIT_PATTERNS = [
   /rate.?limit/i,
@@ -179,9 +181,9 @@ export class IngestionPipeline {
       } else if (
         existing.status === 'completed' ||
         existing.status === 'extracting' ||
+        existing.status === 'libraried' ||
         existing.status === 'generating' ||
         existing.status === 'promoting' ||
-        existing.status === 'oversized' ||
         existing.status === 'rate_limited'
       ) {
         logger.info(
@@ -368,20 +370,39 @@ export class IngestionPipeline {
 
     if (estimatedTokens > TOKEN_BUDGET) {
       const tokensK = Math.round(estimatedTokens / 1000);
-      updateIngestionJob(job.id, {
-        status: 'oversized',
-        error: `oversized:~${tokensK}K tokens after cleanup`,
-      });
-      logger.warn(
+      logger.info(
         { jobId: job.id, estimatedTokens, budget: TOKEN_BUDGET },
-        `ingestion: Document oversized (~${tokensK}K tokens), parking job`,
+        `ingestion: Over budget (~${tokensK}K tokens); writing stub source draft`,
       );
-      if (this.notify) {
-        this.notify(
-          `Document '${fileName}' is too large for single-pass processing (~${tokensK}K tokens after cleanup). Retry or dismiss it from the dashboard.`,
-        );
-      }
-      return; // Do NOT throw — prevent drainer catch from overriding status
+
+      const slug = slugFromFilename(job.source_filename);
+      const cleanedBody = readFileSync(contentForBudget, 'utf-8');
+      const title = titleFromJobMetadata(job, cleanedBody) ?? slugToTitle(slug);
+      const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
+      const stub = buildOversizedStub({
+        title,
+        slug,
+        sourceType: job.source_type ?? 'paper',
+        ingestedFrom,
+        createdDate: new Date().toISOString().slice(0, 10),
+      });
+
+      // Write stub to drafts/ — promotion takes over from here. Filename matches
+      // pattern the agent would use: {jobId}-source.md. inferManifest walks drafts/,
+      // finds this single source draft (type:source), returns concept_notes:[].
+      // promoteNote then renames to vault/sources/{slug}.md based on title.
+      const draftPath = join(draftsDir, `${job.id}-source.md`);
+      mkdirSync(draftsDir, { recursive: true });
+      const tmp = `${draftPath}.tmp.${process.pid}.${Date.now()}`;
+      writeFileSync(
+        tmp,
+        serializeFrontmatter(stub.frontmatter, stub.body),
+        'utf-8',
+      );
+      renameSync(tmp, draftPath);
+
+      updateIngestionJob(job.id, { status: 'generated' });
+      return;
     }
 
     let vaultManifest: string | undefined;
