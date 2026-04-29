@@ -2,6 +2,8 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { serializeFrontmatter } from '../vault/frontmatter.js';
 
+let _tmpSeq = 0;
+
 export interface LibraryJobMeta {
   title: string;
   sourceType: string;
@@ -34,7 +36,7 @@ export function writeLibraryFile(input: WriteLibraryFileInput): string {
   }
 
   const finalPath = join(libraryDir, `${slug}.md`);
-  const tmpPath = `${finalPath}.tmp.${process.pid}.${Date.now()}`;
+  const tmpPath = `${finalPath}.tmp.${process.pid}.${Date.now()}.${++_tmpSeq}`;
   const content = serializeFrontmatter(fm, cleanedBody);
 
   writeFileSync(tmpPath, content, 'utf-8');
