@@ -182,6 +182,30 @@ describe('PipelineDrainer', () => {
       const rateLimited = getJobsByStatus('rate_limited') as JobRow[];
       expect(rateLimited.some((j) => j.id === 'rl-future')).toBe(true);
     });
+
+    it('resets a librarying:rate_limited job back to extracted', () => {
+      createIngestionJob('job-rl-1', '/uploads/x.pdf', 'x.pdf');
+      updateIngestionJob('job-rl-1', {
+        status: 'rate_limited',
+        error: 'librarying:rate limit exceeded',
+        retry_after: new Date(Date.now() - 1000).toISOString(),
+        retry_count: 0,
+      });
+      const drainer = new PipelineDrainer({
+        onExtract: async () => {},
+        onGenerate: async () => {},
+        onPromote: async () => {},
+        maxExtractionConcurrent: 2,
+        maxGenerationConcurrent: 2,
+        pollIntervalMs: 100,
+      });
+      drainer.drainRateLimited();
+      const all = getJobsByStatus('extracted') as JobRow[];
+      expect(all.some((j) => j.id === 'job-rl-1')).toBe(true);
+      const job = all.find((j) => j.id === 'job-rl-1')!;
+      expect(job.error).toBeNull();
+      expect(job.retry_count).toBe(1);
+    });
   });
 
   describe('stage-prefixed errors', () => {
@@ -326,27 +350,5 @@ describe('PipelineDrainer', () => {
       const libraried = getJobsByStatus('libraried') as JobRow[];
       expect(libraried.some((j) => j.id === 'tick-rl')).toBe(true);
     });
-  });
-});
-
-describe('PipelineDrainer rate-limited reset', () => {
-  it('resets a librarying:rate_limited job back to extracted', () => {
-    createIngestionJob('job-rl-1', '/uploads/x.pdf', 'x.pdf');
-    updateIngestionJob('job-rl-1', {
-      status: 'rate_limited',
-      error: 'librarying:rate limit exceeded',
-      retry_after: new Date(Date.now() - 1000).toISOString(),
-    });
-    const drainer = new PipelineDrainer({
-      onExtract: async () => {},
-      onGenerate: async () => {},
-      onPromote: async () => {},
-      maxExtractionConcurrent: 2,
-      maxGenerationConcurrent: 2,
-      pollIntervalMs: 100,
-    });
-    drainer.drainRateLimited();
-    const jobs = getJobsByStatus('extracted') as Array<{ id: string }>;
-    expect(jobs.some((j) => j.id === 'job-rl-1')).toBe(true);
   });
 });
