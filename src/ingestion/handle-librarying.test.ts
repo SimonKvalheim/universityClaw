@@ -1,10 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { _initTestDatabase, createIngestionJob, updateIngestionJob, getJobsByStatus } from '../db.js';
+import {
+  _initTestDatabase,
+  createIngestionJob,
+  updateIngestionJob,
+  getJobsByStatus,
+} from '../db.js';
 import { IngestionPipeline } from './index.js';
 import type { RegisteredGroup } from '../types.js';
+import { logger } from '../logger.js';
 
 const stubGroup: RegisteredGroup = {
   name: 'test',
@@ -28,7 +41,11 @@ describe('handleLibrarying', () => {
     mkdirSync(vaultDir, { recursive: true });
     mkdirSync(uploadDir, { recursive: true });
     mkdirSync(extractionDir, { recursive: true });
-    writeFileSync(join(extractionDir, 'content.clean.md'), 'CLEAN BODY', 'utf-8');
+    writeFileSync(
+      join(extractionDir, 'content.clean.md'),
+      'CLEAN BODY',
+      'utf-8',
+    );
   });
 
   afterEach(() => {
@@ -36,15 +53,25 @@ describe('handleLibrarying', () => {
   });
 
   it('writes vault/library/{slug}.md when a job transitions extracted → libraried', async () => {
-    createIngestionJob('j1', join(uploadDir, 'sample-paper.pdf'), 'sample-paper.pdf');
+    createIngestionJob(
+      'j1',
+      join(uploadDir, 'sample-paper.pdf'),
+      'sample-paper.pdf',
+    );
     updateIngestionJob('j1', {
       status: 'extracted',
       extraction_path: extractionDir,
       source_type: 'paper',
     });
 
-    const pipeline = new IngestionPipeline({ vaultDir, uploadDir, reviewAgentGroup: stubGroup });
-    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find((j) => j.id === 'j1')!;
+    const pipeline = new IngestionPipeline({
+      vaultDir,
+      uploadDir,
+      reviewAgentGroup: stubGroup,
+    });
+    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find(
+      (j) => j.id === 'j1',
+    )!;
     await pipeline.handleLibrarying(job as any);
 
     const libraryPath = join(vaultDir, 'library', 'sample-paper.md');
@@ -59,10 +86,19 @@ describe('handleLibrarying', () => {
     writeFileSync(join(extractionDir, 'content.md'), 'RAW BODY', 'utf-8');
 
     createIngestionJob('j2', join(uploadDir, 'foo.pdf'), 'foo.pdf');
-    updateIngestionJob('j2', { status: 'extracted', extraction_path: extractionDir });
+    updateIngestionJob('j2', {
+      status: 'extracted',
+      extraction_path: extractionDir,
+    });
 
-    const pipeline = new IngestionPipeline({ vaultDir, uploadDir, reviewAgentGroup: stubGroup });
-    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find((j) => j.id === 'j2')!;
+    const pipeline = new IngestionPipeline({
+      vaultDir,
+      uploadDir,
+      reviewAgentGroup: stubGroup,
+    });
+    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find(
+      (j) => j.id === 'j2',
+    )!;
     await pipeline.handleLibrarying(job as any);
 
     const written = readFileSync(join(vaultDir, 'library', 'foo.md'), 'utf-8');
@@ -78,8 +114,14 @@ describe('handleLibrarying', () => {
       extraction_path: extractionDir,
     });
 
-    const pipeline = new IngestionPipeline({ vaultDir, uploadDir, reviewAgentGroup: stubGroup });
-    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find((j) => j.id === 'j3')!;
+    const pipeline = new IngestionPipeline({
+      vaultDir,
+      uploadDir,
+      reviewAgentGroup: stubGroup,
+    });
+    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find(
+      (j) => j.id === 'j3',
+    )!;
     await pipeline.handleLibrarying(job as any);
 
     const written = readFileSync(join(vaultDir, 'library', 'zot.md'), 'utf-8');
@@ -88,13 +130,63 @@ describe('handleLibrarying', () => {
 
   it('falls back to slug-Title-Case when no metadata title is available', async () => {
     createIngestionJob('j4', join(uploadDir, 'two-words.pdf'), 'two-words.pdf');
-    updateIngestionJob('j4', { status: 'extracted', extraction_path: extractionDir });
+    updateIngestionJob('j4', {
+      status: 'extracted',
+      extraction_path: extractionDir,
+    });
 
-    const pipeline = new IngestionPipeline({ vaultDir, uploadDir, reviewAgentGroup: stubGroup });
-    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find((j) => j.id === 'j4')!;
+    const pipeline = new IngestionPipeline({
+      vaultDir,
+      uploadDir,
+      reviewAgentGroup: stubGroup,
+    });
+    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find(
+      (j) => j.id === 'j4',
+    )!;
     await pipeline.handleLibrarying(job as any);
 
-    const written = readFileSync(join(vaultDir, 'library', 'two-words.md'), 'utf-8');
+    const written = readFileSync(
+      join(vaultDir, 'library', 'two-words.md'),
+      'utf-8',
+    );
     expect(written).toMatch(/^title:\s*Two Words\s*$/m);
+  });
+
+  it('falls back to slug-Title-Case and logs a warn when zotero_metadata is malformed JSON', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn');
+
+    createIngestionJob('j5', join(uploadDir, 'bad-meta.pdf'), 'bad-meta.pdf', undefined, {
+      zotero_metadata: '{not valid json',
+    });
+    updateIngestionJob('j5', {
+      status: 'extracted',
+      extraction_path: extractionDir,
+    });
+
+    const pipeline = new IngestionPipeline({
+      vaultDir,
+      uploadDir,
+      reviewAgentGroup: stubGroup,
+    });
+    const job = (getJobsByStatus('extracted') as Array<{ id: string }>).find(
+      (j) => j.id === 'j5',
+    )!;
+    await pipeline.handleLibrarying(job as any);
+
+    // Library file should still be written
+    const libraryPath = join(vaultDir, 'library', 'bad-meta.md');
+    expect(existsSync(libraryPath)).toBe(true);
+
+    // Title should fall back to slug-Title-Case
+    const written = readFileSync(libraryPath, 'utf-8');
+    expect(written).toMatch(/^title:\s*Bad Meta\s*$/m);
+
+    // A warn should have been logged mentioning the malformed JSON
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'j5' }),
+      'titleFromJobMetadata: malformed zotero_metadata JSON; falling back to H1/slug',
+    );
+
+    warnSpy.mockRestore();
   });
 });

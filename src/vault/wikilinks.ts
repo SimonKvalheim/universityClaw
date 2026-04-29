@@ -1,3 +1,8 @@
+/** Convert a slug like "working-memory-architecture" to "Working Memory Architecture". */
+export function slugToTitle(slug: string): string {
+  return slug.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export interface WikiLink {
   target: string;
   heading: string | undefined;

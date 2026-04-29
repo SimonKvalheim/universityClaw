@@ -56,6 +56,7 @@ import { discoverConcepts } from '../study/concept-discovery.js';
 import { createConcept, getConceptByVaultPath } from '../study/queries.js';
 import { slugFromFilename } from './slug.js';
 import { writeLibraryFile } from './library-writer.js';
+import { slugToTitle } from '../vault/wikilinks.js';
 
 const RATE_LIMIT_PATTERNS = [
   /rate.?limit/i,
@@ -70,21 +71,21 @@ function isRateLimitError(msg: string): boolean {
   return RATE_LIMIT_PATTERNS.some((re) => re.test(msg));
 }
 
-function slugToTitle(slug: string): string {
-  return slug
-    .split('-')
-    .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : p))
-    .join(' ');
-}
-
-function titleFromJobMetadata(job: JobRow, cleanedBody?: string): string | null {
+function titleFromJobMetadata(
+  job: JobRow,
+  cleanedBody?: string,
+): string | null {
   // 1. Zotero metadata
   if (job.zotero_metadata) {
     try {
       const meta = JSON.parse(job.zotero_metadata) as { title?: unknown };
-      if (typeof meta.title === 'string' && meta.title.trim()) return meta.title.trim();
+      if (typeof meta.title === 'string' && meta.title.trim())
+        return meta.title.trim();
     } catch {
-      // malformed JSON: ignore
+      logger.warn(
+        { jobId: job.id },
+        'titleFromJobMetadata: malformed zotero_metadata JSON; falling back to H1/slug',
+      );
     }
   }
   // 2. First H1 of the extraction body
@@ -290,11 +291,14 @@ export class IngestionPipeline {
    */
   public async handleLibrarying(job: JobRow): Promise<void> {
     const extractionPath = job.extraction_path;
-    if (!extractionPath) throw new Error(`No extraction path for job ${job.id}`);
+    if (!extractionPath)
+      throw new Error(`No extraction path for job ${job.id}`);
 
     const cleanContentPath = join(extractionPath, 'content.clean.md');
     const rawContentPath = join(extractionPath, 'content.md');
-    const contentPath = existsSync(cleanContentPath) ? cleanContentPath : rawContentPath;
+    const contentPath = existsSync(cleanContentPath)
+      ? cleanContentPath
+      : rawContentPath;
     const cleanedBody = readFileSync(contentPath, 'utf-8');
 
     // Single slug rule — derived from source filename only.

@@ -3,7 +3,30 @@ import {
   extractWikilinks,
   createWikilink,
   replaceWikilinks,
+  slugToTitle,
 } from './wikilinks.js';
+
+describe('slugToTitle', () => {
+  it('converts a hyphenated slug to title case', () => {
+    expect(slugToTitle('working-memory-architecture')).toBe(
+      'Working Memory Architecture',
+    );
+  });
+
+  it('converts an underscored slug to title case', () => {
+    expect(slugToTitle('working_memory_architecture')).toBe(
+      'Working Memory Architecture',
+    );
+  });
+
+  it('handles a short slug', () => {
+    expect(slugToTitle('a-b-c')).toBe('A B C');
+  });
+
+  it('returns an empty string unchanged', () => {
+    expect(slugToTitle('')).toBe('');
+  });
+});
 
 describe('extractWikilinks', () => {
   it('extracts a simple wikilink', () => {

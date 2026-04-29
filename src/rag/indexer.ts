@@ -5,7 +5,7 @@ import { logger } from '../logger.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
-import { extractWikilinks } from '../vault/wikilinks.js';
+import { extractWikilinks, slugToTitle } from '../vault/wikilinks.js';
 import { computeDocId } from './doc-id.js';
 
 /**
@@ -17,11 +17,6 @@ import { computeDocId } from './doc-id.js';
  * attachments/ (binary figures), and any other top-level directories.
  */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
-
-/** Convert a slug like "working-memory-architecture" to "Working Memory Architecture". */
-function slugToTitle(slug: string): string {
-  return slug.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 export class RagIndexer {
   private vaultDir: string;
