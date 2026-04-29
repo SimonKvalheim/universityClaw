@@ -26,6 +26,7 @@ describe('PipelineDrainer', () => {
       onExtract: async (job) => {
         extracted.push(job.id);
       },
+      onLibrary: async () => {},
       onGenerate: async () => {},
       onPromote: async () => {},
       maxExtractionConcurrent: 2,
@@ -43,13 +44,14 @@ describe('PipelineDrainer', () => {
     expect(jobs.some((j) => j.id === 'job-1')).toBe(true);
   });
 
-  it('picks up extracted jobs and calls onGenerate', async () => {
+  it('picks up libraried jobs and calls onGenerate', async () => {
     createIngestionJob('job-2', '/uploads/job-2.pdf', 'job-2.pdf');
-    updateIngestionJob('job-2', { status: 'extracted' });
+    updateIngestionJob('job-2', { status: 'libraried' });
 
     const generated: string[] = [];
     const drainer = new PipelineDrainer({
       onExtract: async () => {},
+      onLibrary: async () => {},
       onGenerate: async (job) => {
         generated.push(job.id);
       },
@@ -75,6 +77,7 @@ describe('PipelineDrainer', () => {
     const promoted: string[] = [];
     const drainer = new PipelineDrainer({
       onExtract: async () => {},
+      onLibrary: async () => {},
       onGenerate: async () => {},
       onPromote: async (job) => {
         promoted.push(job.id);
@@ -123,6 +126,7 @@ describe('PipelineDrainer', () => {
 
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async () => {},
         onPromote: async () => {},
         maxExtractionConcurrent: 2,
@@ -169,6 +173,7 @@ describe('PipelineDrainer', () => {
 
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async () => {},
         onPromote: async () => {},
         maxExtractionConcurrent: 2,
@@ -193,6 +198,7 @@ describe('PipelineDrainer', () => {
       });
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async () => {},
         onPromote: async () => {},
         maxExtractionConcurrent: 2,
@@ -216,6 +222,7 @@ describe('PipelineDrainer', () => {
         onExtract: async () => {
           throw new Error('disk full');
         },
+        onLibrary: async () => {},
         onGenerate: async () => {},
         onPromote: async () => {},
         maxExtractionConcurrent: 2,
@@ -235,10 +242,11 @@ describe('PipelineDrainer', () => {
 
     it('prefixes generation errors with generating:', async () => {
       createIngestionJob('gen-err', '/uploads/gen-err.pdf', 'gen-err.pdf');
-      updateIngestionJob('gen-err', { status: 'extracted' });
+      updateIngestionJob('gen-err', { status: 'libraried' });
 
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async () => {
           throw new Error('timeout');
         },
@@ -264,6 +272,7 @@ describe('PipelineDrainer', () => {
 
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async () => {},
         onPromote: async () => {
           throw new Error('vault locked');
@@ -287,16 +296,17 @@ describe('PipelineDrainer', () => {
   describe('dynamic concurrency', () => {
     it('calls getter function for maxGenerationConcurrent', async () => {
       createIngestionJob('dyn-1', '/uploads/dyn-1.pdf', 'dyn-1.pdf');
-      updateIngestionJob('dyn-1', { status: 'extracted' });
+      updateIngestionJob('dyn-1', { status: 'libraried' });
       createIngestionJob('dyn-2', '/uploads/dyn-2.pdf', 'dyn-2.pdf');
-      updateIngestionJob('dyn-2', { status: 'extracted' });
+      updateIngestionJob('dyn-2', { status: 'libraried' });
       createIngestionJob('dyn-3', '/uploads/dyn-3.pdf', 'dyn-3.pdf');
-      updateIngestionJob('dyn-3', { status: 'extracted' });
+      updateIngestionJob('dyn-3', { status: 'libraried' });
 
       const getter = vi.fn().mockReturnValue(2);
       const generated: string[] = [];
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async (job) => {
           generated.push(job.id);
         },
@@ -317,6 +327,77 @@ describe('PipelineDrainer', () => {
     });
   });
 
+  describe('drainLibrarying', () => {
+    it('moves extracted → librarying → libraried on success', async () => {
+      createIngestionJob('j1', '/uploads/j1.pdf', 'j1.pdf');
+      updateIngestionJob('j1', { status: 'extracted' });
+
+      const drainer = new PipelineDrainer({
+        onExtract: async () => {},
+        onLibrary: async () => {},
+        onGenerate: async () => {},
+        onPromote: async () => {},
+        maxExtractionConcurrent: 2,
+        maxGenerationConcurrent: 2,
+        pollIntervalMs: 100,
+      });
+
+      await drainer.drainLibrarying();
+      await drainer.stop();
+
+      const libraried = getJobsByStatus('libraried') as Array<{ id: string }>;
+      expect(libraried.some((j) => j.id === 'j1')).toBe(true);
+    });
+
+    it('leaves job at librarying on onLibrary failure', async () => {
+      createIngestionJob('j2', '/uploads/j2.pdf', 'j2.pdf');
+      updateIngestionJob('j2', { status: 'extracted' });
+
+      const drainer = new PipelineDrainer({
+        onExtract: async () => {},
+        onLibrary: async () => {
+          throw new Error('disk full');
+        },
+        onGenerate: async () => {},
+        onPromote: async () => {},
+        maxExtractionConcurrent: 2,
+        maxGenerationConcurrent: 2,
+        pollIntervalMs: 100,
+      });
+
+      await drainer.drainLibrarying();
+      await drainer.stop();
+
+      const librarying = getJobsByStatus('librarying') as Array<{
+        id: string;
+        error: string | null;
+      }>;
+      const job = librarying.find((j) => j.id === 'j2');
+      expect(job).toBeDefined();
+      expect(job!.error).toMatch(/librarying:disk full/);
+    });
+
+    it('drainGenerations now reads from libraried, not extracted', async () => {
+      createIngestionJob('j3', '/uploads/j3.pdf', 'j3.pdf');
+      updateIngestionJob('j3', { status: 'libraried' });
+
+      const drainer = new PipelineDrainer({
+        onExtract: async () => {},
+        onLibrary: async () => {},
+        onGenerate: async () => {},
+        onPromote: async () => {},
+        maxExtractionConcurrent: 2,
+        maxGenerationConcurrent: 2,
+        pollIntervalMs: 100,
+      });
+
+      await drainer.drainGenerations();
+
+      const generating = getJobsByStatus('generating') as Array<{ id: string }>;
+      expect(generating.some((j) => j.id === 'j3')).toBe(true);
+    });
+  });
+
   describe('tick ordering', () => {
     it('calls drainRateLimited before other drain methods', async () => {
       // Set up a rate_limited job with generating error prefix
@@ -333,6 +414,7 @@ describe('PipelineDrainer', () => {
 
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
+        onLibrary: async () => {},
         onGenerate: async () => {},
         onPromote: async () => {},
         maxExtractionConcurrent: 2,
@@ -342,13 +424,13 @@ describe('PipelineDrainer', () => {
 
       await drainer.tick();
 
-      // drainRateLimited ran first, resetting to 'libraried'
+      // drainRateLimited ran first, resetting to 'libraried', then drainGenerations picked it up
       const rateLimited = getJobsByStatus('rate_limited') as JobRow[];
       expect(rateLimited).toHaveLength(0);
 
-      // Job is now in 'libraried' state (not consumed by drainGenerations which reads 'extracted')
-      const libraried = getJobsByStatus('libraried') as JobRow[];
-      expect(libraried.some((j) => j.id === 'tick-rl')).toBe(true);
+      // Job moved from rate_limited → libraried → generating within the same tick
+      const generating = getJobsByStatus('generating') as JobRow[];
+      expect(generating.some((j) => j.id === 'tick-rl')).toBe(true);
     });
   });
 });

@@ -6,7 +6,7 @@ import { FileWatcher } from './file-watcher.js';
 import { AgentProcessor } from './agent-processor.js';
 import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
-import { markInterruptedJobsFailed } from './job-recovery.js';
+import { markInterruptedJobsFailed, resetRecoverableInProgress } from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { buildVaultManifest } from './vault-manifest.js';
 import { promoteNote } from './promoter.js';
@@ -100,6 +100,7 @@ export class IngestionPipeline {
     });
     this.drainer = new PipelineDrainer({
       onExtract: (job) => this.handleExtraction(job),
+      onLibrary: async () => {}, // no-op until T5 wires in handleLibrarying
       onGenerate: (job) => this.handleGeneration(job),
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
@@ -700,6 +701,7 @@ export class IngestionPipeline {
     await mkdir(PROCESSED_DIR, { recursive: true });
     await mkdir(join(this.vaultDir, 'drafts'), { recursive: true });
 
+    resetRecoverableInProgress();
     markInterruptedJobsFailed();
 
     await this.watcher.start();

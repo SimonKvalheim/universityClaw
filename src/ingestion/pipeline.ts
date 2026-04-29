@@ -18,10 +18,12 @@ export interface JobRow {
 
 export interface PipelineDrainerOpts {
   onExtract: (job: JobRow) => Promise<void>;
+  onLibrary: (job: JobRow) => Promise<void>;
   onGenerate: (job: JobRow) => Promise<void>;
   onPromote: (job: JobRow) => Promise<void>;
   onComplete?: (job: JobRow) => Promise<void>;
   maxExtractionConcurrent: number;
+  maxLibrarianConcurrent?: number;
   maxGenerationConcurrent: number | (() => number);
   pollIntervalMs: number;
 }
@@ -30,6 +32,7 @@ export class PipelineDrainer {
   private opts: PipelineDrainerOpts;
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeExtractions = 0;
+  private activeLibrarying = 0;
   private activeGenerations = 0;
   private inFlight: Set<Promise<void>> = new Set();
 
@@ -62,6 +65,7 @@ export class PipelineDrainer {
   async tick(): Promise<void> {
     this.drainRateLimited();
     await this.drainExtractions();
+    await this.drainLibrarying();
     await this.drainGenerations();
     await this.drainPromotions();
   }
@@ -128,12 +132,41 @@ export class PipelineDrainer {
     }
   }
 
+  async drainLibrarying(): Promise<void> {
+    const max = this.opts.maxLibrarianConcurrent ?? 2;
+    const slots = max - this.activeLibrarying;
+    if (slots <= 0) return;
+
+    const extracted = getJobsByStatus('extracted') as JobRow[];
+    const batch = extracted.slice(0, slots);
+
+    for (const job of batch) {
+      updateIngestionJob(job.id, { status: 'librarying' });
+      this.activeLibrarying++;
+      const p = this.opts
+        .onLibrary(job)
+        .then(() => {
+          updateIngestionJob(job.id, { status: 'libraried', error: null });
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Stay at 'librarying' — recovery loop retries. Do not transition to 'failed'.
+          updateIngestionJob(job.id, { error: `librarying:${msg}` });
+        })
+        .finally(() => {
+          this.activeLibrarying--;
+          this.inFlight.delete(p);
+        });
+      this.inFlight.add(p);
+    }
+  }
+
   async drainGenerations(): Promise<void> {
     const maxGen = this.getMaxGenerationConcurrent();
     const slots = maxGen - this.activeGenerations;
     if (slots <= 0) return;
 
-    const extracted = getJobsByStatus('extracted') as JobRow[];
+    const extracted = getJobsByStatus('libraried') as JobRow[];
 
     for (const job of extracted) {
       if (this.activeGenerations >= maxGen) break;
