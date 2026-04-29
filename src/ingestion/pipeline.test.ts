@@ -139,10 +139,10 @@ describe('PipelineDrainer', () => {
       expect(rl1.retry_count).toBe(1);
       expect(rl1.error).toBeNull();
 
-      // rl-2 should be reset to 'extracted' (generating → extracted)
-      const extracted = getJobsByStatus('extracted') as JobRow[];
-      expect(extracted.some((j) => j.id === 'rl-2')).toBe(true);
-      const rl2 = extracted.find((j) => j.id === 'rl-2')!;
+      // rl-2 should be reset to 'libraried' (generating → libraried)
+      const libraried = getJobsByStatus('libraried') as JobRow[];
+      expect(libraried.some((j) => j.id === 'rl-2')).toBe(true);
+      const rl2 = libraried.find((j) => j.id === 'rl-2')!;
       expect(rl2.retry_count).toBe(2);
 
       // rl-3 should be reset to 'generated' (promoting → generated)
@@ -296,7 +296,7 @@ describe('PipelineDrainer', () => {
   describe('tick ordering', () => {
     it('calls drainRateLimited before other drain methods', async () => {
       // Set up a rate_limited job with generating error prefix
-      // so it resets to 'extracted', which drainGenerations will then pick up
+      // so it resets to 'libraried' (generating → libraried in new pipeline)
       const pastDate = new Date(Date.now() - 60_000).toISOString();
       createIngestionJob('tick-rl', '/uploads/tick-rl.pdf', 'tick-rl.pdf');
       updateIngestionJob('tick-rl', {
@@ -307,12 +307,9 @@ describe('PipelineDrainer', () => {
         extraction_path: '/tmp/ext',
       });
 
-      const generatedIds: string[] = [];
       const drainer = new PipelineDrainer({
         onExtract: async () => {},
-        onGenerate: async (job) => {
-          generatedIds.push(job.id);
-        },
+        onGenerate: async () => {},
         onPromote: async () => {},
         maxExtractionConcurrent: 2,
         maxGenerationConcurrent: 2,
@@ -321,13 +318,35 @@ describe('PipelineDrainer', () => {
 
       await drainer.tick();
 
-      // drainRateLimited ran first, resetting to 'extracted',
-      // then drainGenerations picked it up
+      // drainRateLimited ran first, resetting to 'libraried'
       const rateLimited = getJobsByStatus('rate_limited') as JobRow[];
       expect(rateLimited).toHaveLength(0);
 
-      // The job should have been picked up by onGenerate
-      expect(generatedIds).toContain('tick-rl');
+      // Job is now in 'libraried' state (not consumed by drainGenerations which reads 'extracted')
+      const libraried = getJobsByStatus('libraried') as JobRow[];
+      expect(libraried.some((j) => j.id === 'tick-rl')).toBe(true);
     });
+  });
+});
+
+describe('PipelineDrainer rate-limited reset', () => {
+  it('resets a librarying:rate_limited job back to extracted', () => {
+    createIngestionJob('job-rl-1', '/uploads/x.pdf', 'x.pdf');
+    updateIngestionJob('job-rl-1', {
+      status: 'rate_limited',
+      error: 'librarying:rate limit exceeded',
+      retry_after: new Date(Date.now() - 1000).toISOString(),
+    });
+    const drainer = new PipelineDrainer({
+      onExtract: async () => {},
+      onGenerate: async () => {},
+      onPromote: async () => {},
+      maxExtractionConcurrent: 2,
+      maxGenerationConcurrent: 2,
+      pollIntervalMs: 100,
+    });
+    drainer.drainRateLimited();
+    const jobs = getJobsByStatus('extracted') as Array<{ id: string }>;
+    expect(jobs.some((j) => j.id === 'job-rl-1')).toBe(true);
   });
 });

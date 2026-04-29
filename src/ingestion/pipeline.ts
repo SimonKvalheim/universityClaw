@@ -68,7 +68,8 @@ export class PipelineDrainer {
 
   private static readonly STAGE_RESET_MAP: Record<string, string> = {
     extracting: 'pending',
-    generating: 'extracted',
+    librarying: 'extracted',
+    generating: 'libraried',
     promoting: 'generated',
   };
 
