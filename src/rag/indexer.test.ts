@@ -378,7 +378,9 @@ BODY`);
     expect(mockRagClient.index).toHaveBeenCalledOnce();
     const indexed = mockRagClient.index.mock.calls[0][0] as string;
     const firstLine = indexed.split('\n')[0];
-    expect(firstLine).toBe('[Title: Foo | Type: library | Source summary: foo]');
+    expect(firstLine).toBe(
+      '[Title: Foo | Type: library | Source summary: foo]',
+    );
   });
 
   it('omits Source summary when missing (over-budget case)', async () => {
@@ -395,5 +397,114 @@ BODY`);
     const indexed = mockRagClient.index.mock.calls[0][0] as string;
     const firstLine = indexed.split('\n')[0];
     expect(firstLine).toBe('[Title: Big | Type: library]');
+  });
+});
+
+describe('slug→title map (behavioral)', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('handleAdd populates the map; subsequent injectWikilinks resolves via map', async () => {
+    const targetContent = `---
+title: TargetTitle
+type: source
+---
+
+`;
+    const originContent = `---
+title: OriginTitle
+type: source
+---
+
+body refs [[target]]`;
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.includes('target.md')) return targetContent;
+      if (path.includes('origin.md')) return originContent;
+      throw new Error(`unexpected read: ${path}`);
+    });
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/target.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    // entityExists should have been called for the target with the map-resolved title
+    expect(mockRagClient.entityExists).toHaveBeenCalledWith('TargetTitle');
+  });
+
+  it('handleChange refreshes the map', async () => {
+    let titleVersion = 'OldTitle';
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.includes('thing.md')) {
+        return `---\ntitle: ${titleVersion}\ntype: source\n---\n`;
+      }
+      if (path.includes('origin.md')) {
+        return `---\ntitle: O\ntype: source\n---\nrefs [[thing]]`;
+      }
+      throw new Error(`unexpected: ${path}`);
+    });
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/thing.md');
+    titleVersion = 'NewTitle';
+    await indexer.handleChange('/vault/sources/thing.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    expect(mockRagClient.entityExists).toHaveBeenCalledWith('NewTitle');
+  });
+
+  it('handleUnlink forgets the slug; subsequent injectWikilinks falls back to slugToTitle and warns', async () => {
+    const goneContent = `---
+title: GoneTitle
+type: source
+---
+
+`;
+    const originContent = `---
+title: O
+type: source
+---
+
+refs [[gone]]`;
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.includes('gone.md')) return goneContent;
+      if (path.includes('origin.md')) return originContent;
+      throw new Error(`unexpected: ${path}`);
+    });
+    // Tracker doesn't have gone.md, so handleUnlink will return early after map delete
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    // Import logger and spy on it
+    const loggerModule = await import('../logger.js');
+    const warnSpy = vi.spyOn(loggerModule.logger, 'warn');
+
+    await indexer.handleAdd('/vault/sources/gone.md');
+    await indexer.handleUnlink('/vault/sources/gone.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    // After unlink, entityExists is called with the slugToTitle fallback ('Gone'), not 'GoneTitle'
+    expect(mockRagClient.entityExists).toHaveBeenCalledWith('Gone');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'gone' }),
+      expect.stringContaining('not in slug-title map'),
+    );
+    warnSpy.mockRestore();
   });
 });

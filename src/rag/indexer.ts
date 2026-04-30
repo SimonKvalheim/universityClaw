@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from 'chokidar';
-import { readFileSync } from 'fs';
-import { relative, resolve } from 'path';
+import { readFileSync, readdirSync } from 'fs';
+import { basename, relative, resolve } from 'path';
 import { logger } from '../logger.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
@@ -23,6 +23,7 @@ export class RagIndexer {
   private ragClient: RagClient;
   private watcher: FSWatcher | null = null;
   private queue: Promise<void> = Promise.resolve();
+  private slugTitleMap = new Map<string, string>();
 
   constructor(vaultDir: string, ragClient: RagClient) {
     this.vaultDir = resolve(vaultDir);
@@ -30,14 +31,29 @@ export class RagIndexer {
   }
 
   start(): void {
+    // Initialize slug→title map from existing files in allowed paths
+    for (const dir of ALLOWED_PATHS) {
+      const full = resolve(this.vaultDir, dir);
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(full);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.endsWith('.md')) continue;
+        this.indexSlugTitle(resolve(full, entry));
+      }
+    }
+
     const watchPaths = ALLOWED_PATHS.map((p) => resolve(this.vaultDir, p));
     this.watcher = watch(watchPaths, {
       ignoreInitial: false,
       awaitWriteFinish: { stabilityThreshold: 500 },
       ignored: [/(^|[/\\])\./],
     });
-    this.watcher.on('add', (fp) => this.enqueue(() => this.indexFile(fp)));
-    this.watcher.on('change', (fp) => this.enqueue(() => this.indexFile(fp)));
+    this.watcher.on('add', (fp) => this.enqueue(() => this.handleAdd(fp)));
+    this.watcher.on('change', (fp) => this.enqueue(() => this.handleChange(fp)));
     this.watcher.on('unlink', (fp) =>
       this.enqueue(() => this.handleUnlink(fp)),
     );
@@ -51,6 +67,31 @@ export class RagIndexer {
   /** Serialize operations to avoid overwhelming LightRAG. */
   private enqueue(fn: () => Promise<void>): void {
     this.queue = this.queue.then(fn, fn).catch(() => {});
+  }
+
+  private indexSlugTitle(filePath: string): void {
+    let raw: string;
+    try {
+      raw = readFileSync(filePath, 'utf-8');
+    } catch {
+      return;
+    }
+    const { data: fm } = parseFrontmatter(raw);
+    const slug = basename(filePath, '.md');
+    const title = String(fm.title || '').trim();
+    if (title) this.slugTitleMap.set(slug, title);
+  }
+
+  async handleAdd(filePath: string): Promise<void> {
+    if (!filePath.endsWith('.md')) return;
+    this.indexSlugTitle(filePath);
+    await this.indexFile(filePath);
+  }
+
+  async handleChange(filePath: string): Promise<void> {
+    if (!filePath.endsWith('.md')) return;
+    this.indexSlugTitle(filePath);
+    await this.indexFile(filePath);
   }
 
   async indexFile(filePath: string): Promise<void> {
@@ -152,7 +193,14 @@ export class RagIndexer {
     if (!sourceExists) return;
 
     for (const link of links) {
-      const targetTitle = slugToTitle(link.target);
+      let targetTitle = this.slugTitleMap.get(link.target);
+      if (!targetTitle) {
+        logger.warn(
+          { slug: link.target },
+          `rag: target slug not in slug-title map; falling back to slugToTitle`,
+        );
+        targetTitle = slugToTitle(link.target);
+      }
 
       try {
         const targetExists = await this.ragClient.entityExists(targetTitle);
@@ -174,6 +222,9 @@ export class RagIndexer {
 
   async handleUnlink(filePath: string): Promise<void> {
     if (!filePath.endsWith('.md')) return;
+
+    const slug = basename(filePath, '.md');
+    this.slugTitleMap.delete(slug);
 
     const relPath = relative(this.vaultDir, filePath);
     const tracked = getTrackedDoc(relPath);
