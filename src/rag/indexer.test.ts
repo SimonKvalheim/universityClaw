@@ -347,3 +347,53 @@ Uses [[self-attention]] and [[feed-forward-networks]].`);
     );
   });
 });
+
+describe('library prefix shape', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('emits Title | Type | Source summary when source_summary present', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Foo
+type: library
+source_summary: "[[foo]]"
+---
+
+BODY`);
+
+    await indexer.indexFile('/vault/library/foo.md');
+
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const indexed = mockRagClient.index.mock.calls[0][0] as string;
+    const firstLine = indexed.split('\n')[0];
+    expect(firstLine).toBe('[Title: Foo | Type: library | Source summary: foo]');
+  });
+
+  it('omits Source summary when missing (over-budget case)', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Big
+type: library
+---
+
+BODY`);
+
+    await indexer.indexFile('/vault/library/big.md');
+
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const indexed = mockRagClient.index.mock.calls[0][0] as string;
+    const firstLine = indexed.split('\n')[0];
+    expect(firstLine).toBe('[Title: Big | Type: library]');
+  });
+});

@@ -79,10 +79,17 @@ export class RagIndexer {
     const sourceDoc = fm.source_doc || '';
     const verification = fm.verification_status || 'unverified';
 
-    const parts = [`Title: ${title}`, `Type: ${type}`];
-    if (topics) parts.push(`Topics: ${topics}`);
-    if (sourceDoc) parts.push(`Source: ${sourceDoc}`);
-    parts.push(`Verification: ${verification}`);
+    const parts: string[] = [`Title: ${title}`, `Type: ${type}`];
+
+    if (type === 'library') {
+      const sourceSummaryRaw = String(fm.source_summary || '');
+      const slug = sourceSummaryRaw.replace(/^\[\[|\]\]$/g, '').trim();
+      if (slug) parts.push(`Source summary: ${slug}`);
+    } else {
+      if (topics) parts.push(`Topics: ${topics}`);
+      if (sourceDoc) parts.push(`Source: ${sourceDoc}`);
+      parts.push(`Verification: ${verification}`);
+    }
 
     const prefix = `[${parts.join(' | ')}]`;
     const indexed = `${prefix}\nSource path: ${relPath}\n\n${body}`;
