@@ -43,6 +43,28 @@ function pageOfLine(lines: string[], targetLine: number): number {
   return 1;
 }
 
+function findPageBoundaries(lines: string[]): Map<number, number> {
+  const map = new Map<number, number>();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(PAGE_MARKER_RE);
+    if (m) {
+      const page = parseInt(m[1], 10);
+      if (!map.has(page)) map.set(page, i); // keep first marker only
+    }
+  }
+  return map;
+}
+
+function nearestHeadingAtOrBefore(
+  headings: ParsedHeading[],
+  line: number,
+): string | undefined {
+  for (let i = headings.length - 1; i >= 0; i--) {
+    if (headings[i].line <= line) return headings[i].text;
+  }
+  return undefined;
+}
+
 export function vaultSection(
   filePath: string,
   locator: VaultSectionLocator,
@@ -83,6 +105,26 @@ export function vaultSection(
     return result;
   }
 
-  // page / range branches: implemented in T17/T18
+  if ('page' in locator) {
+    const boundaries = findPageBoundaries(lines);
+    const totalPages = boundaries.size;
+    const start = boundaries.get(locator.page);
+    if (start === undefined) {
+      return {
+        header: `File: ${filePath} / Section: <not found> / Page <not found> / total pages: ${totalPages}`,
+        content: '',
+        notFound: true,
+      };
+    }
+    const next = boundaries.get(locator.page + 1);
+    const endLine = next !== undefined ? next - 1 : lines.length - 1;
+    const section = nearestHeadingAtOrBefore(headings, start) ?? '<page-only>';
+    return {
+      header: `File: ${filePath} / Section: ${section} / Page ${locator.page} / Lines ${start + 1}-${endLine + 1}`,
+      content: lines.slice(start, endLine + 1).join('\n'),
+    };
+  }
+
+  // range branch: implemented in T18
   throw new Error('not yet implemented');
 }
