@@ -12,6 +12,11 @@ export interface ExtractorLike {
   ): Promise<{ cleanContentPath: string }>;
 }
 
+export interface IndexerLike {
+  start(): Promise<void> | void;
+  indexFile(filePath: string): Promise<void>;
+}
+
 export interface AssertOptions {
   spawn?: (cmd: string, args: string[]) => Promise<{ stdout: string }>;
   force?: boolean;
@@ -65,12 +70,17 @@ export interface RunBackfillOptions {
   noPatchSource?: boolean;
   force?: boolean;
   extractor?: ExtractorLike; // injected for testability; CLI builds a real Extractor adapter
+  indexer?: IndexerLike; // injected for testability; CLI builds a real RagIndexer
 }
 
 export async function runBackfill(
   opts: RunBackfillOptions,
 ): Promise<BackfillReport> {
   await assertNoLiveNanoclaw({ force: opts.force });
+
+  if (!opts.dryRun && opts.indexer) {
+    await opts.indexer.start();
+  }
 
   const sourcesDir = join(opts.vaultDir, 'sources');
   const allSources = readdirSync(sourcesDir).filter((f) => f.endsWith('.md'));
@@ -155,6 +165,15 @@ export async function runBackfill(
       }
 
       report.processed++;
+
+      if (opts.indexer) {
+        const libraryPath = join(opts.vaultDir, 'library', `${slug}.md`);
+        await opts.indexer.indexFile(libraryPath);
+        if (!opts.noPatchSource) {
+          const sourcePath = join(sourcesDir, file);
+          await opts.indexer.indexFile(sourcePath);
+        }
+      }
     } catch (err) {
       report.errors.push({
         slug,

@@ -242,3 +242,134 @@ describe('backfill execute path (non-dry-run)', () => {
     expect(dbModule.getTrackedDoc('sources/p.md')).not.toBeNull();
   });
 });
+
+describe('backfill direct indexing', () => {
+  let tmp: string;
+  let vaultDir: string;
+  let uploadProcessedDir: string;
+  let reportPath: string;
+
+  function makeStubExtractor(body: string) {
+    return {
+      extract: async (jobId: string): Promise<{ cleanContentPath: string }> => {
+        const extractDir = join(tmp, 'extractions', jobId);
+        mkdirSync(extractDir, { recursive: true });
+        const cleanContentPath = join(extractDir, 'content.clean.md');
+        writeFileSync(cleanContentPath, body, 'utf-8');
+        return { cleanContentPath };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'backfill-index-'));
+    vaultDir = join(tmp, 'vault');
+    mkdirSync(vaultDir, { recursive: true });
+    uploadProcessedDir = join(tmp, 'upload', 'processed');
+    mkdirSync(uploadProcessedDir, { recursive: true });
+    reportPath = join(tmp, 'report.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('directly indexes the new library file and the patched source note', async () => {
+    writeSource(vaultDir, 'p', { title: 'P', source_file: 'upload/processed/jx-p.pdf' });
+    writeFileSync(join(uploadProcessedDir, 'jx-p.pdf'), 'fake', 'utf-8');
+
+    const dbModule = await import('../src/db/index.js');
+    dbModule._initTestDatabase();
+
+    const indexFileSpy = vi.fn().mockResolvedValue(undefined);
+    const startSpy = vi.fn();
+    const indexer = { start: startSpy, indexFile: indexFileSpy };
+
+    await runBackfill({
+      vaultDir,
+      uploadProcessedDir,
+      reportPath,
+      dryRun: false,
+      force: true,
+      extractor: makeStubExtractor('BODY'),
+      indexer,
+    });
+
+    expect(startSpy).toHaveBeenCalled();
+    const indexedPaths = indexFileSpy.mock.calls.map((c) => c[0]);
+    // Library file path absolute under vaultDir
+    expect(indexedPaths.some((p) => p.endsWith('library/p.md'))).toBe(true);
+    // Patched source path
+    expect(indexedPaths.some((p) => p.endsWith('sources/p.md'))).toBe(true);
+  });
+
+  it('--no-patch-source still indexes the library file but not the source note', async () => {
+    writeSource(vaultDir, 'p', { title: 'P', source_file: 'upload/processed/jx-p.pdf' });
+    writeFileSync(join(uploadProcessedDir, 'jx-p.pdf'), 'fake', 'utf-8');
+
+    const dbModule = await import('../src/db/index.js');
+    dbModule._initTestDatabase();
+
+    const indexFileSpy = vi.fn().mockResolvedValue(undefined);
+    const indexer = { start: vi.fn(), indexFile: indexFileSpy };
+
+    await runBackfill({
+      vaultDir,
+      uploadProcessedDir,
+      reportPath,
+      dryRun: false,
+      noPatchSource: true,
+      force: true,
+      extractor: makeStubExtractor('BODY'),
+      indexer,
+    });
+
+    const indexedPaths = indexFileSpy.mock.calls.map((c) => c[0]);
+    expect(indexedPaths.some((p) => p.endsWith('library/p.md'))).toBe(true);
+    expect(indexedPaths.some((p) => p.endsWith('sources/p.md'))).toBe(false);
+  });
+
+  it('indexer.start() is called once even with multiple sources', async () => {
+    writeSource(vaultDir, 'a', { title: 'A', source_file: 'upload/processed/jx-a.pdf' });
+    writeSource(vaultDir, 'b', { title: 'B', source_file: 'upload/processed/jx-b.pdf' });
+    writeFileSync(join(uploadProcessedDir, 'jx-a.pdf'), 'fake', 'utf-8');
+    writeFileSync(join(uploadProcessedDir, 'jx-b.pdf'), 'fake', 'utf-8');
+
+    const dbModule = await import('../src/db/index.js');
+    dbModule._initTestDatabase();
+
+    const startSpy = vi.fn();
+    const indexer = { start: startSpy, indexFile: vi.fn().mockResolvedValue(undefined) };
+
+    await runBackfill({
+      vaultDir,
+      uploadProcessedDir,
+      reportPath,
+      dryRun: false,
+      force: true,
+      extractor: makeStubExtractor('BODY'),
+      indexer,
+    });
+
+    expect(startSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips indexer in dry-run', async () => {
+    writeSource(vaultDir, 'p', { title: 'P', source_file: 'upload/processed/jx-p.pdf' });
+    writeFileSync(join(uploadProcessedDir, 'jx-p.pdf'), 'fake', 'utf-8');
+
+    const indexer = { start: vi.fn(), indexFile: vi.fn().mockResolvedValue(undefined) };
+
+    await runBackfill({
+      vaultDir,
+      uploadProcessedDir,
+      reportPath,
+      dryRun: true,
+      force: true,
+      indexer,
+    });
+
+    expect(indexer.start).not.toHaveBeenCalled();
+    expect(indexer.indexFile).not.toHaveBeenCalled();
+  });
+});
