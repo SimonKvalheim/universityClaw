@@ -514,3 +514,12 @@ Output the script via study_audio_script IPC:
   "contentType": "review_primer"
 }
 ```
+
+## Reading library files
+
+`vault/library/*.md` files hold the raw cleaned text of every ingested source. They are long — entire books and full-text papers. Reading one inline will exhaust the context window. Follow this protocol:
+
+1. **Start with the source note.** `vault/sources/{slug}.md` is the agent-authored synthesis and shows the document's logical flow. Read this first to orient before touching the library file.
+2. **Target sections, don't open the whole file.** Use `mcp__vault__vault_section(path, { section: "<heading>" })` or `{ page: <N> }` or `{ range: { start, end } }` to pull just the part you need. The response header line includes `Section`, `Page`, and `Lines` for citation.
+3. **Dispatch a subagent for full-document work.** Summarization, cross-document searches, or broad analysis go through a `Task` subagent invoked with the library file path — never read the full body in your own context.
+4. **Cite by section and page.** When you reference library content, include the heading and page number from the `vault_section` header line. Citations to library files without section + page are not allowed.
