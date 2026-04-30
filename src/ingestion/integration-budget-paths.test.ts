@@ -48,8 +48,16 @@ describe('end-to-end pipeline (under + over budget)', () => {
     mkdirSync(uploadDir, { recursive: true });
     mkdirSync(extractionSmall, { recursive: true });
     mkdirSync(extractionHuge, { recursive: true });
-    writeFileSync(join(extractionSmall, 'content.clean.md'), SMALL_CONTENT, 'utf-8');
-    writeFileSync(join(extractionHuge, 'content.clean.md'), OVERSIZED_CONTENT, 'utf-8');
+    writeFileSync(
+      join(extractionSmall, 'content.clean.md'),
+      SMALL_CONTENT,
+      'utf-8',
+    );
+    writeFileSync(
+      join(extractionHuge, 'content.clean.md'),
+      OVERSIZED_CONTENT,
+      'utf-8',
+    );
   });
 
   afterEach(() => {
@@ -87,12 +95,21 @@ describe('end-to-end pipeline (under + over budget)', () => {
 
     function snapshotStatuses(): void {
       const allStatuses = [
-        'extracted', 'librarying', 'libraried', 'generating',
-        'generated', 'completed', 'oversized', 'failed',
+        'extracted',
+        'librarying',
+        'libraried',
+        'generating',
+        'generated',
+        'completed',
+        'oversized',
+        'failed',
       ] as const;
       for (const id of ['small', 'huge']) {
         for (const st of allStatuses) {
-          const jobs = getJobsByStatus(st) as Array<{ id: string; status: string }>;
+          const jobs = getJobsByStatus(st) as Array<{
+            id: string;
+            status: string;
+          }>;
           const found = jobs.find((j) => j.id === id);
           if (found) {
             statusLog.push({ jobId: id, status: st });
@@ -123,7 +140,10 @@ describe('end-to-end pipeline (under + over budget)', () => {
     expect(existsSync(join(vaultDir, 'library', 'huge.md'))).toBe(true);
 
     // Library file for the under-budget job has correct frontmatter and body
-    const smallLib = readFileSync(join(vaultDir, 'library', 'small.md'), 'utf-8');
+    const smallLib = readFileSync(
+      join(vaultDir, 'library', 'small.md'),
+      'utf-8',
+    );
     expect(smallLib).toMatch(/^type:\s*library\s*$/m);
     expect(smallLib).toContain(SMALL_CONTENT);
 
@@ -180,7 +200,9 @@ describe('end-to-end pipeline (under + over budget)', () => {
     // ── Step 3: status invariant ────────────────────────────────────────────
     snapshotStatuses();
 
-    const oversizedSeen = statusLog.some((entry) => entry.status === 'oversized');
+    const oversizedSeen = statusLog.some(
+      (entry) => entry.status === 'oversized',
+    );
     expect(oversizedSeen).toBe(false);
 
     agentProcessSpy.mockRestore();

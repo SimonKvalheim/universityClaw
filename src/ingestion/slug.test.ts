@@ -4,7 +4,9 @@ import { slugFromFilename } from './slug.js';
 describe('slugFromFilename', () => {
   it('strips extension and kebab-cases', () => {
     expect(slugFromFilename('Foo Bar.pdf')).toBe('foo-bar');
-    expect(slugFromFilename('A_Review_of_Cloud_Computing.pdf')).toBe('a-review-of-cloud-computing');
+    expect(slugFromFilename('A_Review_of_Cloud_Computing.pdf')).toBe(
+      'a-review-of-cloud-computing',
+    );
   });
 
   it('handles multiple dots in filename', () => {

@@ -402,7 +402,11 @@ describe('PipelineDrainer', () => {
       try {
         // Seed 5 extracted jobs
         for (let i = 0; i < 5; i++) {
-          createIngestionJob(`cap-${i}`, `/uploads/cap-${i}.pdf`, `cap-${i}.pdf`);
+          createIngestionJob(
+            `cap-${i}`,
+            `/uploads/cap-${i}.pdf`,
+            `cap-${i}.pdf`,
+          );
           updateIngestionJob(`cap-${i}`, { status: 'extracted' });
         }
 

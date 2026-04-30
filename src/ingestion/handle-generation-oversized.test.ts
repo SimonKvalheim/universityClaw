@@ -111,9 +111,15 @@ describe('handleGeneration over-budget path', () => {
   });
 
   it('does not send a Telegram notification on over-budget', async () => {
-    createIngestionJob('ov2', join(uploadDir, 'huge-doc.pdf'), 'huge-doc.pdf', undefined, {
-      source_type: 'paper',
-    });
+    createIngestionJob(
+      'ov2',
+      join(uploadDir, 'huge-doc.pdf'),
+      'huge-doc.pdf',
+      undefined,
+      {
+        source_type: 'paper',
+      },
+    );
     updateIngestionJob('ov2', {
       status: 'libraried',
       extraction_path: extractionDir,

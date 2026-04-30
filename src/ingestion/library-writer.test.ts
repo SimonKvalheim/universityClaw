@@ -138,17 +138,29 @@ describe('writeLibraryFile', () => {
         writeLibraryFile({
           libraryDir: dir,
           slug: 'race',
-          jobMeta: { title: 'A', sourceType: 'paper', ingestedFrom: 'x', jobId: 'j1', sourceSummarySlug: 'race' },
+          jobMeta: {
+            title: 'A',
+            sourceType: 'paper',
+            ingestedFrom: 'x',
+            jobId: 'j1',
+            sourceSummarySlug: 'race',
+          },
           cleanedBody: 'A_BODY',
-        })
+        }),
       ),
       Promise.resolve().then(() =>
         writeLibraryFile({
           libraryDir: dir,
           slug: 'race',
-          jobMeta: { title: 'B', sourceType: 'paper', ingestedFrom: 'x', jobId: 'j2', sourceSummarySlug: 'race' },
+          jobMeta: {
+            title: 'B',
+            sourceType: 'paper',
+            ingestedFrom: 'x',
+            jobId: 'j2',
+            sourceSummarySlug: 'race',
+          },
           cleanedBody: 'B_BODY',
-        })
+        }),
       ),
     ];
     await Promise.all(promises);

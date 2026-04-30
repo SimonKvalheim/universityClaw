@@ -20,7 +20,7 @@ export function buildOversizedStub(input: OversizedStubInput): OversizedStub {
     library: `[[library/${input.slug}]]`,
     verification_status: 'unverified',
     auto_generated: true,
-    concepts_generated: [],  // required by draft-validator; empty since no agent ran
+    concepts_generated: [], // required by draft-validator; empty since no agent ran
     created: input.createdDate,
   };
 

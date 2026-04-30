@@ -786,8 +786,9 @@ describe('library file timeouts', () => {
     await indexer.indexFile('/vault/sources/foo.md');
 
     // No call should have the 'library indexed' message
-    const libraryLogs = infoSpy.mock.calls.filter((call) =>
-      typeof call[1] === 'string' && call[1].includes('library indexed')
+    const libraryLogs = infoSpy.mock.calls.filter(
+      (call) =>
+        typeof call[1] === 'string' && call[1].includes('library indexed'),
     );
     expect(libraryLogs).toHaveLength(0);
 

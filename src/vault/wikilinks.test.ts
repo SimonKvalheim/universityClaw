@@ -257,7 +257,11 @@ describe('extractFrontmatterWikilinks', () => {
   });
 
   it('ignores fields not in the allowlist', () => {
-    const fm = { description: 'see [[foo]]', tags: ['[[bar]]'], title: '[[baz]]' };
+    const fm = {
+      description: 'see [[foo]]',
+      tags: ['[[bar]]'],
+      title: '[[baz]]',
+    };
     const links = extractFrontmatterWikilinks(fm, allowlist);
     expect(links).toEqual([]);
   });
