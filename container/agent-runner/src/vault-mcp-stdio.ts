@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 
+const MAX_RANGE_LINES = 500;
+
 export interface VaultSectionResult {
   header: string;
   content: string;
@@ -125,6 +127,25 @@ export function vaultSection(
     };
   }
 
-  // range branch: implemented in T18
-  throw new Error('not yet implemented');
+  if ('range' in locator) {
+    const startIdx = Math.max(0, locator.range.start - 1);
+    const requestedEnd = Math.max(startIdx, locator.range.end - 1);
+    const cappedEnd = Math.min(
+      requestedEnd,
+      startIdx + MAX_RANGE_LINES - 1,
+      lines.length - 1,
+    );
+    const truncated = cappedEnd < requestedEnd;
+    const content = lines.slice(startIdx, cappedEnd + 1).join('\n');
+    const section = nearestHeadingAtOrBefore(headings, startIdx) ?? '<range>';
+    const page = pageOfLine(lines, startIdx);
+    return {
+      header: `File: ${filePath} / Section: ${section} / Page ${page} / Lines ${startIdx + 1}-${cappedEnd + 1}`,
+      content,
+      truncated: truncated || undefined,
+    };
+  }
+
+  const _exhaust: never = locator;
+  throw new Error(`Unhandled locator: ${JSON.stringify(_exhaust)}`);
 }

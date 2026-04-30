@@ -163,3 +163,45 @@ describe('vaultSection (page locator)', () => {
     expect(result.header).toContain('total pages: 2');
   });
 });
+
+describe('vaultSection (range locator)', () => {
+  let dir3: string;
+  beforeEach(() => {
+    dir3 = mkdtempSync(join(tmpdir(), 'vault-mcp-range-'));
+  });
+  afterEach(() => {
+    rmSync(dir3, { recursive: true, force: true });
+  });
+
+  it('returns the requested line range with all four header fields', () => {
+    const file = join(dir3, 'r.md');
+    const lines = [
+      '<!-- page:1 label:text -->',
+      '## Heading One',
+      ...Array.from({ length: 100 }, (_, i) => `line ${i + 1}`),
+    ];
+    writeFileSync(file, lines.join('\n'), 'utf-8');
+    const result = vaultSection(file, { range: { start: 5, end: 15 } });
+    expect(result.header).toMatch(
+      /^File: .*\/r\.md \/ Section: Heading One \/ Page 1 \/ Lines 5-15$/,
+    );
+  });
+
+  it('uses <range> when no heading precedes the start line', () => {
+    const file = join(dir3, 'r.md');
+    writeFileSync(file, 'plain\nlines\nonly\nno\nheadings\n', 'utf-8');
+    const result = vaultSection(file, { range: { start: 1, end: 3 } });
+    expect(result.header).toContain('Section: <range>');
+    expect(result.header).toContain('Page 1');
+  });
+
+  it('caps at 500 lines and sets truncated', () => {
+    const file = join(dir3, 'r.md');
+    const lines = Array.from({ length: 1000 }, (_, i) => `line ${i + 1}`);
+    writeFileSync(file, lines.join('\n'), 'utf-8');
+    const result = vaultSection(file, { range: { start: 1, end: 1000 } });
+    expect(result.content.split('\n')).toHaveLength(500);
+    expect(result.truncated).toBe(true);
+    expect(result.header).toMatch(/Lines 1-500/);
+  });
+});
