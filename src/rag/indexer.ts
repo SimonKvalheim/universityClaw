@@ -5,7 +5,7 @@ import { logger } from '../logger.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
-import { extractWikilinks, slugToTitle } from '../vault/wikilinks.js';
+import { extractWikilinks, slugToTitle, extractFrontmatterWikilinks } from '../vault/wikilinks.js';
 import { computeDocId } from './doc-id.js';
 
 /**
@@ -17,6 +17,8 @@ import { computeDocId } from './doc-id.js';
  * attachments/ (binary figures), and any other top-level directories.
  */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive', 'library'];
+
+const FRONTMATTER_LINK_FIELDS = ['source_summary', 'library', 'links_to', 'related'] as const;
 
 export class RagIndexer {
   private vaultDir: string;
@@ -53,7 +55,9 @@ export class RagIndexer {
       ignored: [/(^|[/\\])\./],
     });
     this.watcher.on('add', (fp) => this.enqueue(() => this.handleAdd(fp)));
-    this.watcher.on('change', (fp) => this.enqueue(() => this.handleChange(fp)));
+    this.watcher.on('change', (fp) =>
+      this.enqueue(() => this.handleChange(fp)),
+    );
     this.watcher.on('unlink', (fp) =>
       this.enqueue(() => this.handleUnlink(fp)),
     );
@@ -182,8 +186,16 @@ export class RagIndexer {
     content: string,
     frontmatter: Record<string, unknown>,
   ): Promise<void> {
-    const links = extractWikilinks(content);
-    if (links.length === 0) return;
+    // Body links: scan body only, not raw content (to avoid double-scanning frontmatter values).
+    const { content: body } = parseFrontmatter(content);
+    const bodyLinks = extractWikilinks(body);
+    const fmLinks = extractFrontmatterWikilinks(frontmatter, FRONTMATTER_LINK_FIELDS);
+    const allLinks = [
+      ...bodyLinks.map((l) => ({ target: l.target })),
+      ...fmLinks.map((l) => ({ target: l.target })), // T13 will add field info
+    ];
+
+    if (allLinks.length === 0) return;
 
     const sourceTitle = String(frontmatter.title || '');
     if (!sourceTitle) return;
@@ -192,12 +204,12 @@ export class RagIndexer {
     const sourceExists = await this.ragClient.entityExists(sourceTitle);
     if (!sourceExists) return;
 
-    for (const link of links) {
+    for (const link of allLinks) {
       let targetTitle = this.slugTitleMap.get(link.target);
       if (!targetTitle) {
         logger.warn(
           { slug: link.target },
-          `rag: target slug not in slug-title map; falling back to slugToTitle`,
+          'rag: target slug not in slug-title map; falling back to slugToTitle',
         );
         targetTitle = slugToTitle(link.target);
       }

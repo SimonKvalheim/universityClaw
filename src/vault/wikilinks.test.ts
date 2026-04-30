@@ -4,6 +4,7 @@ import {
   createWikilink,
   replaceWikilinks,
   slugToTitle,
+  extractFrontmatterWikilinks,
 } from './wikilinks.js';
 
 describe('slugToTitle', () => {
@@ -231,5 +232,45 @@ describe('replaceWikilinks', () => {
       'Note 2024',
     );
     expect(result).toBe('See [[Note 2024]] here.');
+  });
+});
+
+describe('extractFrontmatterWikilinks', () => {
+  const allowlist = ['source_summary', 'library', 'links_to', 'related'];
+
+  it('walks values from the allowlist, returning target + originating field', () => {
+    const fm = { source_summary: '[[foo]]', library: '[[library/bar]]' };
+    const links = extractFrontmatterWikilinks(fm, allowlist);
+    expect(links).toEqual([
+      { target: 'foo', field: 'source_summary' },
+      { target: 'library/bar', field: 'library' },
+    ]);
+  });
+
+  it('walks arrays', () => {
+    const fm = { related: ['[[a]]', '[[b]]'] };
+    const links = extractFrontmatterWikilinks(fm, allowlist);
+    expect(links).toEqual([
+      { target: 'a', field: 'related' },
+      { target: 'b', field: 'related' },
+    ]);
+  });
+
+  it('ignores fields not in the allowlist', () => {
+    const fm = { description: 'see [[foo]]', tags: ['[[bar]]'], title: '[[baz]]' };
+    const links = extractFrontmatterWikilinks(fm, allowlist);
+    expect(links).toEqual([]);
+  });
+
+  it('ignores non-string values in allowed fields', () => {
+    const fm = { source_summary: 42, library: null };
+    const links = extractFrontmatterWikilinks(fm as any, allowlist);
+    expect(links).toEqual([]);
+  });
+
+  it('handles missing allowed fields without errors', () => {
+    const fm = {};
+    const links = extractFrontmatterWikilinks(fm, allowlist);
+    expect(links).toEqual([]);
   });
 });

@@ -508,3 +508,55 @@ refs [[gone]]`;
     warnSpy.mockRestore();
   });
 });
+
+describe('frontmatter wikilink allowlist', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('does not produce edges from arbitrary frontmatter fields', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Origin
+type: source
+description: "see [[ghost]]"
+---
+
+body without links`);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    expect(mockRagClient.createRelation).not.toHaveBeenCalled();
+  });
+
+  it('produces edges from allowlisted frontmatter wikilinks', async () => {
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('foo.md')) return '---\ntitle: FooTitle\ntype: source\n---\n';
+      return '---\ntitle: Origin\ntype: library\nsource_summary: "[[foo]]"\n---\nbody';
+    });
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/foo.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'Origin',
+      'FooTitle',
+      expect.any(Object),
+    );
+  });
+});
