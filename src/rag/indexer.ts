@@ -16,7 +16,7 @@ import { computeDocId } from './doc-id.js';
  * Explicitly excluded: drafts/ (working area for ingestion pipeline),
  * attachments/ (binary figures), and any other top-level directories.
  */
-const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
+const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive', 'library'];
 
 export class RagIndexer {
   private vaultDir: string;

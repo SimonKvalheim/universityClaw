@@ -94,6 +94,21 @@ Archived content.`);
     expect(mockRagClient.index).not.toHaveBeenCalled();
   });
 
+  it('indexes files in library/', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Foo
+type: library
+---
+
+body`);
+
+    await indexer.indexFile('/vault/library/foo.md');
+
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const indexed = mockRagClient.index.mock.calls[0][0] as string;
+    expect(indexed).toContain('Source path: library/foo.md');
+  });
+
   // --- Hash tracking tests ---
 
   it('skips indexing when content hash matches tracker', async () => {
