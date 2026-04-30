@@ -1,5 +1,11 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFileSync, unlinkSync, existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import {
+  readFileSync,
+  unlinkSync,
+  existsSync,
+  writeFileSync,
+  renameSync,
+} from 'node:fs';
 import { mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
@@ -360,11 +366,13 @@ export class IngestionPipeline {
     const contentForBudget = existsSync(cleanContentPath)
       ? cleanContentPath
       : rawContentPath;
-    let contentChars: number;
+    let contentText = '';
+    let contentChars = 0;
     try {
-      contentChars = readFileSync(contentForBudget, 'utf-8').length;
+      contentText = readFileSync(contentForBudget, 'utf-8');
+      contentChars = contentText.length;
     } catch {
-      contentChars = 0;
+      // contentText stays '' and contentChars stays 0
     }
     const estimatedTokens = Math.ceil(contentChars / 4);
 
@@ -376,7 +384,7 @@ export class IngestionPipeline {
       );
 
       const slug = slugFromFilename(job.source_filename);
-      const cleanedBody = readFileSync(contentForBudget, 'utf-8');
+      const cleanedBody = contentText;
       const title = titleFromJobMetadata(job, cleanedBody) ?? slugToTitle(slug);
       const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
       const stub = buildOversizedStub({
@@ -392,7 +400,6 @@ export class IngestionPipeline {
       // finds this single source draft (type:source), returns concept_notes:[].
       // promoteNote then renames to vault/sources/{slug}.md based on title.
       const draftPath = join(draftsDir, `${job.id}-source.md`);
-      mkdirSync(draftsDir, { recursive: true });
       const tmp = `${draftPath}.tmp.${process.pid}.${Date.now()}`;
       writeFileSync(
         tmp,

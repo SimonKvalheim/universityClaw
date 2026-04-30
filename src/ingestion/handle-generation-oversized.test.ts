@@ -110,11 +110,7 @@ describe('handleGeneration over-budget path', () => {
   });
 
   it('does not send a Telegram notification on over-budget', async () => {
-    createIngestionJob(
-      'ov2',
-      join(uploadDir, 'huge-doc.pdf'),
-      'huge-doc.pdf',
-    );
+    createIngestionJob('ov2', join(uploadDir, 'huge-doc.pdf'), 'huge-doc.pdf');
     updateIngestionJob('ov2', {
       status: 'libraried',
       extraction_path: extractionDir,
@@ -128,7 +124,9 @@ describe('handleGeneration over-budget path', () => {
       reviewAgentGroup: stubGroup,
       notify: notifySpy,
     });
-    (pipeline as any).agentProcessor = { run: vi.fn().mockResolvedValue(undefined) };
+    (pipeline as any).agentProcessor = {
+      run: vi.fn().mockResolvedValue(undefined),
+    };
 
     const job = (getJobsByStatus('libraried') as Array<{ id: string }>).find(
       (j) => j.id === 'ov2',
@@ -152,7 +150,7 @@ describe('handleGeneration over-budget path', () => {
     });
 
     // Calling private enqueue with same path should not create a second job —
-    // 'libraried' status lands in the "pending/extracted/generated" skipping branch.
+    // 'libraried' status lands in the completed/extracting/libraried/... in-progress skip branch.
     (pipeline as any).enqueue(filePath);
 
     // Only one job with this path should exist
