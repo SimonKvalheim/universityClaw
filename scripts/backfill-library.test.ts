@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { assertNoLiveNanoclaw, runBackfill } from './backfill-library.js';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -135,5 +135,110 @@ describe('backfill walker', () => {
     });
     expect(report.processed).toBe(1);
     expect(report.skipped).toEqual([]);
+  });
+});
+
+describe('backfill execute path (non-dry-run)', () => {
+  let tmp: string;
+  let vaultDir: string;
+  let uploadProcessedDir: string;
+  let reportPath: string;
+  let extractedBody: string;
+
+  // Test extractor stub: writes cleanedContent to a tmp content.clean.md and returns its path.
+  function makeStubExtractor() {
+    return {
+      extract: async (
+        jobId: string,
+        inputPath: string,
+      ): Promise<{ cleanContentPath: string }> => {
+        const extractDir = join(tmp, 'extractions', jobId);
+        mkdirSync(extractDir, { recursive: true });
+        const cleanContentPath = join(extractDir, 'content.clean.md');
+        writeFileSync(cleanContentPath, extractedBody, 'utf-8');
+        return { cleanContentPath };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'backfill-exec-'));
+    vaultDir = join(tmp, 'vault');
+    mkdirSync(vaultDir, { recursive: true });
+    uploadProcessedDir = join(tmp, 'upload', 'processed');
+    mkdirSync(uploadProcessedDir, { recursive: true });
+    reportPath = join(tmp, 'report.json');
+    extractedBody = 'CLEAN BACKFILL BODY';
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('writes library, patches source frontmatter, deletes tracker row', async () => {
+    // Arrange: source note with no `library:` field, real source_file present
+    writeSource(vaultDir, 'paper', {
+      title: 'Paper',
+      source_file: 'upload/processed/jx-paper.pdf',
+    });
+    writeFileSync(join(uploadProcessedDir, 'jx-paper.pdf'), 'fake pdf', 'utf-8');
+
+    // Seed a tracker row that should get deleted
+    const dbModule = await import('../src/db/index.js');
+    dbModule._initTestDatabase();
+    dbModule.upsertTrackedDoc('sources/paper.md', 'docid-old', 'hash-old');
+
+    await runBackfill({
+      vaultDir,
+      uploadProcessedDir,
+      reportPath,
+      dryRun: false,
+      force: true,
+      extractor: makeStubExtractor(),
+    });
+
+    // Assert: library file written
+    const libraryPath = join(vaultDir, 'library', 'paper.md');
+    expect(existsSync(libraryPath)).toBe(true);
+    const libraryContent = readFileSync(libraryPath, 'utf-8');
+    expect(libraryContent).toContain('CLEAN BACKFILL BODY');
+    expect(libraryContent).toMatch(/^type:\s*library\s*$/m);
+
+    // Assert: source frontmatter patched with `library:` wikilink
+    const patched = readFileSync(join(vaultDir, 'sources', 'paper.md'), 'utf-8');
+    expect(patched).toMatch(/^library:\s*['"]?\[\[library\/paper\]\]['"]?\s*$/m);
+
+    // Assert: tracker row deleted
+    expect(dbModule.getTrackedDoc('sources/paper.md')).toBeNull();
+  });
+
+  it('--no-patch-source preserves source frontmatter and tracker row', async () => {
+    writeSource(vaultDir, 'p', {
+      title: 'P',
+      source_file: 'upload/processed/jx-p.pdf',
+    });
+    writeFileSync(join(uploadProcessedDir, 'jx-p.pdf'), 'fake', 'utf-8');
+
+    const dbModule = await import('../src/db/index.js');
+    dbModule._initTestDatabase();
+    dbModule.upsertTrackedDoc('sources/p.md', 'd', 'h');
+
+    await runBackfill({
+      vaultDir,
+      uploadProcessedDir,
+      reportPath,
+      dryRun: false,
+      noPatchSource: true,
+      force: true,
+      extractor: makeStubExtractor(),
+    });
+
+    // Library file is still written
+    expect(existsSync(join(vaultDir, 'library', 'p.md'))).toBe(true);
+
+    // Source NOT patched, tracker row preserved
+    const sourceContent = readFileSync(join(vaultDir, 'sources', 'p.md'), 'utf-8');
+    expect(sourceContent).not.toMatch(/^library:/m);
+    expect(dbModule.getTrackedDoc('sources/p.md')).not.toBeNull();
   });
 });

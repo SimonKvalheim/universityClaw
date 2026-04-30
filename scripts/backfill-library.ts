@@ -1,7 +1,16 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { parseFrontmatter } from '../src/vault/frontmatter.js';
+import { parseFrontmatter, serializeFrontmatter } from '../src/vault/frontmatter.js';
+import { writeLibraryFile } from '../src/ingestion/library-writer.js';
+import { deleteTrackedDoc } from '../src/db/index.js';
+
+export interface ExtractorLike {
+  extract(
+    jobId: string,
+    inputPath: string,
+  ): Promise<{ cleanContentPath: string }>;
+}
 
 export interface AssertOptions {
   spawn?: (cmd: string, args: string[]) => Promise<{ stdout: string }>;
@@ -55,6 +64,7 @@ export interface RunBackfillOptions {
   source?: string; // single slug
   noPatchSource?: boolean;
   force?: boolean;
+  extractor?: ExtractorLike; // injected for testability; CLI builds a real Extractor adapter
 }
 
 export async function runBackfill(
@@ -109,7 +119,42 @@ export async function runBackfill(
         report.processed++;
         continue;
       }
-      // (implementation continues in T23)
+
+      // Execute path (non-dry-run): re-extract, write library, patch source, delete tracker.
+      if (!opts.extractor) {
+        // Configuration error — should have been caught by the CLI/caller.
+        throw new Error('runBackfill: extractor is required when dryRun is false');
+      }
+
+      const jobId = `backfill-${Date.now()}-${slug}`;
+      const { cleanContentPath } = await opts.extractor.extract(jobId, originalPath);
+      const cleanedBody = readFileSync(cleanContentPath, 'utf-8');
+
+      writeLibraryFile({
+        libraryDir: join(opts.vaultDir, 'library'),
+        slug,
+        jobMeta: {
+          title: String(fm.title || slug),
+          sourceType: String(fm.source_type || 'paper'),
+          ingestedFrom: sourceFile,
+          jobId,
+          sourceSummarySlug: slug,
+        },
+        cleanedBody,
+      });
+
+      if (!opts.noPatchSource) {
+        const { content: body } = parseFrontmatter(raw);
+        const patchedFm = { ...fm, library: `[[library/${slug}]]` };
+        const patched = serializeFrontmatter(patchedFm, body);
+        const sourcePath = join(sourcesDir, file);
+        const tmpPath = `${sourcePath}.tmp.${process.pid}.${Date.now()}`;
+        writeFileSync(tmpPath, patched, 'utf-8');
+        renameSync(tmpPath, sourcePath);
+        deleteTrackedDoc(`sources/${slug}.md`);
+      }
+
+      report.processed++;
     } catch (err) {
       report.errors.push({
         slug,
