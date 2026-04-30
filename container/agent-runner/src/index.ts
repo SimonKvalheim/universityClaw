@@ -412,7 +412,8 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__rag__*'
+        'mcp__rag__*',
+        'mcp__vault__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -437,6 +438,13 @@ async function runQuery(
             },
           },
         } : {}),
+        vault: {
+          command: 'node',
+          args: [path.join(path.dirname(mcpServerPath), 'vault-mcp-stdio.js')],
+          env: {
+            VAULT_DIR: '/workspace/extra/vault',
+          },
+        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

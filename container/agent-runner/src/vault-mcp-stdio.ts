@@ -149,3 +149,120 @@ export function vaultSection(
   const _exhaust: never = locator;
   throw new Error(`Unhandled locator: ${JSON.stringify(_exhaust)}`);
 }
+
+// ---------------------------------------------------------------------------
+// Stdio entry point — matches sibling rag-mcp-stdio.ts pattern.
+// Guarded so that importing vaultSection from tests does NOT trigger the
+// server bootstrap (rag-mcp-stdio.ts has no guard because it's never imported
+// from tests — our file IS, so we need one).
+// ---------------------------------------------------------------------------
+
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+
+if (isMainModule) {
+  const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+  const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
+  const { z } = await import('zod');
+  const { join } = await import('node:path');
+
+  const VAULT_DIR = process.env.VAULT_DIR;
+  if (!VAULT_DIR) throw new Error('VAULT_DIR env var required');
+
+  const server = new McpServer({
+    name: 'vault',
+    version: '1.0.0',
+  });
+
+  server.tool(
+    'vault_section',
+    `Extract a section, page, or line range from a vault markdown file.
+Returns a header line + content. Use exactly one of \`section\`, \`page\`, or \`range\` per call.
+
+Use this for reading library files (vault/library/*.md), which can be very large — section/page lookups
+let you read targeted parts without exhausting context. The header line includes File, Section, Page,
+and Lines so you can cite precisely.
+
+Behavior:
+• section — case-insensitive substring match on H1/H2/H3 headings. First match wins on collision;
+  multipleMatches and matchingHeadings are populated. Miss returns availableSections list.
+• page — uses Docling page markers in the file. Returns content from the start of page N to the
+  start of page N+1. Section field is the nearest heading at-or-before the page start, or "<page-only>".
+• range — line range, capped at 500 lines (truncated:true is set when capped).`,
+    {
+      path: z
+        .string()
+        .describe('Vault-relative path, e.g. "library/foo.md"'),
+      section: z
+        .string()
+        .optional()
+        .describe('Heading text (case-insensitive substring match)'),
+      page: z
+        .number()
+        .int()
+        .optional()
+        .describe('Page number (uses Docling page markers)'),
+      range: z
+        .object({
+          start: z.number().int().describe('Start line (1-based, inclusive)'),
+          end: z.number().int().describe('End line (1-based, inclusive)'),
+        })
+        .optional()
+        .describe('Line range; capped at 500 lines'),
+    },
+    async (args) => {
+      const fullPath = join(VAULT_DIR, args.path);
+      let locator: VaultSectionLocator;
+      if (args.section !== undefined) {
+        locator = { section: args.section };
+      } else if (args.page !== undefined) {
+        locator = { page: args.page };
+      } else if (args.range !== undefined) {
+        locator = { range: args.range };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Error: provide exactly one of: section, page, range',
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = vaultSection(fullPath, locator);
+        return {
+          content: [{ type: 'text' as const, text: formatResult(result) }],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [
+            { type: 'text' as const, text: `vault_section error: ${msg}` },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  function formatResult(r: VaultSectionResult): string {
+    const lines = [r.header];
+    if (r.notFound && r.availableSections) {
+      lines.push('', 'Available sections:', ...r.availableSections.map((s) => `- ${s}`));
+    } else {
+      if (r.multipleMatches) {
+        lines.push(
+          `(multiple_matches: ${r.multipleMatches}, matching: ${r.matchingHeadings?.join(', ')})`,
+        );
+      }
+      if (r.truncated) lines.push('(truncated to 500 lines)');
+      lines.push('', r.content);
+    }
+    return lines.join('\n');
+  }
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
