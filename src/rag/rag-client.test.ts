@@ -303,4 +303,31 @@ describe('RagClient HTTP', () => {
       client.createRelation('A', 'B', { description: 'test' }),
     ).rejects.toThrow('LightRAG create relation failed');
   });
+
+  it('passes per-call timeoutMs through to AbortSignal for the POST request', async () => {
+    const abortSpy = vi.spyOn(AbortSignal, 'timeout');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 'duplicated', track_id: 'tx', message: 'dup' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    await client.index('content', { fileSource: 'library/foo.md', timeoutMs: 60_000, pollTimeoutMs: 1_200_000 });
+    // The first AbortSignal.timeout call inside index() is for the POST.
+    expect(abortSpy).toHaveBeenCalledWith(60_000);
+    abortSpy.mockRestore();
+  });
+
+  it('falls back to the default 30s POST timeout when timeoutMs is not provided', async () => {
+    const abortSpy = vi.spyOn(AbortSignal, 'timeout');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 'duplicated', track_id: 'tx', message: 'dup' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    await client.index('content', { fileSource: 'sources/foo.md' });
+    expect(abortSpy).toHaveBeenCalledWith(30_000);
+    abortSpy.mockRestore();
+  });
 });

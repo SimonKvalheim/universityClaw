@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { RagIndexer } from './indexer.js';
+import { RagIndexer, isLibraryPath } from './indexer.js';
 import { readFileSync } from 'fs';
 import { computeDocId } from './doc-id.js';
 
@@ -702,5 +702,50 @@ describe('bidirectional source↔library edges', () => {
       'XLib',
       expect.objectContaining({ keywords: 'references, wikilink' }),
     );
+  });
+});
+
+describe('library file timeouts', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('passes 60s POST and 1_200_000 ms poll for library files', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: library\n---\nbody');
+    mockGetTrackedDoc.mockReturnValue(null);
+    await indexer.indexFile('/vault/library/foo.md');
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const opts = mockRagClient.index.mock.calls[0][1] as Record<string, unknown>;
+    expect(opts.timeoutMs).toBe(60_000);
+    expect(opts.pollTimeoutMs).toBe(1_200_000);
+  });
+
+  it('uses default timeouts for non-library files', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: source\n---\nbody');
+    mockGetTrackedDoc.mockReturnValue(null);
+    await indexer.indexFile('/vault/sources/foo.md');
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const opts = mockRagClient.index.mock.calls[0][1] as Record<string, unknown>;
+    expect(opts.timeoutMs).toBeUndefined();
+    expect(opts.pollTimeoutMs).toBeUndefined();
+  });
+
+  it('isLibraryPath detects POSIX and Windows separators', () => {
+    expect(isLibraryPath('library/foo.md')).toBe(true);
+    expect(isLibraryPath('library\\foo.md')).toBe(true);
+    expect(isLibraryPath('sources/library-thing.md')).toBe(false);
+    expect(isLibraryPath('library')).toBe(false);  // exact match without separator is ambiguous; not under library/
+    expect(isLibraryPath('')).toBe(false);
   });
 });

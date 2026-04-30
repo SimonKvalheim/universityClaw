@@ -22,6 +22,10 @@ import { computeDocId } from './doc-id.js';
  */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive', 'library'];
 
+export function isLibraryPath(relPath: string): boolean {
+  return relPath.startsWith('library/') || relPath.startsWith('library\\');
+}
+
 const FRONTMATTER_LINK_FIELDS = [
   'source_summary',
   'library',
@@ -193,7 +197,14 @@ export class RagIndexer {
 
     // Index new content
     try {
-      await this.ragClient.index(indexed, { fileSource: relPath });
+      const indexOpts: { fileSource: string; timeoutMs?: number; pollTimeoutMs?: number } = {
+        fileSource: relPath,
+      };
+      if (isLibraryPath(relPath)) {
+        indexOpts.timeoutMs = 60_000;
+        indexOpts.pollTimeoutMs = 1_200_000;
+      }
+      await this.ragClient.index(indexed, indexOpts);
     } catch (err) {
       logger.warn({ err, relPath }, 'Failed to index file');
       return; // Don't update tracker — will retry on next event/restart

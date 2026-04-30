@@ -71,19 +71,21 @@ export class RagClient {
       fileSource?: string;
       pollIntervalMs?: number;
       pollTimeoutMs?: number;
+      timeoutMs?: number;
     } = {},
   ): Promise<void> {
     const {
       fileSource,
       pollIntervalMs = 2000,
       pollTimeoutMs = 300_000,
+      timeoutMs = 30_000,
     } = options;
 
     const res = await fetch(`${this.serverUrl}/documents/text`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, file_source: fileSource }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
