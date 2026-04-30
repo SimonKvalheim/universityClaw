@@ -726,7 +726,10 @@ describe('library file timeouts', () => {
     mockGetTrackedDoc.mockReturnValue(null);
     await indexer.indexFile('/vault/library/foo.md');
     expect(mockRagClient.index).toHaveBeenCalledOnce();
-    const opts = mockRagClient.index.mock.calls[0][1] as Record<string, unknown>;
+    const opts = mockRagClient.index.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
     expect(opts.timeoutMs).toBe(60_000);
     expect(opts.pollTimeoutMs).toBe(1_200_000);
   });
@@ -736,7 +739,10 @@ describe('library file timeouts', () => {
     mockGetTrackedDoc.mockReturnValue(null);
     await indexer.indexFile('/vault/sources/foo.md');
     expect(mockRagClient.index).toHaveBeenCalledOnce();
-    const opts = mockRagClient.index.mock.calls[0][1] as Record<string, unknown>;
+    const opts = mockRagClient.index.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
     expect(opts.timeoutMs).toBeUndefined();
     expect(opts.pollTimeoutMs).toBeUndefined();
   });
@@ -745,7 +751,46 @@ describe('library file timeouts', () => {
     expect(isLibraryPath('library/foo.md')).toBe(true);
     expect(isLibraryPath('library\\foo.md')).toBe(true);
     expect(isLibraryPath('sources/library-thing.md')).toBe(false);
-    expect(isLibraryPath('library')).toBe(false);  // exact match without separator is ambiguous; not under library/
+    expect(isLibraryPath('library')).toBe(false); // exact match without separator is ambiguous; not under library/
     expect(isLibraryPath('')).toBe(false);
+  });
+
+  it('logs body length and elapsed ms after a library index', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: library\n---\nABCDE');
+    mockGetTrackedDoc.mockReturnValue(null);
+
+    const loggerModule = await import('../logger.js');
+    const infoSpy = vi.spyOn(loggerModule.logger, 'info');
+
+    await indexer.indexFile('/vault/library/foo.md');
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relPath: 'library/foo.md',
+        bodyLen: expect.any(Number),
+        elapsedMs: expect.any(Number),
+      }),
+      expect.stringContaining('library indexed'),
+    );
+
+    infoSpy.mockRestore();
+  });
+
+  it('does not emit the library log for non-library files', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: source\n---\nABCDE');
+    mockGetTrackedDoc.mockReturnValue(null);
+
+    const loggerModule = await import('../logger.js');
+    const infoSpy = vi.spyOn(loggerModule.logger, 'info');
+
+    await indexer.indexFile('/vault/sources/foo.md');
+
+    // No call should have the 'library indexed' message
+    const libraryLogs = infoSpy.mock.calls.filter((call) =>
+      typeof call[1] === 'string' && call[1].includes('library indexed')
+    );
+    expect(libraryLogs).toHaveLength(0);
+
+    infoSpy.mockRestore();
   });
 });

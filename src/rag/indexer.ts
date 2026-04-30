@@ -197,14 +197,25 @@ export class RagIndexer {
 
     // Index new content
     try {
-      const indexOpts: { fileSource: string; timeoutMs?: number; pollTimeoutMs?: number } = {
+      const indexOpts: {
+        fileSource: string;
+        timeoutMs?: number;
+        pollTimeoutMs?: number;
+      } = {
         fileSource: relPath,
       };
       if (isLibraryPath(relPath)) {
         indexOpts.timeoutMs = 60_000;
         indexOpts.pollTimeoutMs = 1_200_000;
+        const t0 = Date.now();
+        await this.ragClient.index(indexed, indexOpts);
+        logger.info(
+          { relPath, bodyLen: body.length, elapsedMs: Date.now() - t0 },
+          'rag: library indexed',
+        );
+      } else {
+        await this.ragClient.index(indexed, indexOpts);
       }
-      await this.ragClient.index(indexed, indexOpts);
     } catch (err) {
       logger.warn({ err, relPath }, 'Failed to index file');
       return; // Don't update tracker — will retry on next event/restart
