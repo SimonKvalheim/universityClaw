@@ -583,8 +583,10 @@ describe('bidirectional source↔library edges', () => {
     // map collisions between sources/ and library/ files with the same basename.
     mockReadFile.mockImplementation((path: any) => {
       const p = String(path);
-      if (p.includes('foolib.md')) return '---\ntitle: FooLib\ntype: library\n---\nbody';
-      if (p.includes('foosrc.md')) return '---\ntitle: FooSrc\ntype: source\nlibrary: "[[foolib]]"\n---\n';
+      if (p.includes('foolib.md'))
+        return '---\ntitle: FooLib\ntype: library\n---\nbody';
+      if (p.includes('foosrc.md'))
+        return '---\ntitle: FooSrc\ntype: source\nlibrary: "[[foolib]]"\n---\n';
       throw new Error(`unexpected: ${p}`);
     });
     mockGetTrackedDoc.mockReturnValue(null);
@@ -606,8 +608,10 @@ describe('bidirectional source↔library edges', () => {
     // Library note links back to the source via source_summary: "[[barsrc]]"
     mockReadFile.mockImplementation((path: any) => {
       const p = String(path);
-      if (p.includes('barsrc.md')) return '---\ntitle: BarSrc\ntype: source\n---\nbody';
-      if (p.includes('barlib.md')) return '---\ntitle: BarLib\ntype: library\nsource_summary: "[[barsrc]]"\n---\n';
+      if (p.includes('barsrc.md'))
+        return '---\ntitle: BarSrc\ntype: source\n---\nbody';
+      if (p.includes('barlib.md'))
+        return '---\ntitle: BarLib\ntype: library\nsource_summary: "[[barsrc]]"\n---\n';
       throw new Error(`unexpected: ${p}`);
     });
     mockGetTrackedDoc.mockReturnValue(null);
@@ -627,8 +631,10 @@ describe('bidirectional source↔library edges', () => {
   it('body wikilinks still use references/wikilink', async () => {
     mockReadFile.mockImplementation((path: any) => {
       const p = String(path);
-      if (p.includes('sources/a.md')) return '---\ntitle: A\ntype: source\n---\n';
-      if (p.includes('sources/b.md')) return '---\ntitle: B\ntype: source\n---\nrefs [[a]]';
+      if (p.includes('sources/a.md'))
+        return '---\ntitle: A\ntype: source\n---\n';
+      if (p.includes('sources/b.md'))
+        return '---\ntitle: B\ntype: source\n---\nrefs [[a]]';
       throw new Error(`unexpected: ${p}`);
     });
     mockGetTrackedDoc.mockReturnValue(null);
@@ -645,13 +651,41 @@ describe('bidirectional source↔library edges', () => {
     );
   });
 
+  it('resolves path-prefixed wikilinks like [[library/<slug>]] via the map (basename lookup)', async () => {
+    // Production scenario: source note has frontmatter `library: "[[library/papertext]]"`
+    // and the library file is at vault/library/papertext.md with `title: PaperLib`.
+    // The map should resolve the basename `papertext` to `PaperLib` for entity matching.
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('library/papertext.md'))
+        return '---\ntitle: PaperLib\ntype: library\n---\nbody';
+      if (p.includes('sources/papersrc.md'))
+        return '---\ntitle: PaperSrc\ntype: source\nlibrary: "[[library/papertext]]"\n---\n';
+      throw new Error(`unexpected: ${p}`);
+    });
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/library/papertext.md');
+    await indexer.handleAdd('/vault/sources/papersrc.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'PaperSrc',
+      'PaperLib',
+      expect.objectContaining({ keywords: 'summarizes, full_text' }),
+    );
+  });
+
   it('frontmatter library wikilink on a non-source file falls back to references/wikilink', async () => {
     // The library→summarizes keywords only fire when fileType === 'source'.
     // A concept file with `library:` frontmatter (unusual but possible) gets default keywords.
     mockReadFile.mockImplementation((path: any) => {
       const p = String(path);
-      if (p.includes('xlib.md')) return '---\ntitle: XLib\ntype: library\n---\n';
-      if (p.includes('concepts/y.md')) return '---\ntitle: Y\ntype: concept\nlibrary: "[[xlib]]"\n---\n';
+      if (p.includes('xlib.md'))
+        return '---\ntitle: XLib\ntype: library\n---\n';
+      if (p.includes('concepts/y.md'))
+        return '---\ntitle: Y\ntype: concept\nlibrary: "[[xlib]]"\n---\n';
       throw new Error(`unexpected: ${p}`);
     });
     mockGetTrackedDoc.mockReturnValue(null);

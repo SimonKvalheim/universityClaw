@@ -244,13 +244,18 @@ export class RagIndexer {
     if (!sourceExists) return;
 
     for (const link of allLinks) {
-      let targetTitle = this.slugTitleMap.get(link.target);
+      // Path-prefixed wikilinks like [[library/foo]] target the file at library/foo.md;
+      // the slug→title map is keyed on bare basenames, so strip any directory prefix.
+      const lookupSlug = link.target.includes('/')
+        ? link.target.split('/').pop()!
+        : link.target;
+      let targetTitle = this.slugTitleMap.get(lookupSlug);
       if (!targetTitle) {
         logger.warn(
           { slug: link.target },
           'rag: target slug not in slug-title map; falling back to slugToTitle',
         );
-        targetTitle = slugToTitle(link.target);
+        targetTitle = slugToTitle(lookupSlug);
       }
 
       try {
