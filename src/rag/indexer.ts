@@ -5,7 +5,11 @@ import { logger } from '../logger.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
-import { extractWikilinks, slugToTitle, extractFrontmatterWikilinks } from '../vault/wikilinks.js';
+import {
+  extractWikilinks,
+  slugToTitle,
+  extractFrontmatterWikilinks,
+} from '../vault/wikilinks.js';
 import { computeDocId } from './doc-id.js';
 
 /**
@@ -18,7 +22,32 @@ import { computeDocId } from './doc-id.js';
  */
 const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive', 'library'];
 
-const FRONTMATTER_LINK_FIELDS = ['source_summary', 'library', 'links_to', 'related'] as const;
+const FRONTMATTER_LINK_FIELDS = [
+  'source_summary',
+  'library',
+  'links_to',
+  'related',
+] as const;
+
+type LinkSource = { kind: 'body' } | { kind: 'frontmatter'; field: string };
+
+function keywordsFor(source: LinkSource, fileType: string): string {
+  if (
+    source.kind === 'frontmatter' &&
+    source.field === 'library' &&
+    fileType === 'source'
+  ) {
+    return 'summarizes, full_text';
+  }
+  if (
+    source.kind === 'frontmatter' &&
+    source.field === 'source_summary' &&
+    fileType === 'library'
+  ) {
+    return 'summarized_by, summary';
+  }
+  return 'references, wikilink';
+}
 
 export class RagIndexer {
   private vaultDir: string;
@@ -189,16 +218,26 @@ export class RagIndexer {
     // Body links: scan body only, not raw content (to avoid double-scanning frontmatter values).
     const { content: body } = parseFrontmatter(content);
     const bodyLinks = extractWikilinks(body);
-    const fmLinks = extractFrontmatterWikilinks(frontmatter, FRONTMATTER_LINK_FIELDS);
-    const allLinks = [
-      ...bodyLinks.map((l) => ({ target: l.target })),
-      ...fmLinks.map((l) => ({ target: l.target })), // T13 will add field info
+    const fmLinks = extractFrontmatterWikilinks(
+      frontmatter,
+      FRONTMATTER_LINK_FIELDS,
+    );
+    const allLinks: { target: string; source: LinkSource }[] = [
+      ...bodyLinks.map((l) => ({
+        target: l.target,
+        source: { kind: 'body' as const },
+      })),
+      ...fmLinks.map((l) => ({
+        target: l.target,
+        source: { kind: 'frontmatter' as const, field: l.field },
+      })),
     ];
 
     if (allLinks.length === 0) return;
 
     const sourceTitle = String(frontmatter.title || '');
     if (!sourceTitle) return;
+    const fileType = String(frontmatter.type || 'unknown');
 
     // Check source entity once — same for every link in this note
     const sourceExists = await this.ragClient.entityExists(sourceTitle);
@@ -218,9 +257,10 @@ export class RagIndexer {
         const targetExists = await this.ragClient.entityExists(targetTitle);
         if (!targetExists) continue;
 
+        const keywords = keywordsFor(link.source, fileType);
         await this.ragClient.createRelation(sourceTitle, targetTitle, {
-          description: `Explicitly linked in vault: [[${sourceTitle}]] references [[${targetTitle}]]`,
-          keywords: 'references, wikilink',
+          description: `Explicitly linked in vault: [[${sourceTitle}]] (${keywords}) [[${targetTitle}]]`,
+          keywords,
           weight: 1.0,
         });
       } catch (err) {
