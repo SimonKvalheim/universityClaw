@@ -60,11 +60,12 @@ describe('handleGeneration over-budget path', () => {
       'ov1',
       join(uploadDir, 'big-paper.pdf'),
       'big-paper.pdf',
+      undefined,
+      { source_type: 'paper' },
     );
     updateIngestionJob('ov1', {
       status: 'libraried',
       extraction_path: extractionDir,
-      source_type: 'paper',
     });
 
     const pipeline = new IngestionPipeline({
@@ -110,11 +111,12 @@ describe('handleGeneration over-budget path', () => {
   });
 
   it('does not send a Telegram notification on over-budget', async () => {
-    createIngestionJob('ov2', join(uploadDir, 'huge-doc.pdf'), 'huge-doc.pdf');
+    createIngestionJob('ov2', join(uploadDir, 'huge-doc.pdf'), 'huge-doc.pdf', undefined, {
+      source_type: 'paper',
+    });
     updateIngestionJob('ov2', {
       status: 'libraried',
       extraction_path: extractionDir,
-      source_type: 'paper',
     });
 
     const notifySpy = vi.fn();

@@ -57,11 +57,12 @@ describe('handleLibrarying', () => {
       'j1',
       join(uploadDir, 'sample-paper.pdf'),
       'sample-paper.pdf',
+      undefined,
+      { source_type: 'paper' },
     );
     updateIngestionJob('j1', {
       status: 'extracted',
       extraction_path: extractionDir,
-      source_type: 'paper',
     });
 
     const pipeline = new IngestionPipeline({
@@ -155,9 +156,15 @@ describe('handleLibrarying', () => {
   it('falls back to slug-Title-Case and logs a warn when zotero_metadata is malformed JSON', async () => {
     const warnSpy = vi.spyOn(logger, 'warn');
 
-    createIngestionJob('j5', join(uploadDir, 'bad-meta.pdf'), 'bad-meta.pdf', undefined, {
-      zotero_metadata: '{not valid json',
-    });
+    createIngestionJob(
+      'j5',
+      join(uploadDir, 'bad-meta.pdf'),
+      'bad-meta.pdf',
+      undefined,
+      {
+        zotero_metadata: '{not valid json',
+      },
+    );
     updateIngestionJob('j5', {
       status: 'extracted',
       extraction_path: extractionDir,
