@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { assertNoLiveNanoclaw, runBackfill } from './backfill-library.js';
+import { assertNoLiveNanoclaw, runBackfill, parseArgs } from './backfill-library.js';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -371,5 +371,41 @@ describe('backfill direct indexing', () => {
 
     expect(indexer.start).not.toHaveBeenCalled();
     expect(indexer.indexFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseArgs', () => {
+  it('parses all flags into RunBackfillOptions partial', () => {
+    const opts = parseArgs([
+      '--dry-run',
+      '--source',
+      'foo',
+      '--report',
+      '/tmp/r.json',
+      '--no-patch-source',
+      '--force-unsafe-concurrent',
+    ]);
+    expect(opts).toMatchObject({
+      dryRun: true,
+      source: 'foo',
+      reportPath: '/tmp/r.json',
+      noPatchSource: true,
+      force: true,
+    });
+  });
+
+  it('returns empty object when no flags given', () => {
+    const opts = parseArgs([]);
+    expect(opts).toEqual({});
+  });
+
+  it('handles mixed-order flags', () => {
+    const opts = parseArgs(['--report', '/x', '--source', 's', '--dry-run']);
+    expect(opts).toMatchObject({ dryRun: true, source: 's', reportPath: '/x' });
+  });
+
+  it('treats unknown flags as no-op (forward-compatible)', () => {
+    const opts = parseArgs(['--dry-run', '--unknown-flag', 'value']);
+    expect(opts.dryRun).toBe(true);
   });
 });

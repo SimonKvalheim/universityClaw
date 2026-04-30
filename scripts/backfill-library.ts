@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseFrontmatter, serializeFrontmatter } from '../src/vault/frontmatter.js';
 import { writeLibraryFile } from '../src/ingestion/library-writer.js';
@@ -187,13 +187,74 @@ export async function runBackfill(
   return report;
 }
 
+export function parseArgs(argv: string[]): Partial<RunBackfillOptions> {
+  const opts: Partial<RunBackfillOptions> = {};
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--dry-run':
+        opts.dryRun = true;
+        break;
+      case '--source':
+        opts.source = argv[++i];
+        break;
+      case '--report':
+        opts.reportPath = argv[++i];
+        break;
+      case '--no-patch-source':
+        opts.noPatchSource = true;
+        break;
+      case '--force-unsafe-concurrent':
+        opts.force = true;
+        break;
+    }
+  }
+  return opts;
+}
+
 // CLI entry — invoked via tsx scripts/backfill-library.ts
-// T21 ships only the guard + skeleton; T22-T25 will add the walker, extract,
-// patch, indexing, and CLI flag parsing.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const force = process.argv.includes('--force-unsafe-concurrent');
-  await assertNoLiveNanoclaw({ force });
-  console.log(
-    'backfill skeleton: guard passed. Logic added in T22-T25.',
-  );
+  const parsed = parseArgs(process.argv.slice(2));
+
+  // Defaults — for CLI use only. Tests build the options object directly.
+  const vaultDir = process.env.VAULT_DIR
+    ? resolve(process.env.VAULT_DIR)
+    : resolve(process.cwd(), 'vault');
+  const uploadProcessedDir = resolve(process.cwd(), 'upload', 'processed');
+  const reportPath =
+    parsed.reportPath ??
+    resolve(process.cwd(), `backfill-report-${Date.now()}.json`);
+
+  // Build real adapters — Extractor + RagIndexer + RagClient.
+  // These are heavyweight; tests inject stubs instead.
+  const { Extractor } = await import('../src/ingestion/extractor.js');
+  const { RagIndexer } = await import('../src/rag/indexer.js');
+  const { RagClient } = await import('../src/rag/rag-client.js');
+  const ragServerUrl = process.env.LIGHTRAG_URL ?? 'http://localhost:9621';
+
+  const realExtractor = new Extractor();
+  // Adapt Extractor → ExtractorLike (the narrow interface our backfill expects).
+  const extractor: ExtractorLike = {
+    extract: async (jobId, inputPath) => {
+      const result = await realExtractor.extract(jobId, inputPath);
+      return { cleanContentPath: result.cleanContentPath };
+    },
+  };
+
+  const ragClient = new RagClient({ serverUrl: ragServerUrl });
+  const indexer: IndexerLike = new RagIndexer(vaultDir, ragClient);
+
+  const finalOpts: RunBackfillOptions = {
+    vaultDir,
+    uploadProcessedDir,
+    reportPath,
+    dryRun: parsed.dryRun ?? false,
+    source: parsed.source,
+    noPatchSource: parsed.noPatchSource,
+    force: parsed.force,
+    extractor,
+    indexer,
+  };
+
+  const report = await runBackfill(finalOpts);
+  console.log(JSON.stringify(report, null, 2));
 }
