@@ -7,6 +7,7 @@ export default defineConfig({
       'setup/**/*.test.ts',
       'dashboard/src/**/*.test.ts',
       'container/agent-runner/src/**/*.test.ts',
+      'scripts/**/*.test.ts',
     ],
   },
 });
