@@ -3,6 +3,7 @@ import { join } from 'path';
 import { runContainerAgent } from '../container-runner.js';
 import { RegisteredGroup } from '../types.js';
 import { logger } from '../logger.js';
+import { slugFromFilename } from './slug.js';
 
 export interface AgentProcessorOpts {
   vaultDir: string;
@@ -31,6 +32,7 @@ export class AgentProcessor {
     },
   ): string {
     const draftsPath = `/workspace/extra/vault/drafts`;
+    const slug = slugFromFilename(fileName);
 
     const figuresSection =
       figures.length > 0
@@ -79,6 +81,19 @@ export class AgentProcessor {
         ? `\n- **zotero_key for frontmatter:** ${jobMeta.zotero_key}`
         : '';
 
+    const librarySection = `
+## Linking to the library file
+
+A raw cleaned extraction of this document has been written to \`vault/library/${slug}.md\`. The slug is **${slug}** — use exactly this string in both wikilinks below; do not derive a different one from the document title.
+
+Your source note must reference it:
+
+- Frontmatter: add \`library: "[[library/${slug}]]"\`
+- Body: add \`**Full text:** [[library/${slug}]]\` near the top
+
+The library file holds the raw extracted text and is the canonical place to read passages verbatim. Your source note remains the curated overarching logical flow.
+`;
+
     // Document content first (top of prompt) for better attention quality,
     // then slim task parameters. Workflow instructions live in CLAUDE.md.
     // See docs/research/2026-03-30-agent-prompt-architecture.md
@@ -99,7 +114,7 @@ ${figuresSection}${metadataSection}${manifestSection}
 - **Concept note pattern:** ${draftsPath}/${jobId}-concept-NNN.md
 - **Manifest path:** ${draftsPath}/${jobId}-manifest.json
 - **Completion sentinel:** ${draftsPath}/${jobId}-complete
-
+${librarySection}
 The content above has been pre-extracted by Docling. Do NOT read the original file.
 Location markers like \`<!-- page:N label:TYPE -->\` indicate source positions — use them for citations.
 
