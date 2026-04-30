@@ -430,7 +430,7 @@ type: source
 
 body refs [[target]]`;
 
-    mockReadFile.mockImplementation((path: string) => {
+    mockReadFile.mockImplementation((path: any) => {
       if (path.includes('target.md')) return targetContent;
       if (path.includes('origin.md')) return originContent;
       throw new Error(`unexpected read: ${path}`);
@@ -447,7 +447,7 @@ body refs [[target]]`;
 
   it('handleChange refreshes the map', async () => {
     let titleVersion = 'OldTitle';
-    mockReadFile.mockImplementation((path: string) => {
+    mockReadFile.mockImplementation((path: any) => {
       if (path.includes('thing.md')) {
         return `---\ntitle: ${titleVersion}\ntype: source\n---\n`;
       }
@@ -481,7 +481,7 @@ type: source
 
 refs [[gone]]`;
 
-    mockReadFile.mockImplementation((path: string) => {
+    mockReadFile.mockImplementation((path: any) => {
       if (path.includes('gone.md')) return goneContent;
       if (path.includes('origin.md')) return originContent;
       throw new Error(`unexpected: ${path}`);
