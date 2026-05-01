@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { parseFrontmatter, serializeFrontmatter } from '../src/vault/frontmatter.js';
 import { writeLibraryFile } from '../src/ingestion/library-writer.js';
-import { deleteTrackedDoc } from '../src/db/index.js';
+import { deleteTrackedDoc, initDatabase } from '../src/db/index.js';
 
 export interface ExtractorLike {
   extract(
@@ -232,6 +232,12 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   const parsed = parseArgs(process.argv.slice(2));
+
+  // The DB module is module-level — without initDatabase() the `db` handle is
+  // undefined and any call (e.g. deleteTrackedDoc, RagIndexer's tracker reads)
+  // throws "Cannot read properties of undefined". Tests use _initTestDatabase()
+  // for an in-memory DB; CLI uses the real one at store/messages.db.
+  initDatabase();
 
   // Defaults — for CLI use only. Tests build the options object directly.
   const vaultDir = process.env.VAULT_DIR
