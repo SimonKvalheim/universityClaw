@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const MAX_RANGE_LINES = 500;
 
@@ -157,7 +158,15 @@ export function vaultSection(
 // from tests — our file IS, so we need one).
 // ---------------------------------------------------------------------------
 
-const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+// Canonical-path comparison — naive string equality silently fails under tsx
+// because import.meta.url is realpath-resolved while argv[1] is the symlink form.
+const isMainModule = (() => {
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
 
 if (isMainModule) {
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');

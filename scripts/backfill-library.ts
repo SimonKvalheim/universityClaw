@@ -1,5 +1,13 @@
-import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { parseFrontmatter, serializeFrontmatter } from '../src/vault/frontmatter.js';
 import { writeLibraryFile } from '../src/ingestion/library-writer.js';
@@ -211,8 +219,18 @@ export function parseArgs(argv: string[]): Partial<RunBackfillOptions> {
   return opts;
 }
 
-// CLI entry — invoked via tsx scripts/backfill-library.ts
-if (import.meta.url === `file://${process.argv[1]}`) {
+// CLI entry — invoked via tsx scripts/backfill-library.ts. Use canonical path
+// comparison (tsx's import.meta.url is realpath-resolved while process.argv[1]
+// is the symlink form, so naive string equality silently fails).
+function isMainModule(): boolean {
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   const parsed = parseArgs(process.argv.slice(2));
 
   // Defaults — for CLI use only. Tests build the options object directly.
