@@ -188,8 +188,8 @@ describe('database migrations', () => {
     }
   });
 
-  describe('migration 0004: oversized → libraried', () => {
-    it('transitions oversized rows to libraried', () => {
+  describe('migration 0004: oversized → extracted', () => {
+    it('transitions oversized rows to extracted (so librarying runs and writes the library file)', () => {
       const db = makeFreshDbWithMigrationsThrough(3);
       try {
         db.exec(`
@@ -206,8 +206,8 @@ describe('database migrations', () => {
           .all();
         expect(rows).toEqual([
           { id: 'c1', status: 'completed' }, // untouched
-          { id: 'o1', status: 'libraried' },
-          { id: 'o2', status: 'libraried' },
+          { id: 'o1', status: 'extracted' },
+          { id: 'o2', status: 'extracted' },
         ]);
       } finally {
         db.close();
@@ -224,7 +224,7 @@ describe('database migrations', () => {
         applyMigration(db, '0004_oversized_to_libraried.sql'); // re-apply
         expect(
           db.prepare("SELECT status FROM ingestion_jobs WHERE id='o1'").get(),
-        ).toEqual({ status: 'libraried' });
+        ).toEqual({ status: 'extracted' });
       } finally {
         db.close();
       }
