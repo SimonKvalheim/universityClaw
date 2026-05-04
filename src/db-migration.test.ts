@@ -4,6 +4,34 @@ import os from 'os';
 import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
+// Helpers local to this test (no public API). Loads SQL files from disk
+// to give us migration-by-migration control beyond what runMigrations exposes.
+function applyMigration(db: Database.Database, name: string): void {
+  const sqlPath = path.join(process.cwd(), 'drizzle', 'migrations', name);
+  const sqlText = fs.readFileSync(sqlPath, 'utf-8');
+  // Drizzle separates statements with `--> statement-breakpoint`. Older files
+  // in this repo are single statements; the helper handles both.
+  for (const stmt of sqlText.split('--> statement-breakpoint')) {
+    const trimmed = stmt.trim();
+    if (trimmed) db.exec(trimmed);
+  }
+}
+
+function makeFreshDbWithMigrationsThrough(idx: number): Database.Database {
+  const db = new Database(':memory:');
+  const journal = JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), 'drizzle/migrations/meta/_journal.json'),
+      'utf-8',
+    ),
+  );
+  for (const entry of journal.entries) {
+    if (entry.idx > idx) break;
+    applyMigration(db, `${entry.tag}.sql`);
+  }
+  return db;
+}
+
 describe('database migrations', () => {
   it('creates all tables on a fresh database', async () => {
     const repoRoot = process.cwd();
@@ -158,5 +186,48 @@ describe('database migrations', () => {
     } finally {
       process.chdir(repoRoot);
     }
+  });
+
+  describe('migration 0004: oversized → extracted', () => {
+    it('transitions oversized rows to extracted (so librarying runs and writes the library file)', () => {
+      const db = makeFreshDbWithMigrationsThrough(3);
+      try {
+        db.exec(`
+          INSERT INTO ingestion_jobs (id, source_path, source_filename, status, created_at, updated_at)
+          VALUES
+            ('o1', '/a.pdf', 'a.pdf', 'oversized', '2026-04-01', '2026-04-01'),
+            ('o2', '/b.pdf', 'b.pdf', 'oversized', '2026-04-01', '2026-04-01'),
+            ('c1', '/c.pdf', 'c.pdf', 'completed', '2026-04-01', '2026-04-01');
+        `);
+        applyMigration(db, '0004_oversized_to_libraried.sql');
+
+        const rows = db
+          .prepare('SELECT id, status FROM ingestion_jobs ORDER BY id')
+          .all();
+        expect(rows).toEqual([
+          { id: 'c1', status: 'completed' }, // untouched
+          { id: 'o1', status: 'extracted' },
+          { id: 'o2', status: 'extracted' },
+        ]);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('is idempotent', () => {
+      const db = makeFreshDbWithMigrationsThrough(3);
+      try {
+        db.exec(
+          `INSERT INTO ingestion_jobs (id, source_path, source_filename, status, created_at, updated_at) VALUES ('o1', '/a.pdf', 'a.pdf', 'oversized', '2026-04-01', '2026-04-01')`,
+        );
+        applyMigration(db, '0004_oversized_to_libraried.sql');
+        applyMigration(db, '0004_oversized_to_libraried.sql'); // re-apply
+        expect(
+          db.prepare("SELECT status FROM ingestion_jobs WHERE id='o1'").get(),
+        ).toEqual({ status: 'extracted' });
+      } finally {
+        db.close();
+      }
+    });
   });
 });

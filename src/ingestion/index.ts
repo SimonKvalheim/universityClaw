@@ -1,12 +1,21 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFileSync, unlinkSync, existsSync } from 'node:fs';
+import {
+  readFileSync,
+  unlinkSync,
+  existsSync,
+  writeFileSync,
+  renameSync,
+} from 'node:fs';
 import { mkdir, rename, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, basename, dirname } from 'node:path';
 import { FileWatcher } from './file-watcher.js';
 import { AgentProcessor } from './agent-processor.js';
 import { Extractor } from './extractor.js';
 import { PipelineDrainer, JobRow } from './pipeline.js';
-import { markInterruptedJobsFailed } from './job-recovery.js';
+import {
+  markInterruptedJobsFailed,
+  resetRecoverableInProgress,
+} from './job-recovery.js';
 import { readManifest, inferManifest } from './manifest.js';
 import { buildVaultManifest } from './vault-manifest.js';
 import { promoteNote } from './promoter.js';
@@ -51,6 +60,11 @@ import { ZoteroLocalClient, ZoteroWebClient } from './zotero-client.js';
 import { ZoteroMetadata } from './types.js';
 import { discoverConcepts } from '../study/concept-discovery.js';
 import { createConcept, getConceptByVaultPath } from '../study/queries.js';
+import { slugFromFilename } from './slug.js';
+import { writeLibraryFile } from './library-writer.js';
+import { slugToTitle } from '../vault/wikilinks.js';
+import { buildOversizedStub } from './oversized-stub.js';
+import { serializeFrontmatter } from '../vault/frontmatter.js';
 
 const RATE_LIMIT_PATTERNS = [
   /rate.?limit/i,
@@ -63,6 +77,31 @@ const RATE_LIMIT_PATTERNS = [
 ];
 function isRateLimitError(msg: string): boolean {
   return RATE_LIMIT_PATTERNS.some((re) => re.test(msg));
+}
+
+function titleFromJobMetadata(
+  job: JobRow,
+  cleanedBody?: string,
+): string | null {
+  // 1. Zotero metadata
+  if (job.zotero_metadata) {
+    try {
+      const meta = JSON.parse(job.zotero_metadata) as { title?: unknown };
+      if (typeof meta.title === 'string' && meta.title.trim())
+        return meta.title.trim();
+    } catch {
+      logger.warn(
+        { jobId: job.id },
+        'titleFromJobMetadata: malformed zotero_metadata JSON; falling back to H1/slug',
+      );
+    }
+  }
+  // 2. First H1 of the extraction body
+  if (cleanedBody) {
+    const m = cleanedBody.match(/^#\s+(.+?)\s*$/m);
+    if (m && m[1].trim()) return m[1].trim();
+  }
+  return null;
 }
 
 export interface IngestionPipelineOpts {
@@ -100,6 +139,7 @@ export class IngestionPipeline {
     });
     this.drainer = new PipelineDrainer({
       onExtract: (job) => this.handleExtraction(job),
+      onLibrary: (job) => this.handleLibrarying(job),
       onGenerate: (job) => this.handleGeneration(job),
       onPromote: (job) => this.handlePromotion(job),
       maxExtractionConcurrent: MAX_EXTRACTION_CONCURRENT,
@@ -147,9 +187,9 @@ export class IngestionPipeline {
       } else if (
         existing.status === 'completed' ||
         existing.status === 'extracting' ||
+        existing.status === 'libraried' ||
         existing.status === 'generating' ||
         existing.status === 'promoting' ||
-        existing.status === 'oversized' ||
         existing.status === 'rate_limited'
       ) {
         logger.info(
@@ -253,6 +293,44 @@ export class IngestionPipeline {
     );
   }
 
+  /**
+   * Writes a library file to vault/library/{slug}.md for an extracted job.
+   * Invoked by the drainer's onLibrary callback; exposed as public for unit testing.
+   */
+  public async handleLibrarying(job: JobRow): Promise<void> {
+    const extractionPath = job.extraction_path;
+    if (!extractionPath)
+      throw new Error(`No extraction path for job ${job.id}`);
+
+    const cleanContentPath = join(extractionPath, 'content.clean.md');
+    const rawContentPath = join(extractionPath, 'content.md');
+    const contentPath = existsSync(cleanContentPath)
+      ? cleanContentPath
+      : rawContentPath;
+    const cleanedBody = readFileSync(contentPath, 'utf-8');
+
+    // Single slug rule — derived from source filename only.
+    // The agent (T8) and over-budget stub (T6/T7) use the same slugFromFilename helper.
+    const slug = slugFromFilename(job.source_filename);
+    const title = titleFromJobMetadata(job, cleanedBody) ?? slugToTitle(slug);
+    const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
+
+    writeLibraryFile({
+      libraryDir: join(this.vaultDir, 'library'),
+      slug,
+      jobMeta: {
+        title,
+        sourceType: job.source_type ?? 'paper',
+        ingestedFrom,
+        jobId: job.id,
+        sourceSummarySlug: slug,
+      },
+      cleanedBody,
+    });
+
+    logger.info({ jobId: job.id, slug }, 'ingestion: library file written');
+  }
+
   async handleGeneration(job: JobRow): Promise<void> {
     const fileName = job.source_filename;
     const relativePath = relative(this.uploadDir, job.source_path);
@@ -288,30 +366,50 @@ export class IngestionPipeline {
     const contentForBudget = existsSync(cleanContentPath)
       ? cleanContentPath
       : rawContentPath;
-    let contentChars: number;
+    let contentText = '';
+    let contentChars = 0;
     try {
-      contentChars = readFileSync(contentForBudget, 'utf-8').length;
+      contentText = readFileSync(contentForBudget, 'utf-8');
+      contentChars = contentText.length;
     } catch {
-      contentChars = 0;
+      // contentText stays '' and contentChars stays 0
     }
     const estimatedTokens = Math.ceil(contentChars / 4);
 
     if (estimatedTokens > TOKEN_BUDGET) {
       const tokensK = Math.round(estimatedTokens / 1000);
-      updateIngestionJob(job.id, {
-        status: 'oversized',
-        error: `oversized:~${tokensK}K tokens after cleanup`,
-      });
-      logger.warn(
+      logger.info(
         { jobId: job.id, estimatedTokens, budget: TOKEN_BUDGET },
-        `ingestion: Document oversized (~${tokensK}K tokens), parking job`,
+        `ingestion: Over budget (~${tokensK}K tokens); writing stub source draft`,
       );
-      if (this.notify) {
-        this.notify(
-          `Document '${fileName}' is too large for single-pass processing (~${tokensK}K tokens after cleanup). Retry or dismiss it from the dashboard.`,
-        );
-      }
-      return; // Do NOT throw — prevent drainer catch from overriding status
+
+      const slug = slugFromFilename(job.source_filename);
+      const cleanedBody = contentText;
+      const title = titleFromJobMetadata(job, cleanedBody) ?? slugToTitle(slug);
+      const ingestedFrom = `upload/processed/${job.id}-${job.source_filename}`;
+      const stub = buildOversizedStub({
+        title,
+        slug,
+        sourceType: job.source_type ?? 'paper',
+        ingestedFrom,
+        createdDate: new Date().toISOString().slice(0, 10),
+      });
+
+      // Write stub to drafts/ — promotion takes over from here. Filename matches
+      // pattern the agent would use: {jobId}-source.md. inferManifest walks drafts/,
+      // finds this single source draft (type:source), returns concept_notes:[].
+      // promoteNote then renames to vault/sources/{slug}.md based on title.
+      const draftPath = join(draftsDir, `${job.id}-source.md`);
+      const tmp = `${draftPath}.tmp.${process.pid}.${Date.now()}`;
+      writeFileSync(
+        tmp,
+        serializeFrontmatter(stub.frontmatter, stub.body),
+        'utf-8',
+      );
+      renameSync(tmp, draftPath);
+
+      updateIngestionJob(job.id, { status: 'generated' });
+      return;
     }
 
     let vaultManifest: string | undefined;
@@ -700,6 +798,7 @@ export class IngestionPipeline {
     await mkdir(PROCESSED_DIR, { recursive: true });
     await mkdir(join(this.vaultDir, 'drafts'), { recursive: true });
 
+    resetRecoverableInProgress();
     markInterruptedJobsFailed();
 
     await this.watcher.start();

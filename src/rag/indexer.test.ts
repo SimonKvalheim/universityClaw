@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { RagIndexer } from './indexer.js';
+import { RagIndexer, isLibraryPath } from './indexer.js';
 import { readFileSync } from 'fs';
 import { computeDocId } from './doc-id.js';
 
@@ -92,6 +92,21 @@ Archived content.`);
   it('skips profile files outside archive/', async () => {
     await indexer.indexFile('/vault/profile/student-profile.md');
     expect(mockRagClient.index).not.toHaveBeenCalled();
+  });
+
+  it('indexes files in library/', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Foo
+type: library
+---
+
+body`);
+
+    await indexer.indexFile('/vault/library/foo.md');
+
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const indexed = mockRagClient.index.mock.calls[0][0] as string;
+    expect(indexed).toContain('Source path: library/foo.md');
   });
 
   // --- Hash tracking tests ---
@@ -330,5 +345,453 @@ Uses [[self-attention]] and [[feed-forward-networks]].`);
       'Feed Forward Networks',
       expect.objectContaining({ keywords: 'references, wikilink' }),
     );
+  });
+});
+
+describe('library prefix shape', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('emits Title | Type | Source summary when source_summary present', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Foo
+type: library
+source_summary: "[[foo]]"
+---
+
+BODY`);
+
+    await indexer.indexFile('/vault/library/foo.md');
+
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const indexed = mockRagClient.index.mock.calls[0][0] as string;
+    const firstLine = indexed.split('\n')[0];
+    expect(firstLine).toBe(
+      '[Title: Foo | Type: library | Source summary: foo]',
+    );
+  });
+
+  it('omits Source summary when missing (over-budget case)', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Big
+type: library
+---
+
+BODY`);
+
+    await indexer.indexFile('/vault/library/big.md');
+
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const indexed = mockRagClient.index.mock.calls[0][0] as string;
+    const firstLine = indexed.split('\n')[0];
+    expect(firstLine).toBe('[Title: Big | Type: library]');
+  });
+});
+
+describe('slug→title map (behavioral)', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('handleAdd populates the map; subsequent injectWikilinks resolves via map', async () => {
+    const targetContent = `---
+title: TargetTitle
+type: source
+---
+
+`;
+    const originContent = `---
+title: OriginTitle
+type: source
+---
+
+body refs [[target]]`;
+
+    mockReadFile.mockImplementation((path: any) => {
+      if (path.includes('target.md')) return targetContent;
+      if (path.includes('origin.md')) return originContent;
+      throw new Error(`unexpected read: ${path}`);
+    });
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/target.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    // entityExists should have been called for the target with the map-resolved title
+    expect(mockRagClient.entityExists).toHaveBeenCalledWith('TargetTitle');
+  });
+
+  it('handleChange refreshes the map', async () => {
+    let titleVersion = 'OldTitle';
+    mockReadFile.mockImplementation((path: any) => {
+      if (path.includes('thing.md')) {
+        return `---\ntitle: ${titleVersion}\ntype: source\n---\n`;
+      }
+      if (path.includes('origin.md')) {
+        return `---\ntitle: O\ntype: source\n---\nrefs [[thing]]`;
+      }
+      throw new Error(`unexpected: ${path}`);
+    });
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/thing.md');
+    titleVersion = 'NewTitle';
+    await indexer.handleChange('/vault/sources/thing.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    expect(mockRagClient.entityExists).toHaveBeenCalledWith('NewTitle');
+  });
+
+  it('handleUnlink forgets the slug; subsequent injectWikilinks falls back to slugToTitle and warns', async () => {
+    const goneContent = `---
+title: GoneTitle
+type: source
+---
+
+`;
+    const originContent = `---
+title: O
+type: source
+---
+
+refs [[gone]]`;
+
+    mockReadFile.mockImplementation((path: any) => {
+      if (path.includes('gone.md')) return goneContent;
+      if (path.includes('origin.md')) return originContent;
+      throw new Error(`unexpected: ${path}`);
+    });
+    // Tracker doesn't have gone.md, so handleUnlink will return early after map delete
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    // Import logger and spy on it
+    const loggerModule = await import('../logger.js');
+    const warnSpy = vi.spyOn(loggerModule.logger, 'warn');
+
+    await indexer.handleAdd('/vault/sources/gone.md');
+    await indexer.handleUnlink('/vault/sources/gone.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    // After unlink, entityExists is called with the slugToTitle fallback ('Gone'), not 'GoneTitle'
+    expect(mockRagClient.entityExists).toHaveBeenCalledWith('Gone');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'gone' }),
+      expect.stringContaining('not in slug-title map'),
+    );
+    warnSpy.mockRestore();
+  });
+});
+
+describe('frontmatter wikilink allowlist', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('does not produce edges from arbitrary frontmatter fields', async () => {
+    mockReadFile.mockReturnValue(`---
+title: Origin
+type: source
+description: "see [[ghost]]"
+---
+
+body without links`);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    expect(mockRagClient.createRelation).not.toHaveBeenCalled();
+  });
+
+  it('produces edges from allowlisted frontmatter wikilinks', async () => {
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('foo.md'))
+        return '---\ntitle: FooTitle\ntype: source\n---\n';
+      return '---\ntitle: Origin\ntype: library\nsource_summary: "[[foo]]"\n---\nbody';
+    });
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/foo.md');
+    await indexer.indexFile('/vault/sources/origin.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'Origin',
+      'FooTitle',
+      expect.any(Object),
+    );
+  });
+});
+
+describe('bidirectional source↔library edges', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('source.library → library uses summarizes/full_text keywords', async () => {
+    // Source note has frontmatter `library: "[[foolib]]"`. Unique slugs avoid
+    // map collisions between sources/ and library/ files with the same basename.
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('foolib.md'))
+        return '---\ntitle: FooLib\ntype: library\n---\nbody';
+      if (p.includes('foosrc.md'))
+        return '---\ntitle: FooSrc\ntype: source\nlibrary: "[[foolib]]"\n---\n';
+      throw new Error(`unexpected: ${p}`);
+    });
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    // Pre-populate the map for both files then index the source
+    await indexer.handleAdd('/vault/library/foolib.md');
+    await indexer.handleAdd('/vault/sources/foosrc.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'FooSrc',
+      'FooLib',
+      expect.objectContaining({ keywords: 'summarizes, full_text' }),
+    );
+  });
+
+  it('library.source_summary → source uses summarized_by/summary', async () => {
+    // Library note links back to the source via source_summary: "[[barsrc]]"
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('barsrc.md'))
+        return '---\ntitle: BarSrc\ntype: source\n---\nbody';
+      if (p.includes('barlib.md'))
+        return '---\ntitle: BarLib\ntype: library\nsource_summary: "[[barsrc]]"\n---\n';
+      throw new Error(`unexpected: ${p}`);
+    });
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/barsrc.md');
+    await indexer.handleAdd('/vault/library/barlib.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'BarLib',
+      'BarSrc',
+      expect.objectContaining({ keywords: 'summarized_by, summary' }),
+    );
+  });
+
+  it('body wikilinks still use references/wikilink', async () => {
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('sources/a.md'))
+        return '---\ntitle: A\ntype: source\n---\n';
+      if (p.includes('sources/b.md'))
+        return '---\ntitle: B\ntype: source\n---\nrefs [[a]]';
+      throw new Error(`unexpected: ${p}`);
+    });
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/sources/a.md');
+    await indexer.handleAdd('/vault/sources/b.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'B',
+      'A',
+      expect.objectContaining({ keywords: 'references, wikilink' }),
+    );
+  });
+
+  it('resolves path-prefixed wikilinks like [[library/<slug>]] via the map (basename lookup)', async () => {
+    // Production scenario: source note has frontmatter `library: "[[library/papertext]]"`
+    // and the library file is at vault/library/papertext.md with `title: PaperLib`.
+    // The map should resolve the basename `papertext` to `PaperLib` for entity matching.
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('library/papertext.md'))
+        return '---\ntitle: PaperLib\ntype: library\n---\nbody';
+      if (p.includes('sources/papersrc.md'))
+        return '---\ntitle: PaperSrc\ntype: source\nlibrary: "[[library/papertext]]"\n---\n';
+      throw new Error(`unexpected: ${p}`);
+    });
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/library/papertext.md');
+    await indexer.handleAdd('/vault/sources/papersrc.md');
+
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'PaperSrc',
+      'PaperLib',
+      expect.objectContaining({ keywords: 'summarizes, full_text' }),
+    );
+  });
+
+  it('frontmatter library wikilink on a non-source file falls back to references/wikilink', async () => {
+    // The library→summarizes keywords only fire when fileType === 'source'.
+    // A concept file with `library:` frontmatter (unusual but possible) gets default keywords.
+    mockReadFile.mockImplementation((path: any) => {
+      const p = String(path);
+      if (p.includes('xlib.md'))
+        return '---\ntitle: XLib\ntype: library\n---\n';
+      if (p.includes('concepts/y.md'))
+        return '---\ntitle: Y\ntype: concept\nlibrary: "[[xlib]]"\n---\n';
+      throw new Error(`unexpected: ${p}`);
+    });
+    mockGetTrackedDoc.mockReturnValue(null);
+    mockRagClient.entityExists = vi.fn().mockResolvedValue(true);
+    mockRagClient.createRelation = vi.fn().mockResolvedValue(undefined);
+
+    await indexer.handleAdd('/vault/library/xlib.md');
+    await indexer.handleAdd('/vault/concepts/y.md');
+
+    // The relation should be created (since both entities exist and it's an allowlisted field),
+    // but with the fallback keywords because fileType is 'concept', not 'source'.
+    expect(mockRagClient.createRelation).toHaveBeenCalledWith(
+      'Y',
+      'XLib',
+      expect.objectContaining({ keywords: 'references, wikilink' }),
+    );
+  });
+});
+
+describe('library file timeouts', () => {
+  let indexer: RagIndexer;
+  let mockRagClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRagClient = {
+      index: vi.fn().mockResolvedValue(undefined),
+      deleteDocument: vi.fn().mockResolvedValue(undefined),
+      entityExists: vi.fn().mockResolvedValue(false),
+      createRelation: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetTrackedDoc.mockReturnValue(null);
+    indexer = new RagIndexer('/vault', mockRagClient);
+  });
+
+  it('passes 60s POST and 1_200_000 ms poll for library files', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: library\n---\nbody');
+    mockGetTrackedDoc.mockReturnValue(null);
+    await indexer.indexFile('/vault/library/foo.md');
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const opts = mockRagClient.index.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.timeoutMs).toBe(60_000);
+    expect(opts.pollTimeoutMs).toBe(1_200_000);
+  });
+
+  it('uses default timeouts for non-library files', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: source\n---\nbody');
+    mockGetTrackedDoc.mockReturnValue(null);
+    await indexer.indexFile('/vault/sources/foo.md');
+    expect(mockRagClient.index).toHaveBeenCalledOnce();
+    const opts = mockRagClient.index.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.timeoutMs).toBeUndefined();
+    expect(opts.pollTimeoutMs).toBeUndefined();
+  });
+
+  it('isLibraryPath detects POSIX and Windows separators', () => {
+    expect(isLibraryPath('library/foo.md')).toBe(true);
+    expect(isLibraryPath('library\\foo.md')).toBe(true);
+    expect(isLibraryPath('sources/library-thing.md')).toBe(false);
+    expect(isLibraryPath('library')).toBe(false); // exact match without separator is ambiguous; not under library/
+    expect(isLibraryPath('')).toBe(false);
+  });
+
+  it('logs body length and elapsed ms after a library index', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: library\n---\nABCDE');
+    mockGetTrackedDoc.mockReturnValue(null);
+
+    const loggerModule = await import('../logger.js');
+    const infoSpy = vi.spyOn(loggerModule.logger, 'info');
+
+    await indexer.indexFile('/vault/library/foo.md');
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relPath: 'library/foo.md',
+        bodyLen: expect.any(Number),
+        elapsedMs: expect.any(Number),
+      }),
+      expect.stringContaining('library indexed'),
+    );
+
+    infoSpy.mockRestore();
+  });
+
+  it('does not emit the library log for non-library files', async () => {
+    mockReadFile.mockReturnValue('---\ntitle: F\ntype: source\n---\nABCDE');
+    mockGetTrackedDoc.mockReturnValue(null);
+
+    const loggerModule = await import('../logger.js');
+    const infoSpy = vi.spyOn(loggerModule.logger, 'info');
+
+    await indexer.indexFile('/vault/sources/foo.md');
+
+    // No call should have the 'library indexed' message
+    const libraryLogs = infoSpy.mock.calls.filter(
+      (call) =>
+        typeof call[1] === 'string' && call[1].includes('library indexed'),
+    );
+    expect(libraryLogs).toHaveLength(0);
+
+    infoSpy.mockRestore();
   });
 });

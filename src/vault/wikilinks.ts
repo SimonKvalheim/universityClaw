@@ -1,3 +1,8 @@
+/** Convert a slug like "working-memory-architecture" to "Working Memory Architecture". */
+export function slugToTitle(slug: string): string {
+  return slug.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export interface WikiLink {
   target: string;
   heading: string | undefined;
@@ -47,4 +52,30 @@ export function replaceWikilinks(
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export interface FrontmatterWikilink {
+  target: string;
+  field: string; // originating frontmatter field — used by T13's keyword routing
+}
+
+export function extractFrontmatterWikilinks(
+  fm: Record<string, unknown>,
+  allowlist: readonly string[],
+): FrontmatterWikilink[] {
+  const out: FrontmatterWikilink[] = [];
+  const wikilinkRe = /\[\[([^\]]+)\]\]/g;
+  for (const field of allowlist) {
+    const value = fm[field];
+    const candidates = Array.isArray(value) ? value : [value];
+    for (const c of candidates) {
+      if (typeof c !== 'string') continue;
+      let m: RegExpExecArray | null;
+      wikilinkRe.lastIndex = 0;
+      while ((m = wikilinkRe.exec(c)) !== null) {
+        out.push({ target: m[1].trim(), field });
+      }
+    }
+  }
+  return out;
 }

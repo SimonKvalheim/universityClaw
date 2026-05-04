@@ -137,4 +137,41 @@ describe('AgentProcessor.buildPrompt', () => {
     expect(prompt).not.toContain('Source Document Metadata');
     expect(prompt).toContain('upload/processed/job-2-file.pdf');
   });
+
+  it('instructs the agent to add library wikilinks to the source note', () => {
+    const processor = new AgentProcessor({
+      vaultDir: '/vault',
+      uploadDir: '/upload',
+    });
+    const prompt = processor.buildPrompt(
+      'Extracted content',
+      'A Review of Cloud Computing.pdf', // produces slug "a-review-of-cloud-computing"
+      'jx',
+      [],
+    );
+    expect(prompt).toContain(
+      'library: "[[library/a-review-of-cloud-computing]]"',
+    );
+    expect(prompt).toContain(
+      '**Full text:** [[library/a-review-of-cloud-computing]]',
+    );
+    // Pin the slug-derivation rule so the agent never re-derives from title:
+    expect(prompt).toContain(
+      'The slug is **a-review-of-cloud-computing** — use exactly this string',
+    );
+  });
+
+  it('mentions the overarching logical flow contract for source notes', () => {
+    const processor = new AgentProcessor({
+      vaultDir: '/vault',
+      uploadDir: '/upload',
+    });
+    const prompt = processor.buildPrompt(
+      'Extracted content',
+      'paper.pdf',
+      'job-123',
+      [],
+    );
+    expect(prompt).toContain('overarching logical flow');
+  });
 });

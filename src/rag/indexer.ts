@@ -1,11 +1,15 @@
 import { watch, type FSWatcher } from 'chokidar';
-import { readFileSync } from 'fs';
-import { relative, resolve } from 'path';
+import { readFileSync, readdirSync } from 'fs';
+import { basename, relative, resolve } from 'path';
 import { logger } from '../logger.js';
 import { getTrackedDoc, upsertTrackedDoc, deleteTrackedDoc } from '../db.js';
 import type { RagClient } from './rag-client.js';
 import { parseFrontmatter } from '../vault/frontmatter.js';
-import { extractWikilinks } from '../vault/wikilinks.js';
+import {
+  extractWikilinks,
+  slugToTitle,
+  extractFrontmatterWikilinks,
+} from '../vault/wikilinks.js';
 import { computeDocId } from './doc-id.js';
 
 /**
@@ -16,11 +20,37 @@ import { computeDocId } from './doc-id.js';
  * Explicitly excluded: drafts/ (working area for ingestion pipeline),
  * attachments/ (binary figures), and any other top-level directories.
  */
-const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive'];
+const ALLOWED_PATHS = ['concepts', 'sources', 'profile/archive', 'library'];
 
-/** Convert a slug like "working-memory-architecture" to "Working Memory Architecture". */
-function slugToTitle(slug: string): string {
-  return slug.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+export function isLibraryPath(relPath: string): boolean {
+  return relPath.startsWith('library/') || relPath.startsWith('library\\');
+}
+
+const FRONTMATTER_LINK_FIELDS = [
+  'source_summary',
+  'library',
+  'links_to',
+  'related',
+] as const;
+
+type LinkSource = { kind: 'body' } | { kind: 'frontmatter'; field: string };
+
+function keywordsFor(source: LinkSource, fileType: string): string {
+  if (
+    source.kind === 'frontmatter' &&
+    source.field === 'library' &&
+    fileType === 'source'
+  ) {
+    return 'summarizes, full_text';
+  }
+  if (
+    source.kind === 'frontmatter' &&
+    source.field === 'source_summary' &&
+    fileType === 'library'
+  ) {
+    return 'summarized_by, summary';
+  }
+  return 'references, wikilink';
 }
 
 export class RagIndexer {
@@ -28,6 +58,7 @@ export class RagIndexer {
   private ragClient: RagClient;
   private watcher: FSWatcher | null = null;
   private queue: Promise<void> = Promise.resolve();
+  private slugTitleMap = new Map<string, string>();
 
   constructor(vaultDir: string, ragClient: RagClient) {
     this.vaultDir = resolve(vaultDir);
@@ -35,14 +66,31 @@ export class RagIndexer {
   }
 
   start(): void {
+    // Initialize slug→title map from existing files in allowed paths
+    for (const dir of ALLOWED_PATHS) {
+      const full = resolve(this.vaultDir, dir);
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(full);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.endsWith('.md')) continue;
+        this.indexSlugTitle(resolve(full, entry));
+      }
+    }
+
     const watchPaths = ALLOWED_PATHS.map((p) => resolve(this.vaultDir, p));
     this.watcher = watch(watchPaths, {
       ignoreInitial: false,
       awaitWriteFinish: { stabilityThreshold: 500 },
       ignored: [/(^|[/\\])\./],
     });
-    this.watcher.on('add', (fp) => this.enqueue(() => this.indexFile(fp)));
-    this.watcher.on('change', (fp) => this.enqueue(() => this.indexFile(fp)));
+    this.watcher.on('add', (fp) => this.enqueue(() => this.handleAdd(fp)));
+    this.watcher.on('change', (fp) =>
+      this.enqueue(() => this.handleChange(fp)),
+    );
     this.watcher.on('unlink', (fp) =>
       this.enqueue(() => this.handleUnlink(fp)),
     );
@@ -56,6 +104,31 @@ export class RagIndexer {
   /** Serialize operations to avoid overwhelming LightRAG. */
   private enqueue(fn: () => Promise<void>): void {
     this.queue = this.queue.then(fn, fn).catch(() => {});
+  }
+
+  private indexSlugTitle(filePath: string): void {
+    let raw: string;
+    try {
+      raw = readFileSync(filePath, 'utf-8');
+    } catch {
+      return;
+    }
+    const { data: fm } = parseFrontmatter(raw);
+    const slug = basename(filePath, '.md');
+    const title = String(fm.title || '').trim();
+    if (title) this.slugTitleMap.set(slug, title);
+  }
+
+  async handleAdd(filePath: string): Promise<void> {
+    if (!filePath.endsWith('.md')) return;
+    this.indexSlugTitle(filePath);
+    await this.indexFile(filePath);
+  }
+
+  async handleChange(filePath: string): Promise<void> {
+    if (!filePath.endsWith('.md')) return;
+    this.indexSlugTitle(filePath);
+    await this.indexFile(filePath);
   }
 
   async indexFile(filePath: string): Promise<void> {
@@ -84,10 +157,17 @@ export class RagIndexer {
     const sourceDoc = fm.source_doc || '';
     const verification = fm.verification_status || 'unverified';
 
-    const parts = [`Title: ${title}`, `Type: ${type}`];
-    if (topics) parts.push(`Topics: ${topics}`);
-    if (sourceDoc) parts.push(`Source: ${sourceDoc}`);
-    parts.push(`Verification: ${verification}`);
+    const parts: string[] = [`Title: ${title}`, `Type: ${type}`];
+
+    if (type === 'library') {
+      const sourceSummaryRaw = String(fm.source_summary || '');
+      const slug = sourceSummaryRaw.replace(/^\[\[|\]\]$/g, '').trim();
+      if (slug) parts.push(`Source summary: ${slug}`);
+    } else {
+      if (topics) parts.push(`Topics: ${topics}`);
+      if (sourceDoc) parts.push(`Source: ${sourceDoc}`);
+      parts.push(`Verification: ${verification}`);
+    }
 
     const prefix = `[${parts.join(' | ')}]`;
     const indexed = `${prefix}\nSource path: ${relPath}\n\n${body}`;
@@ -117,7 +197,25 @@ export class RagIndexer {
 
     // Index new content
     try {
-      await this.ragClient.index(indexed, { fileSource: relPath });
+      const indexOpts: {
+        fileSource: string;
+        timeoutMs?: number;
+        pollTimeoutMs?: number;
+      } = {
+        fileSource: relPath,
+      };
+      if (isLibraryPath(relPath)) {
+        indexOpts.timeoutMs = 60_000;
+        indexOpts.pollTimeoutMs = 1_200_000;
+        const t0 = Date.now();
+        await this.ragClient.index(indexed, indexOpts);
+        logger.info(
+          { relPath, bodyLen: body.length, elapsedMs: Date.now() - t0 },
+          'rag: library indexed',
+        );
+      } else {
+        await this.ragClient.index(indexed, indexOpts);
+      }
     } catch (err) {
       logger.warn({ err, relPath }, 'Failed to index file');
       return; // Don't update tracker — will retry on next event/restart
@@ -139,26 +237,57 @@ export class RagIndexer {
     content: string,
     frontmatter: Record<string, unknown>,
   ): Promise<void> {
-    const links = extractWikilinks(content);
-    if (links.length === 0) return;
+    // Body links: scan body only, not raw content (to avoid double-scanning frontmatter values).
+    const { content: body } = parseFrontmatter(content);
+    const bodyLinks = extractWikilinks(body);
+    const fmLinks = extractFrontmatterWikilinks(
+      frontmatter,
+      FRONTMATTER_LINK_FIELDS,
+    );
+    const allLinks: { target: string; source: LinkSource }[] = [
+      ...bodyLinks.map((l) => ({
+        target: l.target,
+        source: { kind: 'body' as const },
+      })),
+      ...fmLinks.map((l) => ({
+        target: l.target,
+        source: { kind: 'frontmatter' as const, field: l.field },
+      })),
+    ];
+
+    if (allLinks.length === 0) return;
 
     const sourceTitle = String(frontmatter.title || '');
     if (!sourceTitle) return;
+    const fileType = String(frontmatter.type || 'unknown');
 
     // Check source entity once — same for every link in this note
     const sourceExists = await this.ragClient.entityExists(sourceTitle);
     if (!sourceExists) return;
 
-    for (const link of links) {
-      const targetTitle = slugToTitle(link.target);
+    for (const link of allLinks) {
+      // Path-prefixed wikilinks like [[library/foo]] target the file at library/foo.md;
+      // the slug→title map is keyed on bare basenames, so strip any directory prefix.
+      const lookupSlug = link.target.includes('/')
+        ? link.target.split('/').pop()!
+        : link.target;
+      let targetTitle = this.slugTitleMap.get(lookupSlug);
+      if (!targetTitle) {
+        logger.warn(
+          { slug: link.target },
+          'rag: target slug not in slug-title map; falling back to slugToTitle',
+        );
+        targetTitle = slugToTitle(lookupSlug);
+      }
 
       try {
         const targetExists = await this.ragClient.entityExists(targetTitle);
         if (!targetExists) continue;
 
+        const keywords = keywordsFor(link.source, fileType);
         await this.ragClient.createRelation(sourceTitle, targetTitle, {
-          description: `Explicitly linked in vault: [[${sourceTitle}]] references [[${targetTitle}]]`,
-          keywords: 'references, wikilink',
+          description: `Explicitly linked in vault: [[${sourceTitle}]] (${keywords}) [[${targetTitle}]]`,
+          keywords,
           weight: 1.0,
         });
       } catch (err) {
@@ -172,6 +301,9 @@ export class RagIndexer {
 
   async handleUnlink(filePath: string): Promise<void> {
     if (!filePath.endsWith('.md')) return;
+
+    const slug = basename(filePath, '.md');
+    this.slugTitleMap.delete(slug);
 
     const relPath = relative(this.vaultDir, filePath);
     const tracked = getTrackedDoc(relPath);
