@@ -281,4 +281,10 @@ if (isMainModule()) {
 
   const report = await runBackfill(finalOpts);
   console.log(JSON.stringify(report, null, 2));
+
+  // RagIndexer.start() spawns a chokidar watcher that keeps the Node event
+  // loop alive. Without an explicit exit, the script never returns control to
+  // the shell — the next iteration of an outer loop hangs and zombie tsx
+  // processes accumulate. Force-exit after the report is written.
+  process.exit(report.errors.length > 0 ? 1 : 0);
 }
