@@ -11,6 +11,7 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { logBotOutbound } from './outbound-logging.js';
 import {
   getConceptById,
   batchCreateActivities,
@@ -137,6 +138,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   if (data.sender && data.chatJid.startsWith('tg:')) {
+                    logBotOutbound(data.chatJid, data.text, data.sender);
                     await sendPoolMessage(
                       data.chatJid,
                       data.text,
@@ -1138,7 +1140,10 @@ export async function processTaskIpc(
           requestId?: string;
         };
       const result = recordConceptDelivery({
-        concept, chatJid, sourceTaskId, surface,
+        concept,
+        chatJid,
+        sourceTaskId,
+        surface,
       });
       if (requestId) {
         writeIpcResponse(
