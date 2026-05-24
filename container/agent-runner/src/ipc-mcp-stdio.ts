@@ -4,44 +4,123 @@
  * Reads context from environment variables, writes IPC files for the host.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
-import fs from 'fs';
-import path from 'path';
-import { CronExpressionParser } from 'cron-parser';
-import { pcmToWav } from './pcm-to-wav.js';
-import { buildGeminiTtsRequest } from './gemini-tts-request.js';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const IPC_DIR = '/workspace/ipc';
-const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
-const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const MESSAGES_DIR = `${IPC_DIR}/messages`;
+const TASKS_DIR = `${IPC_DIR}/tasks`;
 
-// Context from environment variables (set by the agent runner)
-const chatJid = process.env.NANOCLAW_CHAT_JID!;
-const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+// ---------------------------------------------------------------------------
+// Pure, importable handler for the record_concept_delivery tool.
+//
+// Kept at module top level (NOT inside the main-module guard) so it can be
+// unit-tested without booting the MCP stdio server. It depends only on the
+// injected `sendIpc` function and context values.
+// ---------------------------------------------------------------------------
 
-function writeIpcFile(dir: string, data: object): string {
-  fs.mkdirSync(dir, { recursive: true });
+type RecordCtx = {
+  sendIpc: (req: object) => Promise<any>;
+  chatJid: string;
+  sourceTaskId?: string;
+};
 
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
-  const filepath = path.join(dir, filename);
-
-  // Atomic write: temp file then rename
-  const tempPath = `${filepath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
-  fs.renameSync(tempPath, filepath);
-
-  return filename;
+export async function recordConceptDeliveryHandler(
+  args: { concept: string; surface?: 'text' | 'voice' | 'text+voice' },
+  ctx: RecordCtx,
+) {
+  try {
+    const response = await ctx.sendIpc({
+      type: 'record_concept_delivery',
+      concept: args.concept,
+      chatJid: ctx.chatJid,
+      sourceTaskId: ctx.sourceTaskId,
+      surface: args.surface,
+    });
+    if (!response?.ok) {
+      return {
+        isError: true,
+        content: [{ type: 'text' as const, text: response?.error ?? 'Unknown error' }],
+      };
+    }
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `Recorded delivery of ${response.title} (id=${response.conceptId}).`,
+      }],
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [{
+        type: 'text' as const,
+        text: `IPC error: ${err instanceof Error ? err.message : String(err)}`,
+      }],
+    };
+  }
 }
 
-const server = new McpServer({
-  name: 'nanoclaw',
-  version: '1.0.0',
-});
+// ---------------------------------------------------------------------------
+// Stdio entry point — matches sibling vault-mcp-stdio.ts pattern.
+// Guarded so that importing recordConceptDeliveryHandler from tests does NOT
+// trigger the server bootstrap (which statically imports the MCP SDK, reads
+// process.env, and connects stdio).
+//
+// Canonical-path comparison — naive string equality silently fails under tsx
+// because import.meta.url is realpath-resolved while argv[1] is the symlink form.
+// ---------------------------------------------------------------------------
+const isMainModule = (() => {
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
 
-server.tool(
+if (isMainModule) {
+  const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+  const { StdioServerTransport } = await import(
+    '@modelcontextprotocol/sdk/server/stdio.js'
+  );
+  const { z } = await import('zod');
+  const fs = (await import('fs')).default;
+  const path = (await import('path')).default;
+  const { CronExpressionParser } = await import('cron-parser');
+  const { pcmToWav } = await import('./pcm-to-wav.js');
+  const { buildGeminiTtsRequest } = await import('./gemini-tts-request.js');
+  const { writeIpcRequestAwaitResponse } = await import('./ipc-helpers.js');
+
+  // Context from environment variables (set by the agent runner)
+  const chatJid = process.env.NANOCLAW_CHAT_JID!;
+  const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
+  const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+  const SOURCE_TASK_ID = process.env.NANOCLAW_SOURCE_TASK_ID;
+
+  // IPC roundtrip dirs. Requests go to TASKS_DIR; the host writes responses to
+  // the sibling responses/ dir (matches host <DATA_DIR>/ipc/<group>/responses/).
+  const IPC_BASE = path.dirname(TASKS_DIR);
+  const RESPONSES_DIR = path.join(IPC_BASE, 'responses');
+
+  function writeIpcFile(dir: string, data: object): string {
+    fs.mkdirSync(dir, { recursive: true });
+
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+    const filepath = path.join(dir, filename);
+
+    // Atomic write: temp file then rename
+    const tempPath = `${filepath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+    fs.renameSync(tempPath, filepath);
+
+    return filename;
+  }
+
+  const server = new McpServer({
+    name: 'nanoclaw',
+    version: '1.0.0',
+  });
+
+  server.tool(
   'send_message',
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
   {
@@ -532,6 +611,32 @@ server.tool(
   },
 );
 
-// Start the stdio transport
-const transport = new StdioServerTransport();
-await server.connect(transport);
+  server.tool(
+    'record_concept_delivery',
+    "Record that you have just chosen a vault concept to deliver to the user. " +
+      "Call this BEFORE the send_voice call so the ledger stays accurate even " +
+      "if the send transiently fails. Accepts either the vault path " +
+      "(e.g. 'concepts/shadow-ai-economy.md') or the concept UUID.",
+    {
+      concept: z.string().describe('vault_note_path or concept UUID'),
+      surface: z
+        .enum(['text', 'voice', 'text+voice'])
+        .optional()
+        .describe("What you are about to deliver. Default omitted."),
+    },
+    async (args) =>
+      recordConceptDeliveryHandler(args, {
+        sendIpc: (req) =>
+          writeIpcRequestAwaitResponse(TASKS_DIR, req as any, {
+            responsesDir: RESPONSES_DIR,
+            timeoutMs: 10_000,
+          }),
+        chatJid,
+        sourceTaskId: SOURCE_TASK_ID,
+      }),
+  );
+
+  // Start the stdio transport
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
