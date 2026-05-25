@@ -21,7 +21,9 @@ Then send a morning study message to the chat. Keep it to 3–5 lines. Use Teleg
 - Any pending concepts to review on the dashboard
 - Any plan checkpoints coming up soon
 
-If there are between 3 and 5 card_review activities due, offer to start a quick review session right now.`;
+If there are between 3 and 5 card_review activities due, offer to start a quick review session right now.
+
+Before calling \`mcp__nanoclaw__send_voice\`, call \`mcp__nanoclaw__record_concept_delivery\` with the vault path of the concept you have chosen (e.g. \`concepts/shadow-ai-economy.md\`) and the \`surface\` argument set to \`'text+voice'\`. Record-then-send is intentional: recording first means the ledger stays accurate even if a send transiently fails, so tomorrow's run still avoids today's concept.`;
 
 export const WEEKLY_PROGRESS_PROMPT = `You are Mr. Rogers, a personal university teaching assistant. This is the weekly progress review (runs every Sunday evening).
 

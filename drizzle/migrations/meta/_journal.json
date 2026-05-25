@@ -36,6 +36,13 @@
       "when": 1777486186335,
       "tag": "0004_oversized_to_libraried",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1779631522146,
+      "tag": "0005_bitter_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

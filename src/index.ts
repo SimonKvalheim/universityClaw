@@ -56,7 +56,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, routeOutbound } from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -962,21 +962,15 @@ async function main(): Promise<void> {
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        logger.warn({ jid }, 'No channel owns JID, cannot send message');
-        return;
+      try {
+        await routeOutbound(channels, jid, rawText);
+      } catch (err) {
+        logger.warn({ jid, err }, 'No channel owns JID, cannot send message');
       }
-      const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
-    },
+    sendMessage: (jid, text) => routeOutbound(channels, jid, text),
     sendVoice: async (jid: string, filePath: string, caption?: string) => {
       const channel = channels.find((ch) => ch.ownsJid(jid) && ch.sendVoice);
       if (channel?.sendVoice) {

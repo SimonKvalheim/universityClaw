@@ -4,6 +4,10 @@ import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
+  getRecentDeliveredConcepts,
+  type RecentDelivery,
+} from './db/delivered-concepts.js';
+import {
   ContainerOutput,
   runContainerAgent,
   writeTasksSnapshot,
@@ -60,6 +64,23 @@ export function computeNextRun(task: ScheduledTask): string | null {
   }
 
   return null;
+}
+
+export function buildPromptWithRecentConcepts(
+  basePrompt: string,
+  recent: RecentDelivery[],
+): string {
+  if (recent.length === 0) return basePrompt;
+  const lines = recent.map((r) => {
+    const date = r.deliveredAt.slice(0, 10);
+    const path = r.vaultNotePath ?? '(no path)';
+    return `- ${date}: ${r.title} (${path})`;
+  });
+  return (
+    `${basePrompt}\n\n` +
+    `## Recently delivered concepts (last 14 days — pick something different)\n` +
+    lines.join('\n')
+  );
 }
 
 export interface SchedulerDependencies {
@@ -170,10 +191,13 @@ async function runTask(
   };
 
   try {
+    const recent = getRecentDeliveredConcepts(task.chat_jid, 14);
+    const injectedPrompt = buildPromptWithRecentConcepts(task.prompt, recent);
+
     const output = await runContainerAgent(
       group,
       {
-        prompt: task.prompt,
+        prompt: injectedPrompt,
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
@@ -181,6 +205,7 @@ async function runTask(
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
         script: task.script || undefined,
+        sourceTaskId: task.id,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

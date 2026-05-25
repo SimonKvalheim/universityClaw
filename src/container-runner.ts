@@ -47,6 +47,7 @@ export interface ContainerInput {
   allowedTools?: string[];
   singleTurn?: boolean;
   ipcNamespace?: string;
+  sourceTaskId?: string;
 }
 
 export interface ContainerOutput {

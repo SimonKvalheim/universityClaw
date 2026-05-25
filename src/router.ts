@@ -1,5 +1,6 @@
 import { Channel, NewMessage } from './types.js';
 import { formatLocalTime } from './timezone.js';
+import { logBotOutbound as defaultLogBotOutbound } from './outbound-logging.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -38,10 +39,19 @@ export function routeOutbound(
   channels: Channel[],
   jid: string,
   text: string,
+  senderName?: string,
+  logFn: (
+    jid: string,
+    text: string,
+    senderName?: string,
+  ) => void = defaultLogBotOutbound,
 ): Promise<void> {
+  const cleaned = formatOutbound(text);
+  if (!cleaned) return Promise.resolve();
   const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
   if (!channel) throw new Error(`No channel for JID: ${jid}`);
-  return channel.sendMessage(jid, text);
+  logFn(jid, cleaned, senderName);
+  return channel.sendMessage(jid, cleaned);
 }
 
 export function findChannel(

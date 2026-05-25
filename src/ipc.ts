@@ -11,6 +11,8 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { logBotOutbound } from './outbound-logging.js';
+import { formatOutbound } from './router.js';
 import {
   getConceptById,
   batchCreateActivities,
@@ -42,8 +44,23 @@ import {
 } from './study/mastery.js';
 import { RegisteredGroup } from './types.js';
 import { synthesizeAudio } from './study/audio.js';
+import { recordConceptDelivery } from './db/delivered-concepts.js';
 
 const execFileAsync = promisify(execFile);
+
+function writeIpcResponse(
+  ipcBaseDir: string,
+  sourceGroup: string,
+  requestId: string,
+  body: unknown,
+): void {
+  const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+  fs.mkdirSync(responsesDir, { recursive: true });
+  const target = path.join(responsesDir, `${requestId}.json`);
+  const temp = `${target}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(body));
+  fs.renameSync(temp, target);
+}
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -122,12 +139,16 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   if (data.sender && data.chatJid.startsWith('tg:')) {
-                    await sendPoolMessage(
-                      data.chatJid,
-                      data.text,
-                      data.sender,
-                      sourceGroup,
-                    );
+                    const cleaned = formatOutbound(data.text);
+                    if (cleaned) {
+                      logBotOutbound(data.chatJid, cleaned, data.sender);
+                      await sendPoolMessage(
+                        data.chatJid,
+                        cleaned,
+                        data.sender,
+                        sourceGroup,
+                      );
+                    }
                   } else {
                     await deps.sendMessage(data.chatJid, data.text);
                   }
@@ -1110,6 +1131,32 @@ export async function processTaskIpc(
         },
         'study_session: wrote session summary',
       );
+      break;
+    }
+
+    case 'record_concept_delivery': {
+      const { concept, chatJid, sourceTaskId, surface, requestId } =
+        data as unknown as {
+          concept: string;
+          chatJid: string;
+          sourceTaskId?: string;
+          surface?: 'text' | 'voice' | 'text+voice';
+          requestId?: string;
+        };
+      const result = recordConceptDelivery({
+        concept,
+        chatJid,
+        sourceTaskId,
+        surface,
+      });
+      if (requestId) {
+        writeIpcResponse(
+          path.join(DATA_DIR, 'ipc'),
+          sourceGroup,
+          requestId,
+          result,
+        );
+      }
       break;
     }
 

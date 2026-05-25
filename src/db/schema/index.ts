@@ -7,3 +7,4 @@ export * from './state.js';
 export * from './study.js';
 export * from './tasks.js';
 export * from './voice.js';
+export * from './delivered-concepts.js';

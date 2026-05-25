@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import {
   _resetSchedulerLoopForTests,
+  buildPromptWithRecentConcepts,
   computeNextRun,
   startSchedulerLoop,
 } from './task-scheduler.js';
+import type { RecentDelivery } from './db/delivered-concepts.js';
 
 describe('task scheduler', () => {
   beforeEach(() => {
@@ -125,5 +127,37 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+});
+
+describe('buildPromptWithRecentConcepts', () => {
+  it('returns the original prompt when no deliveries exist', () => {
+    expect(buildPromptWithRecentConcepts('original prompt', [])).toBe(
+      'original prompt',
+    );
+  });
+
+  it('appends a list section when deliveries exist', () => {
+    const recent: RecentDelivery[] = [
+      {
+        conceptId: 'c1',
+        title: 'Shadow AI Economy',
+        vaultNotePath: 'concepts/shadow-ai-economy.md',
+        deliveredAt: '2026-05-16T05:03:00.000Z',
+      },
+      {
+        conceptId: 'c2',
+        title: 'Cognitive Debt',
+        vaultNotePath: 'concepts/cognitive-debt.md',
+        deliveredAt: '2026-05-13T05:09:00.000Z',
+      },
+    ];
+    const out = buildPromptWithRecentConcepts('original prompt', recent);
+    expect(out).toContain('original prompt');
+    expect(out).toMatch(/Recently delivered concepts \(last 14 days/);
+    expect(out).toMatch(
+      /2026-05-16: Shadow AI Economy \(concepts\/shadow-ai-economy\.md\)/,
+    );
+    expect(out).toMatch(/2026-05-13: Cognitive Debt/);
   });
 });

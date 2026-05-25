@@ -4,69 +4,158 @@
  * Reads context from environment variables, writes IPC files for the host.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
-import fs from 'fs';
-import path from 'path';
-import { CronExpressionParser } from 'cron-parser';
-import { pcmToWav } from './pcm-to-wav.js';
-import { buildGeminiTtsRequest } from './gemini-tts-request.js';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const IPC_DIR = '/workspace/ipc';
-const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
-const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const MESSAGES_DIR = `${IPC_DIR}/messages`;
+const TASKS_DIR = `${IPC_DIR}/tasks`;
 
-// Context from environment variables (set by the agent runner)
-const chatJid = process.env.NANOCLAW_CHAT_JID!;
-const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+// ---------------------------------------------------------------------------
+// Pure, importable handler for the record_concept_delivery tool.
+//
+// Kept at module top level (NOT inside the main-module guard) so it can be
+// unit-tested without booting the MCP stdio server. It depends only on the
+// injected `sendIpc` function and context values.
+// ---------------------------------------------------------------------------
 
-function writeIpcFile(dir: string, data: object): string {
-  fs.mkdirSync(dir, { recursive: true });
+type RecordCtx = {
+  sendIpc: (req: object) => Promise<any>;
+  chatJid: string;
+  sourceTaskId?: string;
+};
 
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
-  const filepath = path.join(dir, filename);
-
-  // Atomic write: temp file then rename
-  const tempPath = `${filepath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
-  fs.renameSync(tempPath, filepath);
-
-  return filename;
+export async function recordConceptDeliveryHandler(
+  args: { concept: string; surface?: 'text' | 'voice' | 'text+voice' },
+  ctx: RecordCtx,
+) {
+  try {
+    const response = await ctx.sendIpc({
+      type: 'record_concept_delivery',
+      concept: args.concept,
+      chatJid: ctx.chatJid,
+      sourceTaskId: ctx.sourceTaskId,
+      surface: args.surface,
+    });
+    if (!response?.ok) {
+      return {
+        isError: true,
+        content: [
+          { type: 'text' as const, text: response?.error ?? 'Unknown error' },
+        ],
+      };
+    }
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Recorded delivery of ${response.title} (id=${response.conceptId}).`,
+        },
+      ],
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `IPC error: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ],
+    };
+  }
 }
 
-const server = new McpServer({
-  name: 'nanoclaw',
-  version: '1.0.0',
-});
+// ---------------------------------------------------------------------------
+// Stdio entry point — matches sibling vault-mcp-stdio.ts pattern.
+// Guarded so that importing recordConceptDeliveryHandler from tests does NOT
+// trigger the server bootstrap (which statically imports the MCP SDK, reads
+// process.env, and connects stdio).
+//
+// Canonical-path comparison — naive string equality silently fails under tsx
+// because import.meta.url is realpath-resolved while argv[1] is the symlink form.
+// ---------------------------------------------------------------------------
+const isMainModule = (() => {
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
 
-server.tool(
-  'send_message',
-  "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
-  {
-    text: z.string().describe('The message text to send'),
-    sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
-  },
-  async (args) => {
-    const data: Record<string, string | undefined> = {
-      type: 'message',
-      chatJid,
-      text: args.text,
-      sender: args.sender || undefined,
-      groupFolder,
-      timestamp: new Date().toISOString(),
-    };
+if (isMainModule) {
+  const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+  const { StdioServerTransport } =
+    await import('@modelcontextprotocol/sdk/server/stdio.js');
+  const { z } = await import('zod');
+  const fs = (await import('fs')).default;
+  const path = (await import('path')).default;
+  const { CronExpressionParser } = await import('cron-parser');
+  const { pcmToWav } = await import('./pcm-to-wav.js');
+  const { buildGeminiTtsRequest } = await import('./gemini-tts-request.js');
+  const { writeIpcRequestAwaitResponse } = await import('./ipc-helpers.js');
 
-    writeIpcFile(MESSAGES_DIR, data);
+  // Context from environment variables (set by the agent runner)
+  const chatJid = process.env.NANOCLAW_CHAT_JID!;
+  const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
+  const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+  const SOURCE_TASK_ID = process.env.NANOCLAW_SOURCE_TASK_ID;
 
-    return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
-  },
-);
+  // IPC roundtrip dirs. Requests go to TASKS_DIR; the host writes responses to
+  // the sibling responses/ dir (matches host <DATA_DIR>/ipc/<group>/responses/).
+  const IPC_BASE = path.dirname(TASKS_DIR);
+  const RESPONSES_DIR = path.join(IPC_BASE, 'responses');
 
-server.tool(
-  'schedule_task',
-  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+  function writeIpcFile(dir: string, data: object): string {
+    fs.mkdirSync(dir, { recursive: true });
+
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+    const filepath = path.join(dir, filename);
+
+    // Atomic write: temp file then rename
+    const tempPath = `${filepath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+    fs.renameSync(tempPath, filepath);
+
+    return filename;
+  }
+
+  const server = new McpServer({
+    name: 'nanoclaw',
+    version: '1.0.0',
+  });
+
+  server.tool(
+    'send_message',
+    "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
+    {
+      text: z.string().describe('The message text to send'),
+      sender: z
+        .string()
+        .optional()
+        .describe(
+          'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.',
+        ),
+    },
+    async (args) => {
+      const data: Record<string, string | undefined> = {
+        type: 'message',
+        chatJid,
+        text: args.text,
+        sender: args.sender || undefined,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(MESSAGES_DIR, data);
+
+      return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
+    },
+  );
+
+  server.tool(
+    'schedule_task',
+    `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
 CONTEXT MODE - Choose based on task type:
 \u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
@@ -87,451 +176,656 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
-  {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
-    schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
-    context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
-    script: z.string().optional().describe('Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.'),
-  },
-  async (args) => {
-    // Validate schedule_value before writing IPC
-    if (args.schedule_type === 'cron') {
-      try {
-        CronExpressionParser.parse(args.schedule_value);
-      } catch {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
-          isError: true,
-        };
-      }
-    } else if (args.schedule_type === 'interval') {
-      const ms = parseInt(args.schedule_value, 10);
-      if (isNaN(ms) || ms <= 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
-          isError: true,
-        };
-      }
-    } else if (args.schedule_type === 'once') {
-      if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
-        return {
-          content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
-          isError: true,
-        };
-      }
-      const date = new Date(args.schedule_value);
-      if (isNaN(date.getTime())) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
-          isError: true,
-        };
-      }
-    }
-
-    // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
-
-    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const data = {
-      type: 'schedule_task',
-      taskId,
-      prompt: args.prompt,
-      script: args.script || undefined,
-      schedule_type: args.schedule_type,
-      schedule_value: args.schedule_value,
-      context_mode: args.context_mode || 'group',
-      targetJid,
-      createdBy: groupFolder,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
-    };
-  },
-);
-
-server.tool(
-  'list_tasks',
-  "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
-  {},
-  async () => {
-    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
-
-    try {
-      if (!fs.existsSync(tasksFile)) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
-      }
-
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
-
-      const tasks = isMain
-        ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
-
-      if (tasks.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
-      }
-
-      const formatted = tasks
-        .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
-            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
-        )
-        .join('\n');
-
-      return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }] };
-    } catch (err) {
-      return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
-      };
-    }
-  },
-);
-
-server.tool(
-  'pause_task',
-  'Pause a scheduled task. It will not run until resumed.',
-  { task_id: z.string().describe('The task ID to pause') },
-  async (args) => {
-    const data = {
-      type: 'pause_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} pause requested.` }] };
-  },
-);
-
-server.tool(
-  'resume_task',
-  'Resume a paused task.',
-  { task_id: z.string().describe('The task ID to resume') },
-  async (args) => {
-    const data = {
-      type: 'resume_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} resume requested.` }] };
-  },
-);
-
-server.tool(
-  'cancel_task',
-  'Cancel and delete a scheduled task.',
-  { task_id: z.string().describe('The task ID to cancel') },
-  async (args) => {
-    const data = {
-      type: 'cancel_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} cancellation requested.` }] };
-  },
-);
-
-server.tool(
-  'update_task',
-  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
-  {
-    task_id: z.string().describe('The task ID to update'),
-    prompt: z.string().optional().describe('New prompt for the task'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
-    schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
-    script: z.string().optional().describe('New script for the task. Set to empty string to remove the script.'),
-  },
-  async (args) => {
-    // Validate schedule_value if provided
-    if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
-      if (args.schedule_value) {
+    {
+      prompt: z
+        .string()
+        .describe(
+          'What the agent should do when the task runs. For isolated mode, include all necessary context here.',
+        ),
+      schedule_type: z
+        .enum(['cron', 'interval', 'once'])
+        .describe(
+          'cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time',
+        ),
+      schedule_value: z
+        .string()
+        .describe(
+          'cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)',
+        ),
+      context_mode: z
+        .enum(['group', 'isolated'])
+        .default('group')
+        .describe(
+          'group=runs with chat history and memory, isolated=fresh session (include context in prompt)',
+        ),
+      target_group_jid: z
+        .string()
+        .optional()
+        .describe(
+          '(Main group only) JID of the group to schedule the task for. Defaults to the current group.',
+        ),
+      script: z
+        .string()
+        .optional()
+        .describe(
+          'Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.',
+        ),
+    },
+    async (args) => {
+      // Validate schedule_value before writing IPC
+      if (args.schedule_type === 'cron') {
         try {
           CronExpressionParser.parse(args.schedule_value);
         } catch {
           return {
-            content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}".` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      } else if (args.schedule_type === 'interval') {
+        const ms = parseInt(args.schedule_value, 10);
+        if (isNaN(ms) || ms <= 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      } else if (args.schedule_type === 'once') {
+        if (
+          /[Zz]$/.test(args.schedule_value) ||
+          /[+-]\d{2}:\d{2}$/.test(args.schedule_value)
+        ) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const date = new Date(args.schedule_value);
+        if (isNaN(date.getTime())) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".`,
+              },
+            ],
             isError: true,
           };
         }
       }
-    }
-    if (args.schedule_type === 'interval' && args.schedule_value) {
-      const ms = parseInt(args.schedule_value, 10);
-      if (isNaN(ms) || ms <= 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}".` }],
-          isError: true,
-        };
-      }
-    }
 
-    const data: Record<string, string | undefined> = {
-      type: 'update_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain: String(isMain),
-      timestamp: new Date().toISOString(),
-    };
-    if (args.prompt !== undefined) data.prompt = args.prompt;
-    if (args.script !== undefined) data.script = args.script;
-    if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
-    if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+      // Non-main groups can only schedule for themselves
+      const targetJid =
+        isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
-    writeIpcFile(TASKS_DIR, data);
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
-  },
-);
-
-server.tool(
-  'register_group',
-  `Register a new chat/group so the agent can respond to messages there. Main group only.
-
-Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
-  {
-    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
-    name: z.string().describe('Display name for the group'),
-    folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
-    trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
-  },
-  async (args) => {
-    if (!isMain) {
-      return {
-        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
-        isError: true,
+      const data = {
+        type: 'schedule_task',
+        taskId,
+        prompt: args.prompt,
+        script: args.script || undefined,
+        schedule_type: args.schedule_type,
+        schedule_value: args.schedule_value,
+        context_mode: args.context_mode || 'group',
+        targetJid,
+        createdBy: groupFolder,
+        timestamp: new Date().toISOString(),
       };
-    }
 
-    const data = {
-      type: 'register_group',
-      jid: args.jid,
-      name: args.name,
-      folder: args.folder,
-      trigger: args.trigger,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
-    };
-  },
-);
-
-const AUDIO_DIR = '/workspace/group/audio';
-const TTS_MAX_TEXT_LENGTH = 50000;
-
-// Voice is a single prebuilt. To try another, change this constant.
-// Kore is a balanced multilingual default. Other good starting points:
-// "Charon", "Puck", "Zephyr", "Aoede". Full list: 30 prebuilts in Gemini TTS docs.
-const GEMINI_TTS_VOICE = 'Kore';
-
-// TTS model is currently a preview. If it is deprecated or promoted to GA,
-// swap this constant — it is the only coupling point to the preview name.
-const GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
-const GEMINI_TTS_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`;
-
-interface GeminiTtsResponse {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{
-        text?: string;
-        inlineData?: {
-          data?: string;
-          mimeType?: string;
-        };
-      }>;
-    };
-    finishReason?: string;
-  }>;
-  promptFeedback?: {
-    blockReason?: string;
-  };
-}
-
-server.tool(
-  'synthesize_speech',
-  'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
-  {
-    text: z
-      .string()
-      .max(TTS_MAX_TEXT_LENGTH)
-      .describe(
-        'Text to synthesize. You can embed Gemini audio tags like [warmly], [slowly], [whispering], [excitedly] inline to color specific moments within the speech.',
-      ),
-    style_prompt: z
-      .string()
-      .optional()
-      .describe(
-        'Natural-language whole-utterance style directive, e.g. "Say warmly and slowly" or "Speak with calm encouragement". Prepended to the text before synthesis. Use style_prompt for whole-utterance tone; use [inline tags] inside text for moment-specific expression.',
-      ),
-  },
-  async (args) => {
-    const errorResult = (text: string) => ({
-      isError: true,
-      content: [{ type: 'text' as const, text }],
-    });
-
-    if (!args.text || args.text.trim().length === 0) {
-      return errorResult('Error: text cannot be empty.');
-    }
-    if (args.text.length > TTS_MAX_TEXT_LENGTH) {
-      return errorResult(
-        `Error: text too long (${args.text.length} chars, max ${TTS_MAX_TEXT_LENGTH}).`,
-      );
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return errorResult('Error: GEMINI_API_KEY is not set in the container environment.');
-    }
-
-    try {
-      const response = await fetch(GEMINI_TTS_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(
-          buildGeminiTtsRequest({
-            text: args.text,
-            stylePrompt: args.style_prompt,
-            voiceName: GEMINI_TTS_VOICE,
-          }),
-        ),
-        signal: AbortSignal.timeout(300_000),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => 'unknown error');
-        return errorResult(`Error: TTS service returned ${response.status}: ${errText}`);
-      }
-
-      const responseJson = (await response.json()) as GeminiTtsResponse;
-      const candidate = responseJson.candidates?.[0];
-      const part = candidate?.content?.parts?.[0];
-      const audioB64 = part?.inlineData?.data;
-
-      if (!audioB64) {
-        // Modality mismatch: model returned text instead of audio.
-        if (part?.text) {
-          return errorResult(
-            `Error: TTS model returned text instead of audio (modality negotiation failed). Model said: ${part.text}`,
-          );
-        }
-        // Generic missing-audio: include diagnostics so callers can debug safety
-        // filter or modality negotiation failures.
-        const finishReason = candidate?.finishReason;
-        const blockReason = responseJson.promptFeedback?.blockReason;
-        return errorResult(
-          `Error: TTS response missing inlineData.data. finishReason=${finishReason ?? 'unknown'} blockReason=${blockReason ?? 'none'}`,
-        );
-      }
-
-      const pcm = Buffer.from(audioB64, 'base64');
-      const wavBuffer = pcmToWav(pcm);
-
-      fs.mkdirSync(AUDIO_DIR, { recursive: true });
-      const random = Math.random().toString(36).slice(2, 6);
-      const filename = `tts-${Date.now()}-${random}.wav`;
-      const filepath = path.join(AUDIO_DIR, filename);
-      fs.writeFileSync(filepath, wavBuffer);
-
-      // Estimate duration from WAV size (24kHz mono × 2 bytes/sample = 48000 bytes/sec, minus 44-byte header)
-      const durationSeconds = Math.max(0, Math.round((wavBuffer.length - 44) / 48000));
+      writeIpcFile(TASKS_DIR, data);
 
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify({
-              path: filepath,
-              duration_seconds: durationSeconds,
-            }),
+            text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}`,
           },
         ],
       };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        isError: true,
-        content: [{ type: 'text' as const, text: `Error: TTS request failed: ${message}` }],
-      };
-    }
-  },
-);
+    },
+  );
 
-server.tool(
-  'send_voice',
-  'Send an audio file as a Telegram voice message. Use after synthesize_speech to deliver the generated audio to the user.',
-  {
-    file_path: z
-      .string()
-      .describe('Absolute path to the audio file (e.g., from synthesize_speech output)'),
-    caption: z
-      .string()
-      .optional()
-      .describe('Optional caption text to accompany the voice message'),
-  },
-  async (args) => {
-    // Restrict to audio directory to prevent exfiltration of arbitrary container files
-    if (!args.file_path.startsWith(AUDIO_DIR + '/') || args.file_path.includes('..')) {
+  server.tool(
+    'list_tasks',
+    "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
+    {},
+    async () => {
+      const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
+
+      try {
+        if (!fs.existsSync(tasksFile)) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'No scheduled tasks found.' },
+            ],
+          };
+        }
+
+        const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+
+        const tasks = isMain
+          ? allTasks
+          : allTasks.filter(
+              (t: { groupFolder: string }) => t.groupFolder === groupFolder,
+            );
+
+        if (tasks.length === 0) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'No scheduled tasks found.' },
+            ],
+          };
+        }
+
+        const formatted = tasks
+          .map(
+            (t: {
+              id: string;
+              prompt: string;
+              schedule_type: string;
+              schedule_value: string;
+              status: string;
+              next_run: string;
+            }) =>
+              `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+          )
+          .join('\n');
+
+        return {
+          content: [
+            { type: 'text' as const, text: `Scheduled tasks:\n${formatted}` },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'pause_task',
+    'Pause a scheduled task. It will not run until resumed.',
+    { task_id: z.string().describe('The task ID to pause') },
+    async (args) => {
+      const data = {
+        type: 'pause_task',
+        taskId: args.task_id,
+        groupFolder,
+        isMain,
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
       return {
         content: [
-          { type: 'text' as const, text: 'Error: file must be in the audio directory.' },
+          {
+            type: 'text' as const,
+            text: `Task ${args.task_id} pause requested.`,
+          },
         ],
-        isError: true,
       };
-    }
-    if (!fs.existsSync(args.file_path)) {
+    },
+  );
+
+  server.tool(
+    'resume_task',
+    'Resume a paused task.',
+    { task_id: z.string().describe('The task ID to resume') },
+    async (args) => {
+      const data = {
+        type: 'resume_task',
+        taskId: args.task_id,
+        groupFolder,
+        isMain,
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
       return {
         content: [
-          { type: 'text' as const, text: `Error: file not found: ${args.file_path}` },
+          {
+            type: 'text' as const,
+            text: `Task ${args.task_id} resume requested.`,
+          },
         ],
-        isError: true,
       };
-    }
+    },
+  );
 
-    const data = {
-      type: 'voice',
-      chatJid,
-      file: args.file_path,
-      caption: args.caption || undefined,
-      sender: undefined,
-      groupFolder,
-      timestamp: new Date().toISOString(),
+  server.tool(
+    'cancel_task',
+    'Cancel and delete a scheduled task.',
+    { task_id: z.string().describe('The task ID to cancel') },
+    async (args) => {
+      const data = {
+        type: 'cancel_task',
+        taskId: args.task_id,
+        groupFolder,
+        isMain,
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Task ${args.task_id} cancellation requested.`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    'update_task',
+    'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
+    {
+      task_id: z.string().describe('The task ID to update'),
+      prompt: z.string().optional().describe('New prompt for the task'),
+      schedule_type: z
+        .enum(['cron', 'interval', 'once'])
+        .optional()
+        .describe('New schedule type'),
+      schedule_value: z
+        .string()
+        .optional()
+        .describe('New schedule value (see schedule_task for format)'),
+      script: z
+        .string()
+        .optional()
+        .describe(
+          'New script for the task. Set to empty string to remove the script.',
+        ),
+    },
+    async (args) => {
+      // Validate schedule_value if provided
+      if (
+        args.schedule_type === 'cron' ||
+        (!args.schedule_type && args.schedule_value)
+      ) {
+        if (args.schedule_value) {
+          try {
+            CronExpressionParser.parse(args.schedule_value);
+          } catch {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Invalid cron: "${args.schedule_value}".`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+      }
+      if (args.schedule_type === 'interval' && args.schedule_value) {
+        const ms = parseInt(args.schedule_value, 10);
+        if (isNaN(ms) || ms <= 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid interval: "${args.schedule_value}".`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      const data: Record<string, string | undefined> = {
+        type: 'update_task',
+        taskId: args.task_id,
+        groupFolder,
+        isMain: String(isMain),
+        timestamp: new Date().toISOString(),
+      };
+      if (args.prompt !== undefined) data.prompt = args.prompt;
+      if (args.script !== undefined) data.script = args.script;
+      if (args.schedule_type !== undefined)
+        data.schedule_type = args.schedule_type;
+      if (args.schedule_value !== undefined)
+        data.schedule_value = args.schedule_value;
+
+      writeIpcFile(TASKS_DIR, data);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Task ${args.task_id} update requested.`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    'register_group',
+    `Register a new chat/group so the agent can respond to messages there. Main group only.
+
+Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
+    {
+      jid: z
+        .string()
+        .describe(
+          'The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")',
+        ),
+      name: z.string().describe('Display name for the group'),
+      folder: z
+        .string()
+        .describe(
+          'Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")',
+        ),
+      trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    },
+    async (args) => {
+      if (!isMain) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Only the main group can register new groups.',
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const data = {
+        type: 'register_group',
+        jid: args.jid,
+        name: args.name,
+        folder: args.folder,
+        trigger: args.trigger,
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Group "${args.name}" registered. It will start receiving messages immediately.`,
+          },
+        ],
+      };
+    },
+  );
+
+  const AUDIO_DIR = '/workspace/group/audio';
+  const TTS_MAX_TEXT_LENGTH = 50000;
+
+  // Voice is a single prebuilt. To try another, change this constant.
+  // Kore is a balanced multilingual default. Other good starting points:
+  // "Charon", "Puck", "Zephyr", "Aoede". Full list: 30 prebuilts in Gemini TTS docs.
+  const GEMINI_TTS_VOICE = 'Kore';
+
+  // TTS model is currently a preview. If it is deprecated or promoted to GA,
+  // swap this constant — it is the only coupling point to the preview name.
+  const GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
+  const GEMINI_TTS_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`;
+
+  interface GeminiTtsResponse {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          text?: string;
+          inlineData?: {
+            data?: string;
+            mimeType?: string;
+          };
+        }>;
+      };
+      finishReason?: string;
+    }>;
+    promptFeedback?: {
+      blockReason?: string;
     };
+  }
 
-    writeIpcFile(MESSAGES_DIR, data);
+  server.tool(
+    'synthesize_speech',
+    'Convert text to speech audio. Returns a file path to the generated WAV audio. Call send_voice with the returned path to deliver it as a Telegram voice message. Everything is pre-configured — just call this tool.',
+    {
+      text: z
+        .string()
+        .max(TTS_MAX_TEXT_LENGTH)
+        .describe(
+          'Text to synthesize. You can embed Gemini audio tags like [warmly], [slowly], [whispering], [excitedly] inline to color specific moments within the speech.',
+        ),
+      style_prompt: z
+        .string()
+        .optional()
+        .describe(
+          'Natural-language whole-utterance style directive, e.g. "Say warmly and slowly" or "Speak with calm encouragement". Prepended to the text before synthesis. Use style_prompt for whole-utterance tone; use [inline tags] inside text for moment-specific expression.',
+        ),
+    },
+    async (args) => {
+      const errorResult = (text: string) => ({
+        isError: true,
+        content: [{ type: 'text' as const, text }],
+      });
 
-    return {
-      content: [{ type: 'text' as const, text: 'Voice message queued for delivery.' }],
-    };
-  },
-);
+      if (!args.text || args.text.trim().length === 0) {
+        return errorResult('Error: text cannot be empty.');
+      }
+      if (args.text.length > TTS_MAX_TEXT_LENGTH) {
+        return errorResult(
+          `Error: text too long (${args.text.length} chars, max ${TTS_MAX_TEXT_LENGTH}).`,
+        );
+      }
 
-// Start the stdio transport
-const transport = new StdioServerTransport();
-await server.connect(transport);
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return errorResult(
+          'Error: GEMINI_API_KEY is not set in the container environment.',
+        );
+      }
+
+      try {
+        const response = await fetch(GEMINI_TTS_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: JSON.stringify(
+            buildGeminiTtsRequest({
+              text: args.text,
+              stylePrompt: args.style_prompt,
+              voiceName: GEMINI_TTS_VOICE,
+            }),
+          ),
+          signal: AbortSignal.timeout(300_000),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'unknown error');
+          return errorResult(
+            `Error: TTS service returned ${response.status}: ${errText}`,
+          );
+        }
+
+        const responseJson = (await response.json()) as GeminiTtsResponse;
+        const candidate = responseJson.candidates?.[0];
+        const part = candidate?.content?.parts?.[0];
+        const audioB64 = part?.inlineData?.data;
+
+        if (!audioB64) {
+          // Modality mismatch: model returned text instead of audio.
+          if (part?.text) {
+            return errorResult(
+              `Error: TTS model returned text instead of audio (modality negotiation failed). Model said: ${part.text}`,
+            );
+          }
+          // Generic missing-audio: include diagnostics so callers can debug safety
+          // filter or modality negotiation failures.
+          const finishReason = candidate?.finishReason;
+          const blockReason = responseJson.promptFeedback?.blockReason;
+          return errorResult(
+            `Error: TTS response missing inlineData.data. finishReason=${finishReason ?? 'unknown'} blockReason=${blockReason ?? 'none'}`,
+          );
+        }
+
+        const pcm = Buffer.from(audioB64, 'base64');
+        const wavBuffer = pcmToWav(pcm);
+
+        fs.mkdirSync(AUDIO_DIR, { recursive: true });
+        const random = Math.random().toString(36).slice(2, 6);
+        const filename = `tts-${Date.now()}-${random}.wav`;
+        const filepath = path.join(AUDIO_DIR, filename);
+        fs.writeFileSync(filepath, wavBuffer);
+
+        // Estimate duration from WAV size (24kHz mono × 2 bytes/sample = 48000 bytes/sec, minus 44-byte header)
+        const durationSeconds = Math.max(
+          0,
+          Math.round((wavBuffer.length - 44) / 48000),
+        );
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                path: filepath,
+                duration_seconds: durationSeconds,
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: TTS request failed: ${message}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'send_voice',
+    'Send an audio file as a Telegram voice message. Use after synthesize_speech to deliver the generated audio to the user.',
+    {
+      file_path: z
+        .string()
+        .describe(
+          'Absolute path to the audio file (e.g., from synthesize_speech output)',
+        ),
+      caption: z
+        .string()
+        .optional()
+        .describe('Optional caption text to accompany the voice message'),
+    },
+    async (args) => {
+      // Restrict to audio directory to prevent exfiltration of arbitrary container files
+      if (
+        !args.file_path.startsWith(AUDIO_DIR + '/') ||
+        args.file_path.includes('..')
+      ) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Error: file must be in the audio directory.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (!fs.existsSync(args.file_path)) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: file not found: ${args.file_path}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const data = {
+        type: 'voice',
+        chatJid,
+        file: args.file_path,
+        caption: args.caption || undefined,
+        sender: undefined,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(MESSAGES_DIR, data);
+
+      return {
+        content: [
+          { type: 'text' as const, text: 'Voice message queued for delivery.' },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    'record_concept_delivery',
+    'Record that you have just chosen a vault concept to deliver to the user. ' +
+      'Call this BEFORE the send_voice call so the ledger stays accurate even ' +
+      'if the send transiently fails. Accepts either the vault path ' +
+      "(e.g. 'concepts/shadow-ai-economy.md') or the concept UUID.",
+    {
+      concept: z.string().describe('vault_note_path or concept UUID'),
+      surface: z
+        .enum(['text', 'voice', 'text+voice'])
+        .optional()
+        .describe('What you are about to deliver. Default omitted.'),
+    },
+    async (args) =>
+      recordConceptDeliveryHandler(args, {
+        sendIpc: (req) =>
+          writeIpcRequestAwaitResponse(TASKS_DIR, req as any, {
+            responsesDir: RESPONSES_DIR,
+            timeoutMs: 10_000,
+          }),
+        chatJid,
+        sourceTaskId: SOURCE_TASK_ID,
+      }),
+  );
+
+  // Start the stdio transport
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
