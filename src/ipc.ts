@@ -12,6 +12,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { logBotOutbound } from './outbound-logging.js';
+import { formatOutbound } from './router.js';
 import {
   getConceptById,
   batchCreateActivities,
@@ -138,13 +139,16 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   if (data.sender && data.chatJid.startsWith('tg:')) {
-                    logBotOutbound(data.chatJid, data.text, data.sender);
-                    await sendPoolMessage(
-                      data.chatJid,
-                      data.text,
-                      data.sender,
-                      sourceGroup,
-                    );
+                    const cleaned = formatOutbound(data.text);
+                    if (cleaned) {
+                      logBotOutbound(data.chatJid, cleaned, data.sender);
+                      await sendPoolMessage(
+                        data.chatJid,
+                        cleaned,
+                        data.sender,
+                        sourceGroup,
+                      );
+                    }
                   } else {
                     await deps.sendMessage(data.chatJid, data.text);
                   }

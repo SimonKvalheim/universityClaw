@@ -48,9 +48,9 @@ export function routeOutbound(
 ): Promise<void> {
   const cleaned = formatOutbound(text);
   if (!cleaned) return Promise.resolve();
-  logFn(jid, cleaned, senderName);
   const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
   if (!channel) throw new Error(`No channel for JID: ${jid}`);
+  logFn(jid, cleaned, senderName);
   return channel.sendMessage(jid, cleaned);
 }
 

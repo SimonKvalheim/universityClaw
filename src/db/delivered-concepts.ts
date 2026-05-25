@@ -8,6 +8,7 @@ type RecordArgs = {
   chatJid: string;
   sourceTaskId?: string;
   surface?: 'text' | 'voice' | 'text+voice';
+  deliveredAt?: string;
 };
 
 type RecordResult =
@@ -34,15 +35,19 @@ function resolveConceptId(input: string): { id: string; title: string } | null {
 
 export function recordConceptDelivery(args: RecordArgs): RecordResult {
   const resolved = resolveConceptId(args.concept);
-  if (!resolved) return { ok: false, error: `Concept not found: ${args.concept}` };
-  getDb().insert(schema.deliveredConcepts).values({
-    id: randomUUID(),
-    conceptId: resolved.id,
-    chatJid: args.chatJid,
-    sourceTaskId: args.sourceTaskId ?? null,
-    surface: args.surface ?? null,
-    deliveredAt: new Date().toISOString(),
-  }).run();
+  if (!resolved)
+    return { ok: false, error: `Concept not found: ${args.concept}` };
+  getDb()
+    .insert(schema.deliveredConcepts)
+    .values({
+      id: randomUUID(),
+      conceptId: resolved.id,
+      chatJid: args.chatJid,
+      sourceTaskId: args.sourceTaskId ?? null,
+      surface: args.surface ?? null,
+      deliveredAt: args.deliveredAt ?? new Date().toISOString(),
+    })
+    .run();
   return { ok: true, conceptId: resolved.id, title: resolved.title };
 }
 

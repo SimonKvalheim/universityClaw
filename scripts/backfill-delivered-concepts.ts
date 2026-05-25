@@ -63,6 +63,7 @@ for (const run of runs) {
       chatJid: TELEGRAM_MAIN_JID,
       sourceTaskId: run.task_id,
       surface: 'text+voice',
+      deliveredAt: run.run_at,
     });
     if (res.ok) inserted++;
     else skipped++;

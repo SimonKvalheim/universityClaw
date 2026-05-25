@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { _initTestDatabase } from '../db.js';
 import { getDb } from './index.js';
 import * as schema from './schema/index.js';
@@ -11,10 +12,15 @@ const CHAT = 'tg:test';
 const OTHER_CHAT = 'tg:other';
 
 function seedConcept(id: string, path: string, title: string) {
-  getDb().insert(schema.concepts).values({
-    id, title, vaultNotePath: path,
-    createdAt: '2026-05-01T00:00:00.000Z',
-  }).run();
+  getDb()
+    .insert(schema.concepts)
+    .values({
+      id,
+      title,
+      vaultNotePath: path,
+      createdAt: '2026-05-01T00:00:00.000Z',
+    })
+    .run();
 }
 
 beforeEach(() => {
@@ -54,6 +60,23 @@ describe('recordConceptDelivery', () => {
     const res2 = recordConceptDelivery({ concept: 'c3', chatJid: CHAT });
     expect(res2.ok).toBe(true);
   });
+
+  it('uses the supplied deliveredAt when provided', () => {
+    seedConcept('c4', 'concepts/hist.md', 'Hist');
+    const historical = '2026-01-15T08:30:00.000Z';
+    const res = recordConceptDelivery({
+      concept: 'c4',
+      chatJid: CHAT,
+      deliveredAt: historical,
+    });
+    expect(res.ok).toBe(true);
+    const row = getDb()
+      .select({ deliveredAt: schema.deliveredConcepts.deliveredAt })
+      .from(schema.deliveredConcepts)
+      .where(eq(schema.deliveredConcepts.conceptId, 'c4'))
+      .get();
+    expect(row?.deliveredAt).toBe(historical);
+  });
 });
 
 describe('getRecentDeliveredConcepts', () => {
@@ -62,32 +85,57 @@ describe('getRecentDeliveredConcepts', () => {
     seedConcept('c2', 'concepts/b.md', 'B');
     const now = Date.now();
     const oneDay = 86_400_000;
-    getDb().insert(schema.deliveredConcepts).values([
-      { id: 'd1', conceptId: 'c1', chatJid: CHAT,
-        deliveredAt: new Date(now - 1 * oneDay).toISOString() },
-      { id: 'd2', conceptId: 'c2', chatJid: CHAT,
-        deliveredAt: new Date(now - 7 * oneDay).toISOString() },
-    ]).run();
+    getDb()
+      .insert(schema.deliveredConcepts)
+      .values([
+        {
+          id: 'd1',
+          conceptId: 'c1',
+          chatJid: CHAT,
+          deliveredAt: new Date(now - 1 * oneDay).toISOString(),
+        },
+        {
+          id: 'd2',
+          conceptId: 'c2',
+          chatJid: CHAT,
+          deliveredAt: new Date(now - 7 * oneDay).toISOString(),
+        },
+      ])
+      .run();
     const rows = getRecentDeliveredConcepts(CHAT, 14);
     expect(rows.map((r) => r.conceptId)).toEqual(['c1', 'c2']);
-    expect(rows[0]).toMatchObject({ title: 'A', vaultNotePath: 'concepts/a.md' });
+    expect(rows[0]).toMatchObject({
+      title: 'A',
+      vaultNotePath: 'concepts/a.md',
+    });
   });
 
   it('excludes rows outside the window', () => {
     seedConcept('c1', 'concepts/old.md', 'Old');
     const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    getDb().insert(schema.deliveredConcepts).values({
-      id: 'd1', conceptId: 'c1', chatJid: CHAT, deliveredAt: old,
-    }).run();
+    getDb()
+      .insert(schema.deliveredConcepts)
+      .values({
+        id: 'd1',
+        conceptId: 'c1',
+        chatJid: CHAT,
+        deliveredAt: old,
+      })
+      .run();
     expect(getRecentDeliveredConcepts(CHAT, 14)).toEqual([]);
   });
 
   it('is scoped to chat_jid', () => {
     seedConcept('c1', 'concepts/x.md', 'X');
-    getDb().insert(schema.deliveredConcepts).values({
-      id: 'd1', conceptId: 'c1', chatJid: OTHER_CHAT,
-      deliveredAt: new Date().toISOString(),
-    }).run();
+    getDb()
+      .insert(schema.deliveredConcepts)
+      .values({
+        id: 'd1',
+        conceptId: 'c1',
+        chatJid: OTHER_CHAT,
+        deliveredAt: new Date().toISOString(),
+      })
+      .run();
     expect(getRecentDeliveredConcepts(CHAT, 14)).toEqual([]);
     expect(getRecentDeliveredConcepts(OTHER_CHAT, 14)).toHaveLength(1);
   });
